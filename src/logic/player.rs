@@ -1,7 +1,7 @@
 /* Player */
 
 #[allow(dead_code)]
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Player
 {
@@ -21,4 +21,9 @@ pub enum Player
 	OBSERVER,
 	/* Non-player vision type used by the Board/Level. */
 	SELF,
+}
+
+impl Default for Player
+{
+	fn default() -> Player { Player::NONE }
 }
