@@ -4,8 +4,7 @@ use logic::header::*;
 use logic::player::Player;
 
 
-#[allow(dead_code)]
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum TileType
 {
@@ -38,7 +37,7 @@ impl Default for TileType
 	fn default() -> TileType { TileType::NONE }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Default, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct TileToken
 {
 	#[serde(rename = "type")]
@@ -52,17 +51,4 @@ pub struct TileToken
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub power: i8,
-}
-
-impl Default for TileToken
-{
-	fn default() -> TileToken
-	{
-		TileToken {
-			typ: TileType::NONE,
-			owner: Player::NONE,
-			stacks: 0,
-			power: 0,
-		}
-	}
 }
