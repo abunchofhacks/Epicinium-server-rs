@@ -10,16 +10,16 @@ mod logic;
 
 use logic::*;
 
+
 fn main()
 {
-	println!("Size of UnitToken: {}", std::mem::size_of::<UnitToken>());
-	let x = UnitToken {
-		typ: UnitType::RIFLEMAN,
-		owner: Player::TEAL,
-		stacks: 3,
-		.. UnitToken::default()};
+	println!("Size of TileToken: {}", std::mem::size_of::<TileToken>());
+	let x = TileToken {
+		typ: TileType::FOREST,
+		stacks: 4,
+		.. TileToken::default()};
 	let txt = serde_json::to_string(&x).unwrap();
 	println!("{:?}: {}", x, txt);
-	let y : Player = serde_json::from_str("\"teal\"").unwrap();
+	let y : TileToken = serde_json::from_str(&txt).unwrap();
 	println!("{} => {:?}", txt, y);
 }
