@@ -13,6 +13,8 @@ use logic::*;
 
 fn main()
 {
+	println!("Size of Board: {}", std::mem::size_of::<Board>());
+	println!("Size of Space: {}", std::mem::size_of::<Space>());
 	println!("Size of Change: {}", std::mem::size_of::<Change>());
 	println!("Size of Order: {}", std::mem::size_of::<Order>());
 	println!("Size of Move: {}", std::mem::size_of::<Move>());
