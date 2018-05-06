@@ -1,7 +1,7 @@
 /* Player */
 
 
-#[derive(PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Player
 {

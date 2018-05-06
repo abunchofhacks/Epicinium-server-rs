@@ -3,7 +3,7 @@
 use logic::position::*;
 
 
-#[derive(PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Type
 {
@@ -20,7 +20,7 @@ impl Default for Type
 	fn default() -> Type { Type::NONE }
 }
 
-#[derive(Default, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Descriptor
 {
 	#[serde(rename = "type")]

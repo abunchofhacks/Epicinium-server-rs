@@ -12,12 +12,12 @@ pub struct Bible
 
 pub struct TileBuild
 {
-	pub type : TileType,
+	pub typ : TileType,
 	pub cost : i16,
 }
 
 pub struct UnitBuild
 {
-	pub type : UnitType,
+	pub typ : UnitType,
 	pub cost : i16,
 }

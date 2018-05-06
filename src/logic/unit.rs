@@ -1,10 +1,11 @@
 /* Unit */
 
+use std;
 use logic::header::*;
 use logic::player::Player;
 
 
-#[derive(PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum UnitType
 {
@@ -25,7 +26,7 @@ impl Default for UnitType
 	fn default() -> UnitType { UnitType::NONE }
 }
 
-#[derive(Default, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct UnitToken
 {
 	#[serde(rename = "type")]
@@ -36,4 +37,9 @@ pub struct UnitToken
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub stacks: i8,
+}
+
+pub fn swap(a : &mut UnitToken, b : &mut UnitToken)
+{
+	std::mem::swap(a, b);
 }

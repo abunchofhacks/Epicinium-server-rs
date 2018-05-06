@@ -42,8 +42,8 @@ fn main()
 			order::Move::EAST
 		],
 	};
-	let txt = serde_json::to_string(&x).unwrap();
+	let txt = serde_json::to_string(& x).unwrap();
 	println!("{:?}: {}", x, txt);
-	let y : Order = serde_json::from_str(&txt).unwrap();
+	let y : Order = serde_json::from_str(& txt).unwrap();
 	println!("{} => {:?}", txt, y);
 }
