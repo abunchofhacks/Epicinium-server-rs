@@ -6,6 +6,7 @@ extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
 
+#[allow(dead_code)]
 mod logic;
 
 use logic::*;

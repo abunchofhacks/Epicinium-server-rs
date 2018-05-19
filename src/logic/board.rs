@@ -5,6 +5,7 @@ use logic::space::*;
 use logic::change::*;
 use logic::position::*;
 use logic::unit::*;
+use logic::player::*;
 
 
 #[derive(Debug)]
@@ -110,6 +111,8 @@ impl Board
 			{
 				let space = self.at_mut(subject.position);
 
+				space.vision.add(Player::SELF);
+
 				space.tile = tile;
 				space.snow = snow;
 				space.frostbite = frostbite;
@@ -122,6 +125,26 @@ impl Board
 				space.humidity = humidity;
 				space.chaos = chaos;
 			},
+
+			& Change::OBSCURE {
+					subject,
+				} =>
+			{
+				let space = self.at_mut(subject.position);
+
+				space.vision.remove(Player::SELF);
+			}
+
+			& Change::VISION {
+					subject,
+					ref vision,
+				} =>
+			{
+				let space = self.at_mut(subject.position);
+
+				space.vision = (*vision).clone();
+			}
+
 			_ => unimplemented!(),
 		}
 	}
