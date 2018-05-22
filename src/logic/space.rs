@@ -7,7 +7,7 @@ use logic::tile::*;
 use logic::descriptor::*;
 
 
-#[derive(Default, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct Space
 {
 	pub vision : Vision,

@@ -322,9 +322,8 @@ pub enum Change
 	GROWS
 	{
 		subject: Descriptor,
-		figure: i8,
-		killed: bool,
-		depowered: bool,
+		stacks: i8,
+		power: i8,
 	},
 	// set <snow> of <subject> cell
 	SNOW
@@ -385,6 +384,18 @@ pub enum Change
 	{
 		subject: Descriptor,
 		chaos: i8,
+	},
+	// global warming has reached <level>
+	CHAOSREPORT
+	{
+		subject: Descriptor,
+		level: i8,
+	},
+	// set the year to <year>
+	YEAR
+	{
+		subject: Descriptor,
+		year: i16,
 	},
 	// set the season to <season>
 	SEASON
