@@ -1,10 +1,10 @@
 /* Tile */
 
-use logic::header::*;
+use common::header::*;
 use logic::player::Player;
 
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum TileType
 {

@@ -1,6 +1,6 @@
 /* Change */
 
-use logic::header::*;
+use common::header::*;
 use logic::player::*;
 use logic::position::*;
 use logic::descriptor::*;
