@@ -14,40 +14,40 @@ pub struct Bible
 	pub version : Version,
 
 	/* TILES */
-	pub tileAccessible : HashMap<TileType, bool>,
-	pub tileWalkable : HashMap<TileType, bool>,
-	pub tileBuildable : HashMap<TileType, bool>,
-	pub tileDestructible : HashMap<TileType, bool>,
-	pub tileGrassy : HashMap<TileType, bool>,
-	pub tileNatural : HashMap<TileType, bool>,
-	pub tileLaboring : HashMap<TileType, bool>,
-	pub tileEnergizing : HashMap<TileType, bool>,
-	pub tilePowered : HashMap<TileType, bool>,
-	pub tileOwnable : HashMap<TileType, bool>,
-	pub tileControllable : HashMap<TileType, bool>,
-	pub tileAutoCultivates : HashMap<TileType, bool>,
-	pub tilePlane : HashMap<TileType, bool>,
+	pub tileAccessible : TileMap<bool>,
+	pub tileWalkable : TileMap<bool>,
+	pub tileBuildable : TileMap<bool>,
+	pub tileDestructible : TileMap<bool>,
+	pub tileGrassy : TileMap<bool>,
+	pub tileNatural : TileMap<bool>,
+	pub tileLaboring : TileMap<bool>,
+	pub tileEnergizing : TileMap<bool>,
+	pub tilePowered : TileMap<bool>,
+	pub tileOwnable : TileMap<bool>,
+	pub tileControllable : TileMap<bool>,
+	pub tileAutoCultivates : TileMap<bool>,
+	pub tilePlane : TileMap<bool>,
 
-	pub tileStacksBuilt : HashMap<TileType, i8>,
-	pub tileStacksMax : HashMap<TileType, i8>,
-	pub tilePowerBuilt : HashMap<TileType, i8>,
-	pub tilePowerMax : HashMap<TileType, i8>,
-	pub tileVision : HashMap<TileType, i8>,
-	pub tileHitpoints : HashMap<TileType, i8>,
-	pub tileIncome : HashMap<TileType, i8>,
-	pub tileLeakGas : HashMap<TileType, i8>,
-	pub tileLeakRads : HashMap<TileType, i8>,
-	pub tileEmitChaos : HashMap<TileType, i8>,
+	pub tileStacksBuilt : TileMap<i8>,
+	pub tileStacksMax : TileMap<i8>,
+	pub tilePowerBuilt : TileMap<i8>,
+	pub tilePowerMax : TileMap<i8>,
+	pub tileVision : TileMap<i8>,
+	pub tileHitpoints : TileMap<i8>,
+	pub tileIncome : TileMap<i8>,
+	pub tileLeakGas : TileMap<i8>,
+	pub tileLeakRads : TileMap<i8>,
+	pub tileEmitChaos : TileMap<i8>,
 
-	pub tileProduces : HashMap<TileType, Vec<UnitBuild>>,
-	pub tileExpands : HashMap<TileType, Vec<TileBuild>>,
-	pub tileUpgrades : HashMap<TileType, Vec<TileBuild>>,
-	pub tileCultivates : HashMap<TileType, Vec<TileBuild>>,
+	pub tileProduces : TileMap<Vec<UnitBuild>>,
+	pub tileExpands : TileMap<Vec<TileBuild>>,
+	pub tileUpgrades : TileMap<Vec<TileBuild>>,
+	pub tileCultivates : TileMap<Vec<TileBuild>>,
 
-	pub tileScoreBase : HashMap<TileType, i16>,
-	pub tileScoreStack : HashMap<TileType, i16>,
+	pub tileScoreBase : TileMap<i16>,
+	pub tileScoreStack : TileMap<i16>,
 
-	pub tileDestroyed : HashMap<TileType, TileType>,
+	pub tileDestroyed : TileMap<TileType>,
 
 	pub tileExpandRangeMin : i8,
 	pub tileExpandRangeMax : i8,
@@ -55,40 +55,40 @@ pub struct Bible
 	pub tileProduceRangeMax : i8,
 
 	/* UNITS */
-	pub unitAir : HashMap<UnitType, bool>,
-	pub unitInfantry : HashMap<UnitType, bool>,
-	pub unitMechanical : HashMap<UnitType, bool>,
-	pub unitCanMove : HashMap<UnitType, bool>,
-	pub unitCanAttack : HashMap<UnitType, bool>,
-	pub unitCanGuard : HashMap<UnitType, bool>,
-	pub unitCanFocus : HashMap<UnitType, bool>,
-	pub unitCanShell : HashMap<UnitType, bool>,
-	pub unitCanBombard : HashMap<UnitType, bool>,
-	pub unitCanBomb : HashMap<UnitType, bool>,
-	pub unitCanCapture : HashMap<UnitType, bool>,
-	pub unitCanOccupy : HashMap<UnitType, bool>,
+	pub unitAir : UnitMap<bool>,
+	pub unitInfantry : UnitMap<bool>,
+	pub unitMechanical : UnitMap<bool>,
+	pub unitCanMove : UnitMap<bool>,
+	pub unitCanAttack : UnitMap<bool>,
+	pub unitCanGuard : UnitMap<bool>,
+	pub unitCanFocus : UnitMap<bool>,
+	pub unitCanShell : UnitMap<bool>,
+	pub unitCanBombard : UnitMap<bool>,
+	pub unitCanBomb : UnitMap<bool>,
+	pub unitCanCapture : UnitMap<bool>,
+	pub unitCanOccupy : UnitMap<bool>,
 
-	pub unitStacksMax : HashMap<UnitType, i8>,
-	pub unitSpeed : HashMap<UnitType, i8>,
-	pub unitVision : HashMap<UnitType, i8>,
-	pub unitHitpoints : HashMap<UnitType, i8>,
-	pub unitAttackShots : HashMap<UnitType, i8>,
-	pub unitAttackDamage : HashMap<UnitType, i8>,
-	pub unitTrampleShots : HashMap<UnitType, i8>,
-	pub unitTrampleDamage : HashMap<UnitType, i8>,
-	pub unitAbilityShots : HashMap<UnitType, i8>,
-	pub unitAbilityVolleys : HashMap<UnitType, i8>,
-	pub unitAbilityDamage : HashMap<UnitType, i8>,
-	pub unitAbilityGas : HashMap<UnitType, i8>,
-	pub unitAbilityRads : HashMap<UnitType, i8>,
-	pub unitAbilityRadius : HashMap<UnitType, i8>,
-	pub unitRangeMin : HashMap<UnitType, i8>,
-	pub unitRangeMax : HashMap<UnitType, i8>,
-	pub unitLeakGas : HashMap<UnitType, i8>,
-	pub unitLeakRads : HashMap<UnitType, i8>,
+	pub unitStacksMax : UnitMap<i8>,
+	pub unitSpeed : UnitMap<i8>,
+	pub unitVision : UnitMap<i8>,
+	pub unitHitpoints : UnitMap<i8>,
+	pub unitAttackShots : UnitMap<i8>,
+	pub unitAttackDamage : UnitMap<i8>,
+	pub unitTrampleShots : UnitMap<i8>,
+	pub unitTrampleDamage : UnitMap<i8>,
+	pub unitAbilityShots : UnitMap<i8>,
+	pub unitAbilityVolleys : UnitMap<i8>,
+	pub unitAbilityDamage : UnitMap<i8>,
+	pub unitAbilityGas : UnitMap<i8>,
+	pub unitAbilityRads : UnitMap<i8>,
+	pub unitAbilityRadius : UnitMap<i8>,
+	pub unitRangeMin : UnitMap<i8>,
+	pub unitRangeMax : UnitMap<i8>,
+	pub unitLeakGas : UnitMap<i8>,
+	pub unitLeakRads : UnitMap<i8>,
 
-	pub unitShapes : HashMap<UnitType, Vec<TileType>>,
-	pub unitSettles : HashMap<UnitType, Vec<TileType>>,
+	pub unitShapes : UnitMap<Vec<TileType>>,
+	pub unitSettles : UnitMap<Vec<TileType>>,
 
 	pub unitSizeMax : i8,
 	pub unitVisionMax : i8,
@@ -102,8 +102,8 @@ pub struct Bible
 	pub missHitpointsTrenches : i8,
 
 	/* WEATHER */
-	pub seasonTemperatureSwing : HashMap<Season, i8>,
-	pub seasonGlobalWarmingFactor : HashMap<Season, i8>,
+	pub seasonTemperatureSwing : SeasonMap<i8>,
+	pub seasonGlobalWarmingFactor : SeasonMap<i8>,
 
 	pub emissionDivisor : i8,
 	pub forestGrowthProbabilityDivisor : i8,
@@ -133,34 +133,34 @@ pub struct Bible
 
 	pub chaosThreshold : i8,
 
-	pub temperatureMinHotDeath : HashMap<Season, i8>,
-	pub temperatureMinFirestorm : HashMap<Season, i8>,
-	pub temperatureMinAridification : HashMap<Season, i8>,
-	pub temperatureMaxComfortable : HashMap<Season, i8>,
-	pub temperatureMinComfortable : HashMap<Season, i8>,
-	pub temperatureMaxSnow : HashMap<Season, i8>,
-	pub temperatureMaxFrostbite : HashMap<Season, i8>,
-	pub temperatureMaxColdDeath : HashMap<Season, i8>,
+	pub temperatureMinHotDeath : SeasonMap<i8>,
+	pub temperatureMinFirestorm : SeasonMap<i8>,
+	pub temperatureMinAridification : SeasonMap<i8>,
+	pub temperatureMaxComfortable : SeasonMap<i8>,
+	pub temperatureMinComfortable : SeasonMap<i8>,
+	pub temperatureMaxSnow : SeasonMap<i8>,
+	pub temperatureMaxFrostbite : SeasonMap<i8>,
+	pub temperatureMaxColdDeath : SeasonMap<i8>,
 
-	pub humidityMinWet : HashMap<Season, i8>,
-	pub humidityMaxDegradation : HashMap<Season, i8>,
-	pub humidityMaxDesertification : HashMap<Season, i8>,
-	pub humidityMinSnow : HashMap<Season, i8>,
-	pub humidityMinFrostbite : HashMap<Season, i8>,
-	pub humidityMaxFirestorm : HashMap<Season, i8>,
-	pub humidityMaxBonedrought : HashMap<Season, i8>,
-	pub humidityMaxStonedrought : HashMap<Season, i8>,
-	pub humidityMaxDeath : HashMap<Season, i8>,
+	pub humidityMinWet : SeasonMap<i8>,
+	pub humidityMaxDegradation : SeasonMap<i8>,
+	pub humidityMaxDesertification : SeasonMap<i8>,
+	pub humidityMinSnow : SeasonMap<i8>,
+	pub humidityMinFrostbite : SeasonMap<i8>,
+	pub humidityMaxFirestorm : SeasonMap<i8>,
+	pub humidityMaxBonedrought : SeasonMap<i8>,
+	pub humidityMaxStonedrought : SeasonMap<i8>,
+	pub humidityMaxDeath : SeasonMap<i8>,
 
-	pub chaosMinDegradation : HashMap<Season, i8>,
-	pub chaosMinDesertification : HashMap<Season, i8>,
-	pub chaosMinAridification : HashMap<Season, i8>,
-	pub chaosMinSnow : HashMap<Season, i8>,
-	pub chaosMinFrostbite : HashMap<Season, i8>,
-	pub chaosMinFirestorm : HashMap<Season, i8>,
-	pub chaosMinBonedrought : HashMap<Season, i8>,
-	pub chaosMinStonedrought : HashMap<Season, i8>,
-	pub chaosMinDeath : HashMap<Season, i8>,
+	pub chaosMinDegradation : SeasonMap<i8>,
+	pub chaosMinDesertification : SeasonMap<i8>,
+	pub chaosMinAridification : SeasonMap<i8>,
+	pub chaosMinSnow : SeasonMap<i8>,
+	pub chaosMinFrostbite : SeasonMap<i8>,
+	pub chaosMinFirestorm : SeasonMap<i8>,
+	pub chaosMinBonedrought : SeasonMap<i8>,
+	pub chaosMinStonedrought : SeasonMap<i8>,
+	pub chaosMinDeath : SeasonMap<i8>,
 
 	pub frostbiteShots : i8,
 	pub frostbiteDamage : i8,
@@ -230,19 +230,9 @@ pub struct Bible
 	pub startingIncome : i16,
 	pub newOrderLimit : i16,
 }
-// TODO replace HashMap with some sort of EnumMap if possible
 // TODO compile time bounds checking on these maps?
-// TODO replace Vec with bit_set::BitSet once the serde pull request is merged
 
 /*
-impl Default for Bible
-{
-	fn default() -> Bible
-	{
-		_unimplemented
-	}
-}
-
 impl Deserialize for Bible
 {
 	fn deserialize()
@@ -264,4 +254,49 @@ pub struct UnitBuild
 {
 	pub typ : UnitType,
 	pub cost : i16,
+}
+
+#[derive(PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct TileMap<T>(HashMap<TileType, T>);
+// TODO replace HashMap with some sort of EnumMap if possible
+// TODO ensure that no out of bounds are generated when accessing
+
+impl <T> Default for TileMap<T>
+{
+	fn default() -> TileMap<T>
+	{
+		let map : HashMap<TileType, T> = HashMap::default();
+
+		TileMap(map)
+	}
+}
+
+#[derive(PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct UnitMap<T>(HashMap<UnitType, T>);
+// TODO replace HashMap with some sort of EnumMap if possible
+// TODO ensure that no out of bounds are generated when accessing
+
+impl <T> Default for UnitMap<T>
+{
+	fn default() -> UnitMap<T>
+	{
+		let map : HashMap<UnitType, T> = HashMap::default();
+
+		UnitMap(map)
+	}
+}
+
+#[derive(PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct SeasonMap<T>(HashMap<Season, T>);
+// TODO replace HashMap with some sort of EnumMap if possible
+// TODO ensure that no out of bounds are generated when accessing
+
+impl <T> Default for SeasonMap<T>
+{
+	fn default() -> SeasonMap<T>
+	{
+		let map : HashMap<Season, T> = HashMap::default();
+
+		SeasonMap(map)
+	}
 }
