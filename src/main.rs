@@ -16,6 +16,7 @@ use logic::*;
 
 fn main()
 {
+	println!("Size of Bible: {}", std::mem::size_of::<Bible>());
 	println!("Size of Board: {}", std::mem::size_of::<Board>());
 	println!("Size of Space: {}", std::mem::size_of::<Space>());
 	println!("Size of Change: {}", std::mem::size_of::<Change>());
