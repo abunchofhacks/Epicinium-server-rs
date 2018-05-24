@@ -2,6 +2,7 @@
 
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(EnumMap)]
 #[serde(rename_all = "lowercase")]
 pub enum Player
 {

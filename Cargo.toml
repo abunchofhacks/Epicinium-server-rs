@@ -7,3 +7,5 @@ authors = ["Sander in 't Veld <sanderintveld@hotmail.com>"]
 serde = "*"
 serde_derive = "*"
 serde_json = "*"
+enum-map = "*"
+enum-map-derive = "*"

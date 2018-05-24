@@ -6,6 +6,7 @@ use logic::player::Player;
 
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
+#[derive(EnumMap)]
 #[serde(rename_all = "lowercase")]
 pub enum UnitType
 {
