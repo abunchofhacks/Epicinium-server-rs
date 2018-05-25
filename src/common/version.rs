@@ -5,10 +5,9 @@ use std::num::ParseIntError;
 use std::result::Result;
 use serde::Serializer;
 use serde::Serialize;
-use serde::Deserialize;
+//use serde::Deserialize;
 
 
-// TODO write custom serialize and deserialize
 #[derive(PartialEq, Eq, Debug)]
 pub struct Version
 {
@@ -18,9 +17,9 @@ pub struct Version
 	pub release : i8
 }
 
-impl Default for Version
+impl Version
 {
-	fn default() -> Version
+	pub fn current() -> Version
 	{
 		Version{
 			major: 0,
@@ -28,6 +27,14 @@ impl Default for Version
 			patch: 0,
 			release: 0
 		}
+	}
+}
+
+impl Default for Version
+{
+	fn default() -> Version
+	{
+		Version::current()
 	}
 }
 
@@ -47,39 +54,61 @@ impl ToString for Version
 	}
 }
 
+pub enum VersionParseError
+{
+	INTERROR
+	{
+		error : ParseIntError,
+	},
+	PARSEERROR
+	{
+		message : String,
+	},
+}
+
+impl From<ParseIntError> for VersionParseError
+{
+	fn from(err : ParseIntError) -> VersionParseError
+	{
+		VersionParseError::INTERROR{
+			error: err
+		}
+	}
+}
+
 impl FromStr for Version
 {
-	type Err = ParseIntError;
-	fn from_str(s : &str) -> Result<Version, ParseIntError>
+	type Err = VersionParseError;
+
+	fn from_str(s : &str) -> Result<Version, VersionParseError>
 	{
-		let parts : Vec<i8> = s.trim_matches(|p| p == 'v')
+		let parts : Vec<&str> = s.trim_matches(|p| p == 'v')
 				.split("-rc")
-				.map(|p| p.split("."))
-				.concat()
-				.map(|p| p.parse())
+				.flat_map(|p| p.split("."))
 				.collect();
 
 		if parts.len() == 3
 		{
-			Version{
-				major: parts[0],
-				minor: parts[1],
-				patch: parts[2],
+			Ok(Version{
+				major: parts[0].parse::<i8>()?,
+				minor: parts[1].parse::<i8>()?,
+				patch: parts[2].parse::<i8>()?,
 				release: 0,
-			}
+			})
 		}
 		else if parts.len() == 4
 		{
-			Version{
-				major: parts[0],
-				minor: parts[1],
-				patch: parts[2],
-				release: parts[3],
-			}
+			Ok(Version{
+				major: parts[0].parse::<i8>()?,
+				minor: parts[1].parse::<i8>()?,
+				patch: parts[2].parse::<i8>()?,
+				release: parts[3].parse::<i8>()?,
+			})
 		}
-		else
-		{
-			ParseIntError{}
+		else {
+			Err(VersionParseError::PARSEERROR{
+				message: "Cannot parse ".to_owned() + s
+			})
 		}
 	}
 }
@@ -87,11 +116,11 @@ impl FromStr for Version
 impl Serialize for Version
 {
 	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize(self.to_string())
-    }
+	where
+		S: Serializer,
+	{
+		self.to_string().serialize(serializer)
+	}
 }
 
 /*
