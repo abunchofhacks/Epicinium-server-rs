@@ -1,6 +1,13 @@
 /* Bible */
 
 use enum_map::EnumMap;
+use std::ops::Index;
+use std::ops::IndexMut;
+use serde::Serialize;
+use serde::Serializer;
+use serde::Deserialize;
+use serde::Deserializer;
+
 use logic::unit::UnitType;
 use logic::tile::TileType;
 use logic::cycle::Season;
@@ -14,40 +21,40 @@ pub struct Bible
 	pub version : Version,
 
 	/* TILES */
-	pub tileAccessible : EnumMap<TileType, bool>,
-	pub tileWalkable : EnumMap<TileType, bool>,
-	pub tileBuildable : EnumMap<TileType, bool>,
-	pub tileDestructible : EnumMap<TileType, bool>,
-	pub tileGrassy : EnumMap<TileType, bool>,
-	pub tileNatural : EnumMap<TileType, bool>,
-	pub tileLaboring : EnumMap<TileType, bool>,
-	pub tileEnergizing : EnumMap<TileType, bool>,
-	pub tilePowered : EnumMap<TileType, bool>,
-	pub tileOwnable : EnumMap<TileType, bool>,
-	pub tileControllable : EnumMap<TileType, bool>,
-	pub tileAutoCultivates : EnumMap<TileType, bool>,
-	pub tilePlane : EnumMap<TileType, bool>,
+	pub tileAccessible : TileMap<bool>,
+	pub tileWalkable : TileMap<bool>,
+	pub tileBuildable : TileMap<bool>,
+	pub tileDestructible : TileMap<bool>,
+	pub tileGrassy : TileMap<bool>,
+	pub tileNatural : TileMap<bool>,
+	pub tileLaboring : TileMap<bool>,
+	pub tileEnergizing : TileMap<bool>,
+	pub tilePowered : TileMap<bool>,
+	pub tileOwnable : TileMap<bool>,
+	pub tileControllable : TileMap<bool>,
+	pub tileAutoCultivates : TileMap<bool>,
+	pub tilePlane : TileMap<bool>,
 
-	pub tileStacksBuilt : EnumMap<TileType, i8>,
-	pub tileStacksMax : EnumMap<TileType, i8>,
-	pub tilePowerBuilt : EnumMap<TileType, i8>,
-	pub tilePowerMax : EnumMap<TileType, i8>,
-	pub tileVision : EnumMap<TileType, i8>,
-	pub tileHitpoints : EnumMap<TileType, i8>,
-	pub tileIncome : EnumMap<TileType, i8>,
-	pub tileLeakGas : EnumMap<TileType, i8>,
-	pub tileLeakRads : EnumMap<TileType, i8>,
-	pub tileEmitChaos : EnumMap<TileType, i8>,
+	pub tileStacksBuilt : TileMap<i8>,
+	pub tileStacksMax : TileMap<i8>,
+	pub tilePowerBuilt : TileMap<i8>,
+	pub tilePowerMax : TileMap<i8>,
+	pub tileVision : TileMap<i8>,
+	pub tileHitpoints : TileMap<i8>,
+	pub tileIncome : TileMap<i8>,
+	pub tileLeakGas : TileMap<i8>,
+	pub tileLeakRads : TileMap<i8>,
+	pub tileEmitChaos : TileMap<i8>,
 
-	pub tileProduces : EnumMap<TileType, Vec<UnitBuild>>,
-	pub tileExpands : EnumMap<TileType, Vec<TileBuild>>,
-	pub tileUpgrades : EnumMap<TileType, Vec<TileBuild>>,
-	pub tileCultivates : EnumMap<TileType, Vec<TileBuild>>,
+	pub tileProduces : TileMap<Vec<UnitBuild>>,
+	pub tileExpands : TileMap<Vec<TileBuild>>,
+	pub tileUpgrades : TileMap<Vec<TileBuild>>,
+	pub tileCultivates : TileMap<Vec<TileBuild>>,
 
-	pub tileScoreBase : EnumMap<TileType, i16>,
-	pub tileScoreStack : EnumMap<TileType, i16>,
+	pub tileScoreBase : TileMap<i16>,
+	pub tileScoreStack : TileMap<i16>,
 
-	pub tileDestroyed : EnumMap<TileType, TileType>,
+	pub tileDestroyed : TileMap<TileType>,
 
 	pub tileExpandRangeMin : i8,
 	pub tileExpandRangeMax : i8,
@@ -55,40 +62,40 @@ pub struct Bible
 	pub tileProduceRangeMax : i8,
 
 	/* UNITS */
-	pub unitAir : EnumMap<UnitType, bool>,
-	pub unitInfantry : EnumMap<UnitType, bool>,
-	pub unitMechanical : EnumMap<UnitType, bool>,
-	pub unitCanMove : EnumMap<UnitType, bool>,
-	pub unitCanAttack : EnumMap<UnitType, bool>,
-	pub unitCanGuard : EnumMap<UnitType, bool>,
-	pub unitCanFocus : EnumMap<UnitType, bool>,
-	pub unitCanShell : EnumMap<UnitType, bool>,
-	pub unitCanBombard : EnumMap<UnitType, bool>,
-	pub unitCanBomb : EnumMap<UnitType, bool>,
-	pub unitCanCapture : EnumMap<UnitType, bool>,
-	pub unitCanOccupy : EnumMap<UnitType, bool>,
+	pub unitAir : UnitMap<bool>,
+	pub unitInfantry : UnitMap<bool>,
+	pub unitMechanical : UnitMap<bool>,
+	pub unitCanMove : UnitMap<bool>,
+	pub unitCanAttack : UnitMap<bool>,
+	pub unitCanGuard : UnitMap<bool>,
+	pub unitCanFocus : UnitMap<bool>,
+	pub unitCanShell : UnitMap<bool>,
+	pub unitCanBombard : UnitMap<bool>,
+	pub unitCanBomb : UnitMap<bool>,
+	pub unitCanCapture : UnitMap<bool>,
+	pub unitCanOccupy : UnitMap<bool>,
 
-	pub unitStacksMax : EnumMap<UnitType, i8>,
-	pub unitSpeed : EnumMap<UnitType, i8>,
-	pub unitVision : EnumMap<UnitType, i8>,
-	pub unitHitpoints : EnumMap<UnitType, i8>,
-	pub unitAttackShots : EnumMap<UnitType, i8>,
-	pub unitAttackDamage : EnumMap<UnitType, i8>,
-	pub unitTrampleShots : EnumMap<UnitType, i8>,
-	pub unitTrampleDamage : EnumMap<UnitType, i8>,
-	pub unitAbilityShots : EnumMap<UnitType, i8>,
-	pub unitAbilityVolleys : EnumMap<UnitType, i8>,
-	pub unitAbilityDamage : EnumMap<UnitType, i8>,
-	pub unitAbilityGas : EnumMap<UnitType, i8>,
-	pub unitAbilityRads : EnumMap<UnitType, i8>,
-	pub unitAbilityRadius : EnumMap<UnitType, i8>,
-	pub unitRangeMin : EnumMap<UnitType, i8>,
-	pub unitRangeMax : EnumMap<UnitType, i8>,
-	pub unitLeakGas : EnumMap<UnitType, i8>,
-	pub unitLeakRads : EnumMap<UnitType, i8>,
+	pub unitStacksMax : UnitMap<i8>,
+	pub unitSpeed : UnitMap<i8>,
+	pub unitVision : UnitMap<i8>,
+	pub unitHitpoints : UnitMap<i8>,
+	pub unitAttackShots : UnitMap<i8>,
+	pub unitAttackDamage : UnitMap<i8>,
+	pub unitTrampleShots : UnitMap<i8>,
+	pub unitTrampleDamage : UnitMap<i8>,
+	pub unitAbilityShots : UnitMap<i8>,
+	pub unitAbilityVolleys : UnitMap<i8>,
+	pub unitAbilityDamage : UnitMap<i8>,
+	pub unitAbilityGas : UnitMap<i8>,
+	pub unitAbilityRads : UnitMap<i8>,
+	pub unitAbilityRadius : UnitMap<i8>,
+	pub unitRangeMin : UnitMap<i8>,
+	pub unitRangeMax : UnitMap<i8>,
+	pub unitLeakGas : UnitMap<i8>,
+	pub unitLeakRads : UnitMap<i8>,
 
-	pub unitShapes : EnumMap<UnitType, Vec<TileType>>,
-	pub unitSettles : EnumMap<UnitType, Vec<TileType>>,
+	pub unitShapes : UnitMap<Vec<TileType>>,
+	pub unitSettles : UnitMap<Vec<TileType>>,
 
 	pub unitSizeMax : i8,
 	pub unitVisionMax : i8,
@@ -102,8 +109,8 @@ pub struct Bible
 	pub missHitpointsTrenches : i8,
 
 	/* WEATHER */
-	pub seasonTemperatureSwing : EnumMap<Season, i8>,
-	pub seasonGlobalWarmingFactor : EnumMap<Season, i8>,
+	pub seasonTemperatureSwing : SeasonMap<i8>,
+	pub seasonGlobalWarmingFactor : SeasonMap<i8>,
 
 	pub emissionDivisor : i8,
 	pub forestGrowthProbabilityDivisor : i8,
@@ -133,34 +140,34 @@ pub struct Bible
 
 	pub chaosThreshold : i8,
 
-	pub temperatureMinHotDeath : EnumMap<Season, i8>,
-	pub temperatureMinFirestorm : EnumMap<Season, i8>,
-	pub temperatureMinAridification : EnumMap<Season, i8>,
-	pub temperatureMaxComfortable : EnumMap<Season, i8>,
-	pub temperatureMinComfortable : EnumMap<Season, i8>,
-	pub temperatureMaxSnow : EnumMap<Season, i8>,
-	pub temperatureMaxFrostbite : EnumMap<Season, i8>,
-	pub temperatureMaxColdDeath : EnumMap<Season, i8>,
+	pub temperatureMinHotDeath : SeasonMap<i8>,
+	pub temperatureMinFirestorm : SeasonMap<i8>,
+	pub temperatureMinAridification : SeasonMap<i8>,
+	pub temperatureMaxComfortable : SeasonMap<i8>,
+	pub temperatureMinComfortable : SeasonMap<i8>,
+	pub temperatureMaxSnow : SeasonMap<i8>,
+	pub temperatureMaxFrostbite : SeasonMap<i8>,
+	pub temperatureMaxColdDeath : SeasonMap<i8>,
 
-	pub humidityMinWet : EnumMap<Season, i8>,
-	pub humidityMaxDegradation : EnumMap<Season, i8>,
-	pub humidityMaxDesertification : EnumMap<Season, i8>,
-	pub humidityMinSnow : EnumMap<Season, i8>,
-	pub humidityMinFrostbite : EnumMap<Season, i8>,
-	pub humidityMaxFirestorm : EnumMap<Season, i8>,
-	pub humidityMaxBonedrought : EnumMap<Season, i8>,
-	pub humidityMaxStonedrought : EnumMap<Season, i8>,
-	pub humidityMaxDeath : EnumMap<Season, i8>,
+	pub humidityMinWet : SeasonMap<i8>,
+	pub humidityMaxDegradation : SeasonMap<i8>,
+	pub humidityMaxDesertification : SeasonMap<i8>,
+	pub humidityMinSnow : SeasonMap<i8>,
+	pub humidityMinFrostbite : SeasonMap<i8>,
+	pub humidityMaxFirestorm : SeasonMap<i8>,
+	pub humidityMaxBonedrought : SeasonMap<i8>,
+	pub humidityMaxStonedrought : SeasonMap<i8>,
+	pub humidityMaxDeath : SeasonMap<i8>,
 
-	pub chaosMinDegradation : EnumMap<Season, i8>,
-	pub chaosMinDesertification : EnumMap<Season, i8>,
-	pub chaosMinAridification : EnumMap<Season, i8>,
-	pub chaosMinSnow : EnumMap<Season, i8>,
-	pub chaosMinFrostbite : EnumMap<Season, i8>,
-	pub chaosMinFirestorm : EnumMap<Season, i8>,
-	pub chaosMinBonedrought : EnumMap<Season, i8>,
-	pub chaosMinStonedrought : EnumMap<Season, i8>,
-	pub chaosMinDeath : EnumMap<Season, i8>,
+	pub chaosMinDegradation : SeasonMap<i8>,
+	pub chaosMinDesertification : SeasonMap<i8>,
+	pub chaosMinAridification : SeasonMap<i8>,
+	pub chaosMinSnow : SeasonMap<i8>,
+	pub chaosMinFrostbite : SeasonMap<i8>,
+	pub chaosMinFirestorm : SeasonMap<i8>,
+	pub chaosMinBonedrought : SeasonMap<i8>,
+	pub chaosMinStonedrought : SeasonMap<i8>,
+	pub chaosMinDeath : SeasonMap<i8>,
 
 	pub frostbiteShots : i8,
 	pub frostbiteDamage : i8,
@@ -237,7 +244,7 @@ impl Bible
 {
 	pub fn current() -> Bible
 	{
-		let bible = Bible::default();
+		let mut bible = Bible::default();
 
 		bible.tileAccessible[TileType::GRASS] = true;
 		bible.tileWalkable[TileType::GRASS] = true;
@@ -275,4 +282,124 @@ pub struct UnitBuild
 {
 	pub typ : UnitType,
 	pub cost : i16,
+}
+
+#[derive(Default, PartialEq, Eq, Debug)]
+pub struct TileMap<T>(EnumMap<TileType, T>);
+
+impl<T> Index<TileType> for TileMap<T>
+{
+	type Output = T;
+
+	fn index(&self, key : TileType) -> &T
+	{
+		self.0.index(key)
+	}
+}
+
+impl<T> IndexMut<TileType> for TileMap<T>
+{
+	fn index_mut(&mut self, key : TileType) -> &mut T
+	{
+		self.0.index_mut(key)
+	}
+}
+
+impl <T> Serialize for TileMap<T>
+{
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+	where
+		S: Serializer,
+	{
+		unimplemented!()
+	}
+}
+
+impl <'de, T> Deserialize<'de> for TileMap<T>
+{
+	fn deserialize<D>(deserializer : D) -> Result<Self, D::Error>
+		where D: Deserializer<'de>
+	{
+		unimplemented!()
+	}
+}
+
+#[derive(Default, PartialEq, Eq, Debug)]
+pub struct UnitMap<T>(EnumMap<UnitType, T>);
+
+impl<T> Index<UnitType> for UnitMap<T>
+{
+	type Output = T;
+
+	fn index(&self, key : UnitType) -> &T
+	{
+		self.0.index(key)
+	}
+}
+
+impl<T> IndexMut<UnitType> for UnitMap<T>
+{
+	fn index_mut(&mut self, key : UnitType) -> &mut T
+	{
+		self.0.index_mut(key)
+	}
+}
+
+impl <T> Serialize for UnitMap<T>
+{
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+	where
+		S: Serializer,
+	{
+		unimplemented!()
+	}
+}
+
+impl <'de, T> Deserialize<'de> for UnitMap<T>
+{
+	fn deserialize<D>(deserializer : D) -> Result<Self, D::Error>
+		where D: Deserializer<'de>
+	{
+		unimplemented!()
+	}
+}
+
+#[derive(Default, PartialEq, Eq, Debug)]
+pub struct SeasonMap<T>(EnumMap<Season, T>);
+
+impl<T> Index<Season> for SeasonMap<T>
+{
+	type Output = T;
+
+	fn index(&self, key : Season) -> &T
+	{
+		self.0.index(key)
+	}
+}
+
+impl<T> IndexMut<Season> for SeasonMap<T>
+{
+	fn index_mut(&mut self, key : Season) -> &mut T
+	{
+		self.0.index_mut(key)
+	}
+}
+
+impl <T> Serialize for SeasonMap<T>
+{
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+	where
+		S: Serializer,
+	{
+		unimplemented!()
+	}
+}
+
+impl <'de, T> Deserialize<'de> for SeasonMap<T>
+{
+	fn deserialize<D>(deserializer : D) -> Result<Self, D::Error>
+		where D: Deserializer<'de>
+	{
+		unimplemented!()
+	}
 }

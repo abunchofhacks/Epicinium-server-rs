@@ -22,7 +22,7 @@ use common::*;
 
 fn main()
 {
-//	println!("Size of Bible: {}", std::mem::size_of::<Bible>());
+	println!("Size of Bible: {}", std::mem::size_of::<Bible>());
 	println!("Size of Version: {}", std::mem::size_of::<Version>());
 	println!("Size of Board: {}", std::mem::size_of::<Board>());
 	println!("Size of Space: {}", std::mem::size_of::<Space>());
@@ -30,15 +30,9 @@ fn main()
 	println!("Size of Order: {}", std::mem::size_of::<Order>());
 	println!("Size of Move: {}", std::mem::size_of::<Move>());
 	println!("Size of Vec<Move>: {}", std::mem::size_of::<Vec<Move>>());
-	let x = Version::current();
-	println!("{:?}: {}", x, x.to_string());
+	let x = Bible::current();
 	let txt = serde_json::to_string(& x).unwrap();
 	println!("{:?}: {}", x, txt);
-	let y : Version = serde_json::from_str(& txt).unwrap();
+	let y : Bible = serde_json::from_str(& txt).unwrap();
 	println!("{} => {:?}", txt, y);
-//	let x = Bible::current();
-//	let txt = serde_json::to_string(& x).unwrap();
-//	println!("{:?}: {}", x, txt);
-//	let y : Bible = serde_json::from_str(& txt).unwrap();
-//	println!("{} => {:?}", txt, y);
 }
