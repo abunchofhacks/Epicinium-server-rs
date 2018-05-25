@@ -5,6 +5,7 @@ use std::ops::Index;
 use std::ops::IndexMut;
 use serde::Serialize;
 use serde::Serializer;
+use serde::ser::SerializeSeq;
 use serde::Deserialize;
 use serde::Deserializer;
 
@@ -306,12 +307,18 @@ impl<T> IndexMut<TileType> for TileMap<T>
 }
 
 impl <T> Serialize for TileMap<T>
+	where T: Serialize
 {
 	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
 	where
 		S: Serializer,
 	{
-		unimplemented!()
+		let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+		for e in self.0.iter()
+		{
+			seq.serialize_element(&e)?;
+		}
+		seq.end()
 	}
 }
 
@@ -346,12 +353,18 @@ impl<T> IndexMut<UnitType> for UnitMap<T>
 }
 
 impl <T> Serialize for UnitMap<T>
+	where T: Serialize
 {
 	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
 	where
 		S: Serializer,
 	{
-		unimplemented!()
+		let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+		for e in self.0.iter()
+		{
+			seq.serialize_element(&e)?;
+		}
+		seq.end()
 	}
 }
 
@@ -386,12 +399,18 @@ impl<T> IndexMut<Season> for SeasonMap<T>
 }
 
 impl <T> Serialize for SeasonMap<T>
+	where T: Serialize
 {
 	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
 	where
 		S: Serializer,
 	{
-		unimplemented!()
+		let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+		for e in self.0.iter()
+		{
+			seq.serialize_element(&e)?;
+		}
+		seq.end()
 	}
 }
 
