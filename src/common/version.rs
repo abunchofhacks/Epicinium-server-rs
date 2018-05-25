@@ -1,11 +1,14 @@
 /* Version */
 
+use std::fmt::Display;
+use std::fmt::Formatter;
 use std::str::FromStr;
 use std::num::ParseIntError;
 use std::result::Result;
-use serde::Serializer;
 use serde::Serialize;
-//use serde::Deserialize;
+use serde::Serializer;
+use serde::Deserialize;
+use serde::Deserializer;
 
 
 #[derive(PartialEq, Eq, Debug)]
@@ -54,6 +57,7 @@ impl ToString for Version
 	}
 }
 
+#[derive(Debug)]
 pub enum VersionParseError
 {
 	INTERROR
@@ -64,6 +68,18 @@ pub enum VersionParseError
 	{
 		message : String,
 	},
+}
+
+impl Display for VersionParseError
+{
+	fn fmt(&self, f: &mut Formatter) -> ::std::fmt::Result
+	{
+		match self
+		{
+			&VersionParseError::INTERROR { ref error } => error.fmt(f),
+			&VersionParseError::PARSEERROR { ref message } => message.fmt(f),
+		}
+	}
 }
 
 impl From<ParseIntError> for VersionParseError
@@ -123,12 +139,12 @@ impl Serialize for Version
 	}
 }
 
-/*
 impl<'de> Deserialize<'de> for Version
 {
-	fn deserialize()
+	fn deserialize<D>(deserializer : D) -> Result<Self, D::Error>
+		where D: Deserializer<'de>
 	{
-		_unimplemented
+		let s = String::deserialize(deserializer)?;
+		FromStr::from_str(&s).map_err(::serde::de::Error::custom)
 	}
 }
-*/

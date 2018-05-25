@@ -31,8 +31,11 @@ fn main()
 	println!("Size of Move: {}", std::mem::size_of::<Move>());
 	println!("Size of Vec<Move>: {}", std::mem::size_of::<Vec<Move>>());
 	let x = Version::current();
-	let txt = x.to_string();
+	println!("{:?}: {}", x, x.to_string());
+	let txt = serde_json::to_string(& x).unwrap();
 	println!("{:?}: {}", x, txt);
+	let y : Version = serde_json::from_str(& txt).unwrap();
+	println!("{} => {:?}", txt, y);
 //	let x = Bible::current();
 //	let txt = serde_json::to_string(& x).unwrap();
 //	println!("{:?}: {}", x, txt);
