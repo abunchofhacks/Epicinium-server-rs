@@ -5,9 +5,13 @@ use std::ops::Index;
 use std::ops::IndexMut;
 use serde::Serialize;
 use serde::Serializer;
-use serde::ser::SerializeSeq;
+use serde::ser::SerializeMap;
 use serde::Deserialize;
 use serde::Deserializer;
+use serde::de::Visitor;
+use serde::de::MapAccess;
+use std::marker::PhantomData;
+use std::fmt;
 
 use logic::unit::UnitType;
 use logic::tile::TileType;
@@ -313,21 +317,58 @@ impl <T> Serialize for TileMap<T>
 	where
 		S: Serializer,
 	{
-		let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
-		for e in self.0.iter()
+		let mut map = serializer.serialize_map(Some(self.0.len()))?;
+		for (k, v) in self.0.iter()
 		{
-			seq.serialize_element(&e)?;
+			map.serialize_entry(&k, &v)?;
 		}
-		seq.end()
+		map.end()
 	}
 }
 
 impl <'de, T> Deserialize<'de> for TileMap<T>
+	where T: Deserialize<'de> + Default
 {
 	fn deserialize<D>(deserializer : D) -> Result<Self, D::Error>
 		where D: Deserializer<'de>
 	{
-		unimplemented!()
+		deserializer.deserialize_map(TileMapVisitor::new())
+	}
+}
+
+struct TileMapVisitor<T> {
+	marker: PhantomData<fn() -> TileMap<T>>
+}
+
+impl<T> TileMapVisitor<T> {
+	fn new() -> Self {
+		TileMapVisitor {
+			marker: PhantomData
+		}
+	}
+}
+
+impl<'de, T> Visitor<'de> for TileMapVisitor<T>
+where
+	T: Deserialize<'de> + Default,
+{
+	type Value = TileMap<T>;
+
+	fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+		formatter.write_str("TileMap")
+	}
+
+	fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+	where
+		M: MapAccess<'de>,
+	{
+		let mut map = TileMap::default();
+
+		while let Some((key, value)) = access.next_entry()? {
+			*(map.0.index_mut(key)) = value;
+		}
+
+		Ok(map)
 	}
 }
 
@@ -359,21 +400,58 @@ impl <T> Serialize for UnitMap<T>
 	where
 		S: Serializer,
 	{
-		let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
-		for e in self.0.iter()
+		let mut map = serializer.serialize_map(Some(self.0.len()))?;
+		for (k, v) in self.0.iter()
 		{
-			seq.serialize_element(&e)?;
+			map.serialize_entry(&k, &v)?;
 		}
-		seq.end()
+		map.end()
 	}
 }
 
 impl <'de, T> Deserialize<'de> for UnitMap<T>
+	where T: Deserialize<'de> + Default
 {
 	fn deserialize<D>(deserializer : D) -> Result<Self, D::Error>
 		where D: Deserializer<'de>
 	{
-		unimplemented!()
+		deserializer.deserialize_map(UnitMapVisitor::new())
+	}
+}
+
+struct UnitMapVisitor<T> {
+	marker: PhantomData<fn() -> UnitMap<T>>
+}
+
+impl<T> UnitMapVisitor<T> {
+	fn new() -> Self {
+		UnitMapVisitor {
+			marker: PhantomData
+		}
+	}
+}
+
+impl<'de, T> Visitor<'de> for UnitMapVisitor<T>
+where
+	T: Deserialize<'de> + Default,
+{
+	type Value = UnitMap<T>;
+
+	fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+		formatter.write_str("UnitMap")
+	}
+
+	fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+	where
+		M: MapAccess<'de>,
+	{
+		let mut map = UnitMap::default();
+
+		while let Some((key, value)) = access.next_entry()? {
+			*(map.0.index_mut(key)) = value;
+		}
+
+		Ok(map)
 	}
 }
 
@@ -405,20 +483,57 @@ impl <T> Serialize for SeasonMap<T>
 	where
 		S: Serializer,
 	{
-		let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
-		for e in self.0.iter()
+		let mut map = serializer.serialize_map(Some(self.0.len()))?;
+		for (k, v) in self.0.iter()
 		{
-			seq.serialize_element(&e)?;
+			map.serialize_entry(&k, &v)?;
 		}
-		seq.end()
+		map.end()
 	}
 }
 
 impl <'de, T> Deserialize<'de> for SeasonMap<T>
+	where T: Deserialize<'de> + Default
 {
 	fn deserialize<D>(deserializer : D) -> Result<Self, D::Error>
 		where D: Deserializer<'de>
 	{
-		unimplemented!()
+		deserializer.deserialize_map(SeasonMapVisitor::new())
+	}
+}
+
+struct SeasonMapVisitor<T> {
+	marker: PhantomData<fn() -> SeasonMap<T>>
+}
+
+impl<T> SeasonMapVisitor<T> {
+	fn new() -> Self {
+		SeasonMapVisitor {
+			marker: PhantomData
+		}
+	}
+}
+
+impl<'de, T> Visitor<'de> for SeasonMapVisitor<T>
+where
+	T: Deserialize<'de> + Default,
+{
+	type Value = SeasonMap<T>;
+
+	fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+		formatter.write_str("SeasonMap")
+	}
+
+	fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+	where
+		M: MapAccess<'de>,
+	{
+		let mut map = SeasonMap::default();
+
+		while let Some((key, value)) = access.next_entry()? {
+			*(map.0.index_mut(key)) = value;
+		}
+
+		Ok(map)
 	}
 }
