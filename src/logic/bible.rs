@@ -22,6 +22,9 @@ use common::header::is_zero;
 
 #[derive(Default, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[allow(non_snake_case)]
+// TODO replace allow(non_snake_case) with serde(rename_all = "camelCase")?
+// TODO use #[serde(default = "path")] for fields with non-zero defaults
+// TODO use #[serde(deserialize_with = "path")] for fields with complex b.comp.
 pub struct Bible
 {
 	pub version : Version,
@@ -84,7 +87,7 @@ pub struct Bible
 							#[serde(default, skip_serializing_if = "is_zero")]
 	pub tileCultivates : TileMap<Vec<TileBuild>>,
 
-							#[serde(default, skip_serializing_if = "is_zero")]
+							#[serde(default, skip_serializing)]
 	pub tileCost : TileMap<i16>,
 							#[serde(default, skip_serializing_if = "is_zero")]
 	pub tileScoreBase : TileMap<i16>,
@@ -171,7 +174,7 @@ pub struct Bible
 							#[serde(default, skip_serializing_if = "is_zero")]
 	pub unitSettles : UnitMap<Vec<TileBuild>>,
 
-							#[serde(default, skip_serializing_if = "is_zero")]
+							#[serde(default, skip_serializing)]
 	pub unitCost : UnitMap<i16>,
 
 							#[serde(default, skip_serializing_if = "is_zero")]
@@ -1237,16 +1240,6 @@ impl Bible
 		}
 	}
 }
-
-/*
-impl Deserialize for Bible
-{
-	fn deserialize()
-	{
-		_unimplemented
-	}
-}
-*/
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct TileBuild
