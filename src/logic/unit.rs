@@ -17,6 +17,7 @@ pub enum UnitType
 	TANK,
 	SETTLER,
 	DIPLOMAT,
+	MILITIA,
 	ZEPPELIN,
 	GLIDER,
 	NUKE,

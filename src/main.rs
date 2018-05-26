@@ -35,4 +35,5 @@ fn main()
 	println!("{:?}: {}", x, txt);
 	let y : Bible = serde_json::from_str(& txt).unwrap();
 	println!("{} => {:?}", txt, y);
+	assert!(x == y);
 }
