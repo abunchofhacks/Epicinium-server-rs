@@ -19,6 +19,9 @@ mod logic;
 use logic::*;
 use common::*;
 
+use std::fs::File;
+use std::io::prelude::*;
+
 
 fn main()
 {
@@ -32,8 +35,18 @@ fn main()
 	println!("Size of Vec<Move>: {}", std::mem::size_of::<Vec<Move>>());
 	let x = Bible::current();
 	let txt = serde_json::to_string(& x).unwrap();
-	println!("{:?}: {}", x, txt);
 	let y : Bible = serde_json::from_str(& txt).unwrap();
-	println!("{} => {:?}", txt, y);
+	{
+		let mut file = File::create("x.out").unwrap();
+		let _result = write!(file, "{:?}", x);
+	}
+	{
+		let mut file = File::create("v0.23.0.out").unwrap();
+		let _result = write!(file, "{}", txt);
+	}
+	{
+		let mut file = File::create("y.out").unwrap();
+		let _result = write!(file, "{:?}", y);
+	}
 	assert!(x == y);
 }

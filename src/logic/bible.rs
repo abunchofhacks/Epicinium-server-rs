@@ -25,6 +25,8 @@ use common::header::is_zero;
 // TODO replace allow(non_snake_case) with serde(rename_all = "camelCase")?
 // TODO use #[serde(default = "path")] for fields with non-zero defaults
 // TODO use #[serde(deserialize_with = "path")] for fields with complex b.comp.
+// TODO use #[serde(default = "path")] for all builds, because we want the
+//      default cost to be -1 so that they can be filled correctly
 pub struct Bible
 {
 	pub version : Version,
@@ -87,7 +89,7 @@ pub struct Bible
 							#[serde(default, skip_serializing_if = "is_zero")]
 	pub tileCultivates : TileMap<Vec<TileBuild>>,
 
-							#[serde(default, skip_serializing)]
+							#[serde(default, skip_serializing_if = "is_zero")]
 	pub tileCost : TileMap<i16>,
 							#[serde(default, skip_serializing_if = "is_zero")]
 	pub tileScoreBase : TileMap<i16>,
@@ -174,7 +176,7 @@ pub struct Bible
 							#[serde(default, skip_serializing_if = "is_zero")]
 	pub unitSettles : UnitMap<Vec<TileBuild>>,
 
-							#[serde(default, skip_serializing)]
+							#[serde(default, skip_serializing_if = "is_zero")]
 	pub unitCost : UnitMap<i16>,
 
 							#[serde(default, skip_serializing_if = "is_zero")]
@@ -1122,7 +1124,7 @@ impl Bible
 		bible.humGenDefault = 2;
 		bible.humGenGainRange = 5;
 
-		// Distance from src =    0    1    2   -    4    5.
+		// Distance from src      =        0    1    2   -    4    5.
 		bible.humGenLakeGain      = vec![  1,   1,   1,  0,   1,   1];
 		bible.humGenOceanGain     = vec![  1,   1,   1,  0,   0,   0];
 		bible.humGenDesertGain    = vec![ -2,  -1,  -1,  0,   0,   0];
