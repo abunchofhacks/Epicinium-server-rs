@@ -23,10 +23,6 @@ use common::header::is_zero;
 #[derive(Default, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[allow(non_snake_case)]
 // TODO replace allow(non_snake_case) with serde(rename_all = "camelCase")?
-// TODO use #[serde(default = "path")] for fields with non-zero defaults
-// TODO use #[serde(deserialize_with = "path")] for fields with complex b.comp.
-// TODO use #[serde(default = "path")] for all builds, because we want the
-//      default cost to be -1 so that they can be filled correctly
 pub struct Bible
 {
 	pub version : Version,
@@ -89,8 +85,6 @@ pub struct Bible
 							#[serde(default, skip_serializing_if = "is_zero")]
 	pub tileCultivates : TileMap<Vec<TileBuild>>,
 
-							#[serde(default, skip_serializing_if = "is_zero")]
-	pub tileCost : TileMap<i16>,
 							#[serde(default, skip_serializing_if = "is_zero")]
 	pub tileScoreBase : TileMap<i16>,
 							#[serde(default, skip_serializing_if = "is_zero")]
@@ -175,9 +169,6 @@ pub struct Bible
 	pub unitShapes : UnitMap<Vec<TileBuild>>,
 							#[serde(default, skip_serializing_if = "is_zero")]
 	pub unitSettles : UnitMap<Vec<TileBuild>>,
-
-							#[serde(default, skip_serializing_if = "is_zero")]
-	pub unitCost : UnitMap<i16>,
 
 							#[serde(default, skip_serializing_if = "is_zero")]
 	pub unitSizeMax : i8,
@@ -537,24 +528,23 @@ impl Bible
 		bible.tileProduces[TileType::CITY] = vec![
 				UnitBuild {
 					typ: UnitType::MILITIA,
-					cost: -1,
+					cost: 5,
 				},
 				UnitBuild {
 					typ: UnitType::SETTLER,
-					cost: -1,
+					cost: 1,
 				},
 		];
 		bible.tileExpands[TileType::CITY] = vec![
 				TileBuild {
 					typ: TileType::INDUSTRY,
-					cost: -1,
+					cost: 3,
 				},
 				TileBuild {
 					typ: TileType::BARRACKS,
-					cost: -1,
+					cost: 3,
 				},
 		];
-		bible.tileCost[TileType::CITY] = 20;
 		bible.tileDestroyed[TileType::CITY] = TileType::RUBBLE;
 
 		bible.tileAccessible[TileType::TOWN] = true;
@@ -575,7 +565,7 @@ impl Bible
 		bible.tileProduces[TileType::TOWN] = vec![
 				UnitBuild {
 					typ: UnitType::SETTLER,
-					cost: -1,
+					cost: 1,
 				},
 		];
 		bible.tileUpgrades[TileType::TOWN] = vec![
@@ -584,7 +574,6 @@ impl Bible
 					cost: 15,
 				},
 		];
-		bible.tileCost[TileType::TOWN] = 5;
 		bible.tileDestroyed[TileType::TOWN] = TileType::RUBBLE;
 
 		bible.tileAccessible[TileType::SETTLEMENT] = true;
@@ -605,11 +594,11 @@ impl Bible
 		bible.tileProduces[TileType::SETTLEMENT] = vec![
 				UnitBuild {
 					typ: UnitType::SETTLER,
-					cost: -1,
+					cost: 1,
 				},
 				UnitBuild {
 					typ: UnitType::MILITIA,
-					cost: -1,
+					cost: 5,
 				},
 		];
 		bible.tileUpgrades[TileType::SETTLEMENT] = vec![
@@ -618,7 +607,6 @@ impl Bible
 					cost: 18,
 				},
 		];
-		bible.tileCost[TileType::SETTLEMENT] = 2;
 		bible.tileDestroyed[TileType::SETTLEMENT] = TileType::RUBBLE;
 
 		bible.tileAccessible[TileType::INDUSTRY] = true;
@@ -640,13 +628,13 @@ impl Bible
 		bible.tileProduces[TileType::INDUSTRY] = vec![
 				UnitBuild {
 					typ: UnitType::TANK,
-					cost: -1,
+					cost: 15,
 				},
 		];
 		bible.tileExpands[TileType::INDUSTRY] = vec![
 				TileBuild {
 					typ: TileType::AIRFIELD,
-					cost: -1,
+					cost: 5,
 				},
 		];
 		bible.tileUpgrades[TileType::INDUSTRY] = vec![
@@ -655,7 +643,6 @@ impl Bible
 					cost: 30,
 				},
 		];
-		bible.tileCost[TileType::INDUSTRY] = 3;
 		bible.tileDestroyed[TileType::INDUSTRY] = TileType::RUBBLE;
 
 		bible.tileAccessible[TileType::EMBASSY] = true;
@@ -674,10 +661,9 @@ impl Bible
 		bible.tileProduces[TileType::EMBASSY] = vec![
 				UnitBuild {
 					typ: UnitType::SETTLER,
-					cost: -1,
+					cost: 1,
 				},
 		];
-		bible.tileCost[TileType::EMBASSY] = 20;
 		bible.tileDestroyed[TileType::EMBASSY] = TileType::RUBBLE;
 
 		bible.tileAccessible[TileType::BARRACKS] = true;
@@ -696,15 +682,15 @@ impl Bible
 		bible.tileProduces[TileType::BARRACKS] = vec![
 				UnitBuild {
 					typ: UnitType::RIFLEMAN,
-					cost: -1,
+					cost: 5,
 				},
 				UnitBuild {
 					typ: UnitType::GUNNER,
-					cost: -1,
+					cost: 10,
 				},
 				UnitBuild {
 					typ: UnitType::SAPPER,
-					cost: -1,
+					cost: 10,
 				},
 		];
 		bible.tileUpgrades[TileType::BARRACKS] = vec![
@@ -713,7 +699,6 @@ impl Bible
 					cost: 30,
 				},
 		];
-		bible.tileCost[TileType::BARRACKS] = 3;
 		bible.tileDestroyed[TileType::BARRACKS] = TileType::RUBBLE;
 
 		bible.tileAccessible[TileType::AIRFIELD] = true;
@@ -733,10 +718,9 @@ impl Bible
 		bible.tileProduces[TileType::AIRFIELD] = vec![
 				UnitBuild {
 					typ: UnitType::ZEPPELIN,
-					cost: -1,
+					cost: 20,
 				},
 		];
-		bible.tileCost[TileType::AIRFIELD] = 5;
 		bible.tileDestroyed[TileType::AIRFIELD] = TileType::RUBBLE;
 
 		bible.tileAccessible[TileType::REACTOR] = true;
@@ -757,10 +741,9 @@ impl Bible
 		bible.tileProduces[TileType::REACTOR] = vec![
 				UnitBuild {
 					typ: UnitType::NUKE,
-					cost: -1,
+					cost: 100,
 				},
 		];
-		bible.tileCost[TileType::REACTOR] = 30;
 		bible.tileDestroyed[TileType::REACTOR] = TileType::RUBBLE;
 
 		bible.tileAccessible[TileType::FARM] = true;
@@ -781,20 +764,19 @@ impl Bible
 		bible.tileProduces[TileType::FARM] = vec![
 				UnitBuild {
 					typ: UnitType::SETTLER,
-					cost: -1,
+					cost: 1,
 				},
 				UnitBuild {
 					typ: UnitType::MILITIA,
-					cost: -1,
+					cost: 5,
 				},
 		];
 		bible.tileCultivates[TileType::FARM] = vec![
 				TileBuild {
 					typ: TileType::SOIL,
-					cost: -1
+					cost: 0,
 				},
 		];
-		bible.tileCost[TileType::FARM] = 2;
 		bible.tileDestroyed[TileType::FARM] = TileType::RUBBLE;
 
 		bible.tileAccessible[TileType::SOIL] = true;
@@ -809,7 +791,6 @@ impl Bible
 		bible.tilePlane[TileType::SOIL] = true;
 		bible.tileVision[TileType::SOIL] = 0;
 		bible.tileIncome[TileType::SOIL] = 0;
-		bible.tileCost[TileType::SOIL] = 0;
 		bible.tileDestroyed[TileType::SOIL] = TileType::DIRT;
 
 		bible.tileAccessible[TileType::CROPS] = true;
@@ -835,7 +816,6 @@ impl Bible
 		bible.tileOwnable[TileType::TRENCHES] = false;
 		bible.tileControllable[TileType::TRENCHES] = false;
 		bible.tilePlane[TileType::TRENCHES] = false;
-		bible.tileCost[TileType::TRENCHES] = 0;
 
 		bible.tileExpandRangeMin = 1;
 		bible.tileExpandRangeMax = 1;
@@ -855,7 +835,6 @@ impl Bible
 		bible.unitHitpoints[UnitType::RIFLEMAN] = 2;
 		bible.unitAttackShots[UnitType::RIFLEMAN] = 1;
 		bible.unitAttackDamage[UnitType::RIFLEMAN] = 1;
-		bible.unitCost[UnitType::RIFLEMAN] = 5;
 
 		bible.unitInfantry[UnitType::GUNNER] = true;
 		bible.unitCanMove[UnitType::GUNNER] = true;
@@ -871,10 +850,9 @@ impl Bible
 		bible.unitShapes[UnitType::GUNNER] = vec![
 				TileBuild {
 					typ: TileType::TRENCHES,
-					cost: -1
+					cost: 0,
 				},
 		];
-		bible.unitCost[UnitType::GUNNER] = 10;
 
 		bible.unitInfantry[UnitType::SAPPER] = true;
 		bible.unitCanMove[UnitType::SAPPER] = true;
@@ -893,7 +871,6 @@ impl Bible
 		bible.unitAbilityDamage[UnitType::SAPPER] = 3;
 		bible.unitRangeMin[UnitType::SAPPER] = 2;
 		bible.unitRangeMax[UnitType::SAPPER] = 10;
-		bible.unitCost[UnitType::SAPPER] = 10;
 
 		bible.unitMechanical[UnitType::TANK] = true;
 		bible.unitCanMove[UnitType::TANK] = true;
@@ -914,7 +891,6 @@ impl Bible
 		bible.unitAbilityDamage[UnitType::TANK] = 3;
 		bible.unitRangeMin[UnitType::TANK] = 1;
 		bible.unitRangeMax[UnitType::TANK] = 1;
-		bible.unitCost[UnitType::TANK] = 15;
 
 		bible.unitCanMove[UnitType::SETTLER] = true;
 		bible.unitCanOccupy[UnitType::SETTLER] = true;
@@ -925,18 +901,17 @@ impl Bible
 		bible.unitSettles[UnitType::SETTLER] = vec![
 				TileBuild {
 					typ: TileType::CITY,
-					cost: -1,
+					cost: 20,
 				},
 				TileBuild {
 					typ: TileType::TOWN,
-					cost: -1,
+					cost: 5,
 				},
 				TileBuild {
 					typ: TileType::FARM,
-					cost: -1,
+					cost: 2,
 				},
 		];
-		bible.unitCost[UnitType::SETTLER] = 1;
 
 		bible.unitInfantry[UnitType::MILITIA] = true;
 		bible.unitCanMove[UnitType::MILITIA] = true;
@@ -950,7 +925,6 @@ impl Bible
 		bible.unitHitpoints[UnitType::MILITIA] = 1;
 		bible.unitAttackShots[UnitType::MILITIA] = 1;
 		bible.unitAttackDamage[UnitType::MILITIA] = 1;
-		bible.unitCost[UnitType::MILITIA] = 5;
 
 		bible.unitCanMove[UnitType::DIPLOMAT] = true;
 		bible.unitCanCapture[UnitType::DIPLOMAT] = true;
@@ -959,7 +933,6 @@ impl Bible
 		bible.unitSpeed[UnitType::DIPLOMAT] = 3;
 		bible.unitVision[UnitType::DIPLOMAT] = 2;
 		bible.unitHitpoints[UnitType::DIPLOMAT] = 1;
-		bible.unitCost[UnitType::DIPLOMAT] = 5;
 
 		bible.unitAir[UnitType::ZEPPELIN] = true;
 		bible.unitMechanical[UnitType::ZEPPELIN] = true;
@@ -977,7 +950,6 @@ impl Bible
 		bible.unitRangeMax[UnitType::ZEPPELIN] = 0;
 		bible.unitAbilityGas[UnitType::ZEPPELIN] = 2;
 		bible.unitLeakGas[UnitType::ZEPPELIN] = 1;
-		bible.unitCost[UnitType::ZEPPELIN] = 20;
 
 		bible.unitMechanical[UnitType::GLIDER] = true;
 		bible.unitCanMove[UnitType::GLIDER] = true;
@@ -985,7 +957,6 @@ impl Bible
 		bible.unitSpeed[UnitType::GLIDER] = 3;
 		bible.unitVision[UnitType::GLIDER] = 2;
 		bible.unitHitpoints[UnitType::GLIDER] = 3;
-		bible.unitCost[UnitType::GLIDER] = 10;
 
 		bible.unitMechanical[UnitType::NUKE] = true;
 		bible.unitCanMove[UnitType::NUKE] = true;
@@ -994,7 +965,6 @@ impl Bible
 		bible.unitVision[UnitType::NUKE] = 2;
 		bible.unitHitpoints[UnitType::NUKE] = 3;
 		bible.unitLeakRads[UnitType::NUKE] = 1;
-		bible.unitCost[UnitType::NUKE] = 100;
 
 		bible.unitSizeMax = bible.unitStacksMax[UnitType::RIFLEMAN];
 		bible.unitVisionMax = bible.unitVision[UnitType::ZEPPELIN];
@@ -1171,75 +1141,8 @@ impl Bible
 		bible.startingIncome = 20;
 		bible.newOrderLimit = 5;
 
-		/* POSTFIX */
-		bible.fix_costs();
-
 		/* DONE */
 		bible
-	}
-
-	fn fix_costs(&mut self)
-	{
-		for (_, ref mut builds) in self.tileProduces.0.iter_mut()
-		{
-			for &mut UnitBuild{typ, ref mut cost} in builds.iter_mut()
-			{
-				if *cost < 0
-				{
-					*cost = self.unitCost[typ];
-				}
-			}
-		}
-		for (_, ref mut builds) in self.tileExpands.0.iter_mut()
-		{
-			for &mut TileBuild{typ, ref mut cost} in builds.iter_mut()
-			{
-				if *cost < 0
-				{
-					*cost = self.tileCost[typ];
-				}
-			}
-		}
-		for (_, ref mut builds) in self.tileUpgrades.0.iter_mut()
-		{
-			for &mut TileBuild{typ, ref mut cost} in builds.iter_mut()
-			{
-				if *cost < 0
-				{
-					*cost = self.tileCost[typ];
-				}
-			}
-		}
-		for (_, ref mut builds) in self.tileCultivates.0.iter_mut()
-		{
-			for &mut TileBuild{typ, ref mut cost} in builds.iter_mut()
-			{
-				if *cost < 0
-				{
-					*cost = self.tileCost[typ];
-				}
-			}
-		}
-		for (_, ref mut builds) in self.unitShapes.0.iter_mut()
-		{
-			for &mut TileBuild{typ, ref mut cost} in builds.iter_mut()
-			{
-				if *cost < 0
-				{
-					*cost = self.tileCost[typ];
-				}
-			}
-		}
-		for (_, ref mut builds) in self.unitSettles.0.iter_mut()
-		{
-			for &mut TileBuild{typ, ref mut cost} in builds.iter_mut()
-			{
-				if *cost < 0
-				{
-					*cost = self.tileCost[typ];
-				}
-			}
-		}
 	}
 }
 
