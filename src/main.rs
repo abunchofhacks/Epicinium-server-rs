@@ -34,20 +34,20 @@ fn main()
 	println!("Size of Order: {}", std::mem::size_of::<Order>());
 	println!("Size of Move: {}", std::mem::size_of::<Move>());
 	println!("Size of Vec<Move>: {}", std::mem::size_of::<Vec<Move>>());
-	//let x = Bible::current();
-	//let txt = serde_json::to_string(& x).unwrap();
-	//let y : Bible = serde_json::from_str(& txt).unwrap();
-	//{
-	//	let mut file = File::create("x.out").unwrap();
-	//	let _result = write!(file, "{:?}", x);
-	//}
-	//{
-	//	let mut file = File::create("v0.23.0.out").unwrap();
-	//	let _result = write!(file, "{}", txt);
-	//}
-	//{
-	//	let mut file = File::create("y.out").unwrap();
-	//	let _result = write!(file, "{:?}", y);
-	//}
-	//assert!(x == y);
+	let x = Bible::current();
+	let txt = serde_json::to_string(& x).unwrap();
+	let y : Bible = serde_json::from_str(& txt).unwrap();
+	{
+		let mut file = File::create("x.out").unwrap();
+		let _result = write!(file, "{:?}", x);
+	}
+	{
+		let mut file = File::create("v0.23.0.out").unwrap();
+		let _result = write!(file, "{}", txt);
+	}
+	{
+		let mut file = File::create("y.out").unwrap();
+		let _result = write!(file, "{:?}", y);
+	}
+	assert!(x == y);
 }

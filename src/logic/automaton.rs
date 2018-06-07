@@ -1,11 +1,9 @@
 /* Automaton */
 
-use std;
+use std::collections::VecDeque;
+use std::collections::HashMap;
 use enum_map::EnumMap;
-use logic::space::*;
 use logic::change::*;
-use logic::position::*;
-use logic::unit::*;
 use logic::player::*;
 use logic::descriptor::*;
 use logic::board::*;
@@ -35,6 +33,13 @@ pub struct Automaton
 	season : Season,
 	daytime : Daytime,
 	phase : Phase,
+
+	activeplayers : VecDeque<Player>,
+	activeorders : EnumMap<Player, VecDeque<Order>>,
+	unfinishedorders : EnumMap<Player, VecDeque<Order>>,
+	activesubjects : HashMap<u32, Descriptor>,
+	unfinishedsubjects : HashMap<u32, Descriptor>,
+	changesets : VecDeque<ChangeSet>
 }
 
 impl Automaton

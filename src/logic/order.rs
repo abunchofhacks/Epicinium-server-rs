@@ -5,7 +5,7 @@ use logic::tile::TileType;
 use logic::unit::UnitType;
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Move
 {
@@ -15,7 +15,7 @@ pub enum Move
 	NORTH,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
 pub enum Order

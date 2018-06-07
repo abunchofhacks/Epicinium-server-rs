@@ -33,6 +33,11 @@ impl Vision
 		self.0.retain(|p| p != &player);
 		self
 	}
+
+	pub fn contains(& self, player : Player) -> bool
+	{
+		self.0.contains(&player)
+	}
 }
 
 fn none() -> Vision

@@ -11,7 +11,7 @@ use logic::order::*;
 use logic::vision::*;
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
 pub enum Change
@@ -524,7 +524,7 @@ pub enum Change
 	},
 }
 
-#[derive(PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Notice
 {
@@ -548,7 +548,7 @@ impl Default for Notice
 	fn default() -> Notice { Notice::NONE }
 }
 
-#[derive(Default, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Attacker
 {
 	#[serde(rename = "type")]
@@ -557,10 +557,28 @@ pub struct Attacker
 	pub position: Position,
 }
 
-#[derive(Default, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Bombarder
 {
 	#[serde(rename = "type")]
 	pub typ: UnitType,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ChangeSet(Vec<(Change, Vision)>);
+
+impl ChangeSet
+{
+	pub fn push(&mut self, change : Change, vision : Vision)
+	{
+		self.0.push((change, vision));
+	}
+
+	pub fn get(& self, player : Player) -> Vec<Change>
+	{
+		self.0.iter()
+			.filter(|&&(_, ref vision)| vision.contains(player))
+			.map(|&(ref change, _)| (*change).clone())
+			.collect()
+	}
+}
