@@ -39,23 +39,3 @@ impl Vision
 		self.0.contains(&player)
 	}
 }
-
-fn none() -> Vision
-{
-	Vision(vec!{
-		Player::OBSERVER,
-	})
-}
-
-fn only(player : Player) -> Vision
-{
-	Vision(vec!{
-		Player::OBSERVER,
-		player,
-	})
-}
-
-fn all(players : & Vec<Player>) -> Vision
-{
-	Vision(players.to_vec()).and(Player::OBSERVER).and(Player::BLIND)
-}
