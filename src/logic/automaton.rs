@@ -71,10 +71,14 @@ impl Automaton
 
 		if (shufflePlayers)
 		{
-			// TODO shuffle players
+			// TODO shuffle self.players
+
 			self.board.assignPlayers(self.players);
 		}
-		else self.board.setPlayers(self.players);
+		else
+		{
+			self.board.setPlayers(self.players);
+		}
 
 		// TODO finish
 	}
