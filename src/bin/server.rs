@@ -16,6 +16,11 @@ fn main()
 	);
 	println!("");
 
+	{
+		let mut server = ServerCluster::create();
+		server.run();
+	}
+
 	println!("");
 	println!("[ Done ]");
 }

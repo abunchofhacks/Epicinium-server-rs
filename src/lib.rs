@@ -11,9 +11,10 @@ extern crate enum_map;
 #[macro_use]
 extern crate enum_map_derive;
 
-
 pub mod common;
 pub mod logic;
+pub mod server;
 
 pub use self::common::*;
 pub use self::logic::*;
+pub use self::server::*;
