@@ -42,11 +42,11 @@ impl LoginCluster
 	{
 		for stream in self.listener.incoming()
 		{
-			match stream
+			match ServerClient::create(stream)
 			{
-				Ok(stream) =>
+				Ok(client) =>
 				{
-					self.clients.push(ServerClient::create(stream));
+					self.clients.push(client);
 				}
 				Err(ref e) if e.kind() == io::ErrorKind::WouldBlock =>
 				{
@@ -56,8 +56,37 @@ impl LoginCluster
 				Err(e) =>
 				{
 					eprintln!("Incoming connection failed: {}", e);
+					break;
 				}
 			}
 		}
+
+		for client in &mut self.clients
+		{
+			// TODO replace loop with for loop to avoid client from DOSing?
+			loop
+			{
+				match client.receive()
+				{
+					Ok(message) =>
+					{
+						println!("Received message: {:#?}", message);
+					}
+					Err(ref e) if e.kind() == io::ErrorKind::WouldBlock =>
+					{
+						// There are no more incoming messages from this client.
+						break;
+					}
+					Err(e) =>
+					{
+						eprintln!("Client connection failed: {}", e);
+						client.killed = true;
+						break;
+					}
+				}
+			}
+		}
+
+		self.clients.retain(|client| !client.killed);
 	}
 }
