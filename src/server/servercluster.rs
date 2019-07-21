@@ -2,14 +2,18 @@
 
 use server::logincluster::*;
 
+use signal_hook;
+use signal_hook::{SIGHUP, SIGTERM};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time;
 
 pub struct ServerCluster
 {
 	login: LoginCluster,
-	killcount: i32,
 	closing: bool,
+	terminating: bool,
 }
 
 impl ServerCluster
@@ -18,26 +22,33 @@ impl ServerCluster
 	{
 		ServerCluster {
 			login: LoginCluster::create(),
-			killcount: 0,
 			closing: false,
+			terminating: false,
 		}
 	}
 
-	pub fn run(&mut self)
+	pub fn run(&mut self) -> std::result::Result<(), std::io::Error>
 	{
-		let mut lastkillcount = self.killcount;
+		let term = Arc::new(AtomicBool::new(false));
+		// Install the handler. This happens after the server has been created
+		// because if creation hangs we just want to kill it immediately.
+		signal_hook::flag::register(SIGTERM, Arc::clone(&term))?;
+		signal_hook::flag::register(SIGHUP, Arc::clone(&term))?;
+		// TODO replace SIGHUP with SIGBREAK on Windows?
 
-		while self.killcount <= 1
+		while !self.terminating
 		{
-			if lastkillcount != self.killcount
+			if term.load(Ordering::Relaxed)
 			{
-				if self.killcount == 1
+				if self.closing
 				{
-					self.closing = true;
-					self.login.close();
+					self.terminating = true;
 				}
-
-				lastkillcount = self.killcount;
+				else
+				{
+					self.login.close();
+					self.closing = true;
+				}
 			}
 
 			if self.closing
@@ -52,5 +63,7 @@ impl ServerCluster
 
 			println!("Tick");
 		}
+
+		Ok(())
 	}
 }

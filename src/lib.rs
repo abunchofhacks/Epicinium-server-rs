@@ -11,6 +11,8 @@ extern crate enum_map;
 #[macro_use]
 extern crate enum_map_derive;
 
+extern crate signal_hook;
+
 pub mod common;
 pub mod logic;
 pub mod server;
