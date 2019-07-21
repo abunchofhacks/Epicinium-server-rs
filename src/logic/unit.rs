@@ -1,12 +1,12 @@
 /* Unit */
 
-use std;
 use common::header::*;
 use logic::player::Player;
+use std;
 
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
-#[derive(EnumMap)]
+#[derive(
+	Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug, EnumMap,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum UnitType
 {
@@ -25,7 +25,10 @@ pub enum UnitType
 
 impl Default for UnitType
 {
-	fn default() -> UnitType { UnitType::NONE }
+	fn default() -> UnitType
+	{
+		UnitType::NONE
+	}
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -41,7 +44,7 @@ pub struct UnitToken
 	pub stacks: i8,
 }
 
-pub fn swap(a : &mut UnitToken, b : &mut UnitToken)
+pub fn swap(a: &mut UnitToken, b: &mut UnitToken)
 {
 	std::mem::swap(a, b);
 }

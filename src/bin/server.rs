@@ -4,7 +4,9 @@ extern crate epicinium;
 
 use epicinium::*;
 
-fn main() -> std::result::Result<(), std::io::Error>
+use std::io;
+
+fn main() -> io::Result<()>
 {
 	let logname = String::from("rust");
 	let currentversion = Version::current();
@@ -17,7 +19,7 @@ fn main() -> std::result::Result<(), std::io::Error>
 	println!("");
 
 	{
-		let mut server = ServerCluster::create();
+		let mut server = ServerCluster::create()?;
 		server.run()?;
 	}
 

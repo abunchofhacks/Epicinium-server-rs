@@ -4,8 +4,9 @@ use server::logincluster::*;
 
 use signal_hook;
 use signal_hook::{SIGHUP, SIGTERM};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::io;
+use std::sync;
+use std::sync::atomic;
 use std::thread;
 use std::time;
 
@@ -18,27 +19,28 @@ pub struct ServerCluster
 
 impl ServerCluster
 {
-	pub fn create() -> ServerCluster
+	pub fn create() -> io::Result<ServerCluster>
 	{
-		ServerCluster {
-			login: LoginCluster::create(),
+		Ok(ServerCluster {
+			login: LoginCluster::create()?,
 			closing: false,
 			terminating: false,
-		}
+		})
 	}
 
-	pub fn run(&mut self) -> std::result::Result<(), std::io::Error>
+	pub fn run(&mut self) -> io::Result<()>
 	{
-		let term = Arc::new(AtomicBool::new(false));
+		let shutdown = sync::Arc::new(atomic::AtomicBool::new(false));
+
 		// Install the handler. This happens after the server has been created
 		// because if creation hangs we just want to kill it immediately.
-		signal_hook::flag::register(SIGTERM, Arc::clone(&term))?;
-		signal_hook::flag::register(SIGHUP, Arc::clone(&term))?;
+		signal_hook::flag::register(SIGTERM, sync::Arc::clone(&shutdown))?;
+		signal_hook::flag::register(SIGHUP, sync::Arc::clone(&shutdown))?;
 		// TODO replace SIGHUP with SIGBREAK on Windows?
 
 		while !self.terminating
 		{
-			if term.load(Ordering::Relaxed)
+			if shutdown.load(atomic::Ordering::Relaxed)
 			{
 				if self.closing
 				{
@@ -59,9 +61,9 @@ impl ServerCluster
 				}
 			}
 
-			thread::sleep(time::Duration::from_millis(100));
+			self.login.update();
 
-			println!("Tick");
+			thread::sleep(time::Duration::from_millis(100));
 		}
 
 		Ok(())
