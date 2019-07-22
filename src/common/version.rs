@@ -10,7 +10,7 @@ use std::num::ParseIntError;
 use std::result::Result;
 use std::str::FromStr;
 
-#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Debug, Copy, Clone)]
 pub struct Version
 {
 	pub major: u8,
@@ -23,11 +23,40 @@ impl Version
 {
 	pub fn current() -> Version
 	{
+		if cfg!(debug_assertions)
+		{
+			if cfg!(feature = "candidate")
+			{
+				Version::latest()
+			}
+			else
+			{
+				Version::dev()
+			}
+		}
+		else
+		{
+			Version::latest().release()
+		}
+	}
+
+	pub fn latest() -> Version
+	{
 		Version {
 			major: 0,
 			minor: 1,
 			patch: 0,
 			release: 0,
+		}
+	}
+
+	pub fn dev() -> Version
+	{
+		Version {
+			major: 255,
+			minor: 255,
+			patch: 255,
+			release: 254,
 		}
 	}
 
@@ -40,13 +69,25 @@ impl Version
 			release: 255,
 		}
 	}
-}
 
-impl Default for Version
-{
-	fn default() -> Version
+	pub fn release(&self) -> Version
 	{
-		Version::current()
+		Version {
+			major: self.major,
+			minor: self.minor,
+			patch: self.patch,
+			release: 0,
+		}
+	}
+
+	pub fn exact(major: u8, minor: u8, patch: u8, release: u8) -> Version
+	{
+		Version {
+			major,
+			minor,
+			patch,
+			release,
+		}
 	}
 }
 

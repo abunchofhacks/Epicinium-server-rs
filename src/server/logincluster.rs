@@ -1,6 +1,6 @@
 /* LoginCluster */
 
-use server::message::Message::*;
+use common::version::*;
 use server::message::*;
 use server::serverclient::*;
 
@@ -72,50 +72,121 @@ impl LoginCluster
 				{
 					Ok(message) => match message
 					{
-						Pulse =>
+						Message::Pulse =>
 						{
-							// TODO
+							// TODO handle
 						}
-						Ping =>
+						Message::Ping =>
 						{
 							// Pings must always be responded with pongs.
 							client.send(Message::Pong);
 						}
-						Pong =>
+						Message::Pong =>
 						{
-							// TODO
+							// TODO handle
 						}
-						Version {
-							version,
-							metadata:
-								PlatformMetadata {
-									platform,
-									patchmode,
-								},
-						} =>
+						Message::Version { version, metadata } =>
 						{
 							client.version = version;
 							println!(
 								"Client has version {}",
 								version.to_string()
 							);
-							client.platform = platform;
-							println!("Client has platform {:?}", platform);
-							client.patchmode = patchmode;
-							println!("Client has patchmode {:?}", patchmode);
+
+							match metadata
+							{
+								Some(PlatformMetadata {
+									platform,
+									patchmode,
+								}) =>
+								{
+									client.platform = platform;
+									println!(
+										"Client has platform {:?}",
+										platform
+									);
+									client.patchmode = patchmode;
+									println!(
+										"Client has patchmode {:?}",
+										patchmode
+									);
+								}
+								None =>
+								{}
+							}
+
+							let myversion = Version::current();
+							client.send(Message::Version {
+								version: myversion,
+								metadata: None,
+							});
+
+							if version.major != myversion.major
+								|| version == Version::undefined()
+							{
+								// We do not want to receive any more messages.
+								break;
+							}
+							else if (client.patchmode == Patchmode::Itchio
+								|| client.patchmode == Patchmode::Gamejolt)
+								&& version < Version::exact(0, 29, 0, 0)
+							{
+								// Version 0.29.0 was the first closed beta
+								// version, which means clients with non-server
+								// patchmodes (itch or gamejolt) cannot patch.
+								// It is also the first version with keys.
+								// Older versions do not properly display the
+								// warning that joining failed because of
+								// ResponseStatus::KEY_REQUIRED. Instead, we
+								// overwrite the 'Version mismatch' message.
+								client.send(Message::Chat {
+									content: "The Open Beta has ended. \
+									          Join our Discord community at \
+									          www.epicinium.nl/discord \
+									          to qualify for access to the \
+									          Closed Beta."
+										.to_string(),
+									sender: "server".to_string(),
+									target: ChatTarget::General,
+								});
+
+								// We do not want to receive any more messages.
+								break;
+							}
+							else if self.closing
+							{
+								// We do not want to receive any more messages.
+								break;
+							}
+							else
+							{
+								// TODO notice
+							}
+
+							// TODO change state to VERSIONED
+
+							// TODO enable pulses enzo
 						}
-						Quit =>
+						Message::Quit =>
 						{
-							println!("Client has gracefully disconnected.");
+							println!("Client gracefully disconnected.");
 							client.killed = true;
 						}
-						Closing =>
+						Message::Closing =>
 						{
 							println!(
 								"Invalid message from client: {:?}",
 								message
 							);
 							client.killed = true;
+						}
+						Message::Chat {
+							content: _,
+							sender: _,
+							target: _,
+						} =>
+						{
+							// TODO handle
 						}
 					},
 					Err(ref e) if e.kind() == io::ErrorKind::WouldBlock =>
@@ -128,7 +199,7 @@ impl LoginCluster
 						// The client has disconnected.
 						if !client.killed
 						{
-							println!("Client has ungracefully disconnected.");
+							println!("Client ungracefully disconnected.");
 							client.killed = true;
 						}
 					}
@@ -159,7 +230,7 @@ impl LoginCluster
 						// The client has disconnected.
 						if !client.killed
 						{
-							println!("Client has ungracefully disconnected.");
+							println!("Client ungracefully disconnected.");
 							client.killed = true;
 						}
 					}

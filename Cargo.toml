@@ -10,3 +10,7 @@ serde_json = "*"
 enum-map = "*"
 enum-map-derive = "*"
 signal-hook = "0.1.10"
+
+[features]
+defaults = []
+candidate = []

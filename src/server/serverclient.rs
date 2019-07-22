@@ -80,10 +80,7 @@ impl ServerClient
 		}
 		else if buffer[0] == '=' as u8
 		{
-			Err(io::Error::new(
-				io::ErrorKind::InvalidData,
-				"Not implemented yet.",
-			))
+			panic!("Not implemented yet.");
 		}
 		else
 		{
@@ -150,6 +147,11 @@ impl ServerClient
 		self.sendqueue.push_back(data.to_vec());
 
 		println!("Queued message of length {}.", length);
+
+		if length < 200
+		{
+			println!("Queued message: {}", jsonstr);
+		}
 	}
 
 	pub fn has_queued(&self) -> bool

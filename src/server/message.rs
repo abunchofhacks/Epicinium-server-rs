@@ -1,5 +1,6 @@
 /* Message */
 
+use common::header::*;
 use common::version::*;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -14,14 +15,20 @@ pub enum Message
 	{
 		version: Version,
 
-		#[serde(default)]
-		metadata: PlatformMetadata,
+		#[serde(default, skip_serializing_if = "is_zero")]
+		metadata: Option<PlatformMetadata>,
 	},
 	Closing,
 	Quit,
+	Chat
+	{
+		content: String,
+		sender: String,
+		target: ChatTarget,
+	},
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize, Default, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "lowercase")]
 pub struct PlatformMetadata
 {
@@ -29,7 +36,7 @@ pub struct PlatformMetadata
 	pub patchmode: Patchmode,
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Platform
 {
@@ -50,7 +57,7 @@ impl Default for Platform
 	}
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Patchmode
 {
@@ -66,4 +73,12 @@ impl Default for Patchmode
 	{
 		Patchmode::None
 	}
+}
+
+#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatTarget
+{
+	General,
+	Lobby,
 }
