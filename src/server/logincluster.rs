@@ -79,29 +79,7 @@ impl LoginCluster
 						Ping =>
 						{
 							// Pings must always be responded with pongs.
-							match client.send(Message::Pong)
-							{
-								Ok(()) =>
-								{}
-								Err(ref e)
-									if e.kind()
-										== io::ErrorKind::UnexpectedEof =>
-								{
-									// The client has disconnected.
-									println!(
-										"Client has ungracefully disconnected."
-									);
-									client.killed = true;
-								}
-								Err(e) =>
-								{
-									eprintln!(
-										"Client connection failed: {:?}",
-										e
-									);
-									client.killed = true;
-								}
-							}
+							client.send(Message::Pong);
 						}
 						Pong =>
 						{
@@ -143,6 +121,37 @@ impl LoginCluster
 					Err(ref e) if e.kind() == io::ErrorKind::WouldBlock =>
 					{
 						// There are no more incoming messages from this client.
+						break;
+					}
+					Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof =>
+					{
+						// The client has disconnected.
+						if !client.killed
+						{
+							println!("Client has ungracefully disconnected.");
+							client.killed = true;
+						}
+					}
+					Err(e) =>
+					{
+						eprintln!("Client connection failed: {:?}", e);
+						client.killed = true;
+					}
+				}
+			}
+		}
+
+		for client in &mut self.clients
+		{
+			while !client.killed && client.has_queued()
+			{
+				match client.send_queued()
+				{
+					Ok(()) =>
+					{}
+					Err(ref e) if e.kind() == io::ErrorKind::WouldBlock =>
+					{
+						// The TCP buffers are blocked up for this client.
 						break;
 					}
 					Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof =>

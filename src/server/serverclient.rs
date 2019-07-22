@@ -4,6 +4,7 @@ use common::version::*;
 use server::limits;
 use server::message::*;
 
+use std::collections::VecDeque;
 use std::io;
 use std::io::{Read, Write};
 use std::net;
@@ -11,7 +12,9 @@ use std::net;
 pub struct ServerClient
 {
 	stream: net::TcpStream,
-	last_length: Option<u32>,
+	active_receive_length: Option<u32>,
+	already_sent_amount: usize,
+	sendqueue: VecDeque<Vec<u8>>,
 
 	pub version: Version,
 	pub platform: Platform,
@@ -33,7 +36,9 @@ impl ServerClient
 
 		Ok(ServerClient {
 			stream: stream,
-			last_length: None,
+			active_receive_length: None,
+			already_sent_amount: 0,
+			sendqueue: VecDeque::new(),
 			version: Version::undefined(),
 			platform: Platform::Unknown,
 			patchmode: Patchmode::None,
@@ -44,7 +49,7 @@ impl ServerClient
 	pub fn receive(&mut self) -> io::Result<Message>
 	{
 		let length: u32;
-		match self.last_length
+		match self.active_receive_length
 		{
 			Some(len) =>
 			{
@@ -56,7 +61,7 @@ impl ServerClient
 				self.stream.read_exact(&mut lengthbuffer)?;
 
 				length = u32_from_little_endian_bytes(&lengthbuffer);
-				self.last_length = Some(length);
+				self.active_receive_length = Some(length);
 			}
 		}
 
@@ -64,7 +69,7 @@ impl ServerClient
 
 		let mut buffer = vec![0; length as usize];
 		self.stream.read_exact(&mut buffer)?;
-		self.last_length = None;
+		self.active_receive_length = None;
 
 		println!("Received message of length {}.", length);
 
@@ -102,39 +107,94 @@ impl ServerClient
 		}
 	}
 
-	pub fn pulse(&mut self) -> io::Result<()>
+	pub fn pulse(&mut self)
 	{
-		println!("Sending pulse...");
+		println!("Queuing pulse...");
 
-		let lengthbuffer = [0u8; 4];
-		self.stream.write(&lengthbuffer)?;
+		let zeroes = [0u8; 4];
+		self.sendqueue.push_back(zeroes.to_vec());
 
-		println!("Sent pulse.");
-
-		Ok(())
+		println!("Queued pulse.");
 	}
 
-	pub fn send(&mut self, message: Message) -> io::Result<()>
+	pub fn send(&mut self, message: Message)
 	{
-		let jsonstr = serde_json::to_string(&message)?;
+		let jsonstr = match serde_json::to_string(&message)
+		{
+			Ok(data) => data,
+			Err(e) =>
+			{
+				eprintln!("Invalid message: {:?}", e);
+				self.killed = true;
+				return;
+			}
+		};
+
 		if jsonstr.len() >= limits::MESSAGE_SIZE_LIMIT
 		{
-			// TODO
+			panic!(
+				"Cannot send message of length {}, \
+				 which is larger than MESSAGE_SIZE_LIMIT.",
+				jsonstr.len()
+			);
 		}
 
 		let length = jsonstr.len() as u32;
 
-		println!("Sending message of length {}...", length);
+		println!("Queueing message of length {}...", length);
 
 		let lengthbuffer = little_endian_bytes_from_u32(length);
-		self.stream.write(&lengthbuffer)?;
+		self.sendqueue.push_back(lengthbuffer.to_vec());
 
-		let buffer = jsonstr.as_bytes();
-		self.stream.write(buffer)?;
+		let data = jsonstr.as_bytes();
+		self.sendqueue.push_back(data.to_vec());
 
-		println!("Sent message of length {}.", length);
+		println!("Queued message of length {}.", length);
+	}
 
-		Ok(())
+	pub fn has_queued(&self) -> bool
+	{
+		!self.sendqueue.is_empty()
+	}
+
+	pub fn send_queued(&mut self) -> io::Result<()>
+	{
+		match self.sendqueue.get(0)
+		{
+			Some(data) =>
+			{
+				let remainingdata = &data[self.already_sent_amount..];
+
+				println!("Sending {} bytes...", remainingdata.len());
+
+				match self.stream.write(remainingdata)
+				{
+					Ok(n) if n == remainingdata.len() =>
+					{
+						println!("Sent {} bytes.", remainingdata.len());
+
+						self.sendqueue.pop_front();
+						self.already_sent_amount = 0;
+
+						Ok(())
+					}
+					Ok(n) =>
+					{
+						self.already_sent_amount += n;
+
+						println!(
+							"Sent {}/{} bytes.",
+							self.already_sent_amount,
+							data.len()
+						);
+
+						Ok(())
+					}
+					Err(e) => Err(e),
+				}
+			}
+			None => Ok(()),
+		}
 	}
 }
 
