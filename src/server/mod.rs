@@ -1,5 +1,6 @@
 /* Server */
 
+mod limits;
 mod logincluster;
 mod message;
 mod serverclient;

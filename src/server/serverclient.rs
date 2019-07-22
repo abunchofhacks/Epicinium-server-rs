@@ -1,10 +1,11 @@
 /* ServerClient */
 
 use common::version::*;
+use server::limits;
 use server::message::*;
 
 use std::io;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net;
 
 pub struct ServerClient
@@ -59,13 +60,13 @@ impl ServerClient
 			}
 		}
 
-		println!("Receiving message of length {}", length);
+		println!("Receiving message of length {}...", length);
 
 		let mut buffer = vec![0; length as usize];
 		self.stream.read_exact(&mut buffer)?;
 		self.last_length = None;
 
-		println!("Received message of length {}", length);
+		println!("Received message of length {}.", length);
 
 		// TODO if download
 		if buffer.len() == 0
@@ -100,6 +101,41 @@ impl ServerClient
 			Ok(message)
 		}
 	}
+
+	pub fn pulse(&mut self) -> io::Result<()>
+	{
+		println!("Sending pulse...");
+
+		let lengthbuffer = [0u8; 4];
+		self.stream.write(&lengthbuffer)?;
+
+		println!("Sent pulse.");
+
+		Ok(())
+	}
+
+	pub fn send(&mut self, message: Message) -> io::Result<()>
+	{
+		let jsonstr = serde_json::to_string(&message)?;
+		if jsonstr.len() >= limits::MESSAGE_SIZE_LIMIT
+		{
+			// TODO
+		}
+
+		let length = jsonstr.len() as u32;
+
+		println!("Sending message of length {}...", length);
+
+		let lengthbuffer = little_endian_bytes_from_u32(length);
+		self.stream.write(&lengthbuffer)?;
+
+		let buffer = jsonstr.as_bytes();
+		self.stream.write(buffer)?;
+
+		println!("Sent message of length {}.", length);
+
+		Ok(())
+	}
 }
 
 #[allow(dead_code)]
@@ -117,4 +153,14 @@ fn u32_from_little_endian_bytes(data: &[u8; 4]) -> u32
 		+ ((data[1] as u32) << 8)
 		+ ((data[2] as u32) << 16)
 		+ ((data[3] as u32) << 24)
+}
+
+fn little_endian_bytes_from_u32(x: u32) -> [u8; 4]
+{
+	[
+		(x & 0xFF) as u8,
+		((x >> 8) & 0xFF) as u8,
+		((x >> 16) & 0xFF) as u8,
+		((x >> 24) & 0xFF) as u8,
+	]
 }

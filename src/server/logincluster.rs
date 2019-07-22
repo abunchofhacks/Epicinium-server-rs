@@ -78,7 +78,30 @@ impl LoginCluster
 						}
 						Ping =>
 						{
-							// TODO write response
+							// Pings must always be responded with pongs.
+							match client.send(Message::Pong)
+							{
+								Ok(()) =>
+								{}
+								Err(ref e)
+									if e.kind()
+										== io::ErrorKind::UnexpectedEof =>
+								{
+									// The client has disconnected.
+									println!(
+										"Client has ungracefully disconnected."
+									);
+									client.killed = true;
+								}
+								Err(e) =>
+								{
+									eprintln!(
+										"Client connection failed: {:?}",
+										e
+									);
+									client.killed = true;
+								}
+							}
 						}
 						Pong =>
 						{
