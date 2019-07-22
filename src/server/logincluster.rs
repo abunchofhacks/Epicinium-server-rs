@@ -176,29 +176,37 @@ impl WelcomeParty
 	{
 		match message
 		{
-			Message::Version { version, metadata } =>
+			Message::Version {
+				version,
+				metadata:
+					Some(PlatformMetadata {
+						platform,
+						patchmode,
+					}),
+			} =>
 			{
 				client.version = version;
 				println!("Client has version {}", version.to_string());
 
-				match metadata
-				{
-					Some(PlatformMetadata {
-						platform,
-						patchmode,
-					}) =>
-					{
-						client.platform = platform;
-						println!("Client has platform {:?}", platform);
-						client.patchmode = patchmode;
-						println!("Client has patchmode {:?}", patchmode);
-					}
-					None =>
-					{}
-				}
+				client.platform = platform;
+				println!("Client has platform {:?}", platform);
+				client.patchmode = patchmode;
+				println!("Client has patchmode {:?}", patchmode);
 
 				self.greet(client);
 			}
+
+			Message::Version {
+				version,
+				metadata: None,
+			} =>
+			{
+				client.version = version;
+				println!("Client has version {}", version.to_string());
+
+				self.greet(client);
+			}
+
 			Message::Pulse
 			| Message::Ping
 			| Message::Pong

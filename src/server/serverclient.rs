@@ -1,7 +1,7 @@
 /* ServerClient */
 
 use common::version::*;
-use server::limits;
+use server::limits::*;
 use server::message::*;
 
 use std::collections::VecDeque;
@@ -13,6 +13,7 @@ pub struct ServerClient
 {
 	stream: net::TcpStream,
 	active_receive_length: Option<u32>,
+	chunk_incoming: bool,
 	already_sent_amount: usize,
 	sendqueue: VecDeque<Vec<u8>>,
 
@@ -39,6 +40,7 @@ impl ServerClient
 		Ok(ServerClient {
 			stream: stream,
 			active_receive_length: None,
+			chunk_incoming: false,
 			already_sent_amount: 0,
 			sendqueue: VecDeque::new(),
 			version: Version::undefined(),
@@ -69,6 +71,11 @@ impl ServerClient
 		self.killed || (self.stopped_receiving && !self.has_queued())
 	}
 
+	pub fn unversioned(&self) -> bool
+	{
+		self.version == Version::undefined()
+	}
+
 	pub fn receive(&mut self) -> io::Result<Message>
 	{
 		let length: u32;
@@ -88,6 +95,40 @@ impl ServerClient
 			}
 		}
 
+		if length == 0
+		{
+			return Ok(Message::Pulse);
+		}
+		else if self.unversioned()
+			&& length as usize >= MESSAGE_SIZE_UNVERSIONED_LIMIT
+		{
+			println!(
+				"Unversioned client tried to send very large message of length \
+				 {}, which is more than MESSAGE_SIZE_UNVERSIONED_LIMIT",
+				length
+			);
+			return Err(io::Error::new(
+				io::ErrorKind::InvalidInput,
+				"Message too large".to_string(),
+			));
+		}
+		else if length as usize >= MESSAGE_SIZE_LIMIT
+		{
+			println!(
+				"Refusing to receive very large message of length \
+				 {}, which is more than MESSAGE_SIZE_LIMIT",
+				length
+			);
+			return Err(io::Error::new(
+				io::ErrorKind::InvalidInput,
+				"Message too large".to_string(),
+			));
+		}
+		else if length as usize >= MESSAGE_SIZE_WARNING_LIMIT
+		{
+			println!("Receiving very large message of length {}", length);
+		}
+
 		println!("Receiving message of length {}...", length);
 
 		let mut buffer = vec![0; length as usize];
@@ -97,9 +138,10 @@ impl ServerClient
 		println!("Received message of length {}.", length);
 
 		// TODO if download
-		if buffer.len() == 0
+		if self.chunk_incoming
 		{
-			Ok(Message::Pulse)
+			// TODO
+			Ok(Message::Closing)
 		}
 		else if buffer[0] == '=' as u8
 		{
@@ -148,7 +190,7 @@ impl ServerClient
 			}
 		};
 
-		if jsonstr.len() >= limits::MESSAGE_SIZE_LIMIT
+		if jsonstr.len() >= MESSAGE_SIZE_LIMIT
 		{
 			panic!(
 				"Cannot send message of length {}, \
@@ -157,7 +199,14 @@ impl ServerClient
 			);
 		}
 
+		// TODO compression
+
 		let length = jsonstr.len() as u32;
+
+		if length as usize >= MESSAGE_SIZE_WARNING_LIMIT
+		{
+			println!("Queueing very large message of length {}", length);
+		}
 
 		println!("Queueing message of length {}...", length);
 
