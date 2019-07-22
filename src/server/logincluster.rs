@@ -70,16 +70,23 @@ impl LoginCluster
 				{
 					Ok(message) =>
 					{
-						println!("Received message: {:#?}", message);
+						println!("Received message: {:?}", message);
 					}
 					Err(ref e) if e.kind() == io::ErrorKind::WouldBlock =>
 					{
 						// There are no more incoming messages from this client.
 						break;
 					}
+					Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof =>
+					{
+						// The client has disconnected.
+						println!("Client disconnected.");
+						client.killed = true;
+						break;
+					}
 					Err(e) =>
 					{
-						eprintln!("Client connection failed: {}", e);
+						eprintln!("Client connection failed: {:?}", e);
 						client.killed = true;
 						break;
 					}

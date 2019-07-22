@@ -33,37 +33,29 @@ impl ServerClient
 
 	pub fn receive(&mut self) -> io::Result<Vec<u8>>
 	{
-		let length: u32 = {
-			match self.last_length
+		let length: u32;
+		match self.last_length
+		{
+			Some(len) =>
 			{
-				Some(len) => len,
-				None =>
-				{
-					let mut lengthbuffer = [0u8; 4];
-					self.stream.read_exact(&mut lengthbuffer)?;
-					println!("Read bytes {:?}", lengthbuffer);
-
-					u32_from_little_endian_bytes(&lengthbuffer)
-				}
+				length = len;
 			}
-		};
+			None =>
+			{
+				let mut lengthbuffer = [0u8; 4];
+				self.stream.read_exact(&mut lengthbuffer)?;
+				println!("Read bytes {:?}", lengthbuffer);
+
+				length = u32_from_little_endian_bytes(&lengthbuffer);
+				self.last_length = Some(length);
+			}
+		}
 
 		println!("Receiving message of length {}", length);
 
-		let mut buffer = Vec::<u8>::with_capacity(length as usize);
+		let mut buffer = vec![0; length as usize];
 		self.stream.read_exact(&mut buffer)?;
-		println!("Read bytes {:?}", buffer);
-
-		if buffer.len() == length as usize
-		{
-			self.last_length = None;
-		}
-		else
-		{
-			self.last_length = Some(length);
-			println!("Not ready yet");
-			return Err(io::Error::new(io::ErrorKind::WouldBlock, ""));
-		}
+		self.last_length = None;
 
 		println!("Received message of length {}", length);
 		if length < 100
