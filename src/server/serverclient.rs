@@ -19,7 +19,8 @@ pub struct ServerClient
 	pub version: Version,
 	pub platform: Platform,
 	pub patchmode: Patchmode,
-	pub killed: bool,
+	pub stopped_receiving: bool,
+	pub stopped_sending: bool,
 }
 
 impl ServerClient
@@ -42,8 +43,29 @@ impl ServerClient
 			version: Version::undefined(),
 			platform: Platform::Unknown,
 			patchmode: Patchmode::None,
-			killed: false,
+			stopped_receiving: false,
+			stopped_sending: false,
 		})
+	}
+
+	pub fn receiving(&self) -> bool
+	{
+		!self.stopped_receiving
+	}
+
+	pub fn stop_receiving(&mut self)
+	{
+		self.stopped_receiving = true;
+	}
+
+	pub fn stop_sending(&mut self)
+	{
+		self.stopped_sending = true;
+	}
+
+	pub fn dead(&self) -> bool
+	{
+		self.stopped_receiving && self.stopped_sending
 	}
 
 	pub fn receive(&mut self) -> io::Result<Message>
@@ -121,9 +143,7 @@ impl ServerClient
 			Ok(data) => data,
 			Err(e) =>
 			{
-				eprintln!("Invalid message: {:?}", e);
-				self.killed = true;
-				return;
+				panic!("Invalid message: {:?}", e);
 			}
 		};
 
@@ -156,7 +176,7 @@ impl ServerClient
 
 	pub fn has_queued(&self) -> bool
 	{
-		!self.sendqueue.is_empty()
+		!self.stopped_sending && !self.sendqueue.is_empty()
 	}
 
 	pub fn send_queued(&mut self) -> io::Result<()>

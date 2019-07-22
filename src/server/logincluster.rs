@@ -66,129 +66,18 @@ impl LoginCluster
 		for client in &mut self.clients
 		{
 			// TODO add counter to prevent one client DOSing us?
-			while !client.killed
+			while client.receiving()
 			{
 				match client.receive()
 				{
-					Ok(message) => match message
+					Ok(message) =>
 					{
-						Message::Pulse =>
-						{
-							// TODO handle
-						}
-						Message::Ping =>
-						{
-							// Pings must always be responded with pongs.
-							client.send(Message::Pong);
-						}
-						Message::Pong =>
-						{
-							// TODO handle
-						}
-						Message::Version { version, metadata } =>
-						{
-							client.version = version;
-							println!(
-								"Client has version {}",
-								version.to_string()
-							);
-
-							match metadata
-							{
-								Some(PlatformMetadata {
-									platform,
-									patchmode,
-								}) =>
-								{
-									client.platform = platform;
-									println!(
-										"Client has platform {:?}",
-										platform
-									);
-									client.patchmode = patchmode;
-									println!(
-										"Client has patchmode {:?}",
-										patchmode
-									);
-								}
-								None =>
-								{}
-							}
-
-							let myversion = Version::current();
-							client.send(Message::Version {
-								version: myversion,
-								metadata: None,
-							});
-
-							if version.major != myversion.major
-								|| version == Version::undefined()
-							{
-								// We do not want to receive any more messages.
-								break;
-							}
-							else if (client.patchmode == Patchmode::Itchio
-								|| client.patchmode == Patchmode::Gamejolt)
-								&& version < Version::exact(0, 29, 0, 0)
-							{
-								// Version 0.29.0 was the first closed beta
-								// version, which means clients with non-server
-								// patchmodes (itch or gamejolt) cannot patch.
-								// It is also the first version with keys.
-								// Older versions do not properly display the
-								// warning that joining failed because of
-								// ResponseStatus::KEY_REQUIRED. Instead, we
-								// overwrite the 'Version mismatch' message.
-								client.send(Message::Chat {
-									content: "The Open Beta has ended. \
-									          Join our Discord community at \
-									          www.epicinium.nl/discord \
-									          to qualify for access to the \
-									          Closed Beta."
-										.to_string(),
-									sender: "server".to_string(),
-									target: ChatTarget::General,
-								});
-
-								// We do not want to receive any more messages.
-								break;
-							}
-							else if self.closing
-							{
-								// We do not want to receive any more messages.
-								break;
-							}
-							else
-							{
-								// TODO notice
-							}
-
-							// TODO change state to VERSIONED
-
-							// TODO enable pulses enzo
-						}
-						Message::Quit =>
-						{
-							println!("Client gracefully disconnected.");
-							client.killed = true;
-						}
-						Message::Closing =>
-						{
-							println!(
-								"Invalid message from client: {:?}",
-								message
-							);
-							client.killed = true;
-						}
-						Message::Chat {
-							content: _,
-							sender: _,
-							target: _,
-						} =>
-						{
-							// TODO handle
-						}
-					},
+						LoginCluster::handle_message(
+							client,
+							message,
+							self.closing,
+						);
+					}
 					Err(ref e) if e.kind() == io::ErrorKind::WouldBlock =>
 					{
 						// There are no more incoming messages from this client.
@@ -197,16 +86,15 @@ impl LoginCluster
 					Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof =>
 					{
 						// The client has disconnected.
-						if !client.killed
-						{
-							println!("Client ungracefully disconnected.");
-							client.killed = true;
-						}
+						println!("Client ungracefully disconnected.");
+						client.stop_receiving();
+						client.stop_sending();
 					}
 					Err(e) =>
 					{
 						eprintln!("Client connection failed: {:?}", e);
-						client.killed = true;
+						client.stop_receiving();
+						client.stop_sending();
 					}
 				}
 			}
@@ -214,7 +102,7 @@ impl LoginCluster
 
 		for client in &mut self.clients
 		{
-			while !client.killed && client.has_queued()
+			while client.has_queued()
 			{
 				match client.send_queued()
 				{
@@ -228,21 +116,142 @@ impl LoginCluster
 					Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof =>
 					{
 						// The client has disconnected.
-						if !client.killed
-						{
-							println!("Client ungracefully disconnected.");
-							client.killed = true;
-						}
+						println!("Client ungracefully disconnected.");
+						client.stop_receiving();
+						client.stop_sending();
 					}
 					Err(e) =>
 					{
 						eprintln!("Client connection failed: {:?}", e);
-						client.killed = true;
+						client.stop_receiving();
+						client.stop_sending();
 					}
 				}
 			}
 		}
 
-		self.clients.retain(|client| !client.killed);
+		self.clients.retain(|client| !client.dead());
+	}
+
+	fn handle_message(
+		client: &mut ServerClient,
+		message: Message,
+		closing: bool,
+	)
+	{
+		match message
+		{
+			Message::Pulse =>
+			{
+				// TODO handle
+			}
+			Message::Ping =>
+			{
+				// Pings must always be responded with pongs.
+				client.send(Message::Pong);
+			}
+			Message::Pong =>
+			{
+				// TODO handle
+			}
+			Message::Version { version, metadata } =>
+			{
+				client.version = version;
+				println!("Client has version {}", version.to_string());
+
+				match metadata
+				{
+					Some(PlatformMetadata {
+						platform,
+						patchmode,
+					}) =>
+					{
+						client.platform = platform;
+						println!("Client has platform {:?}", platform);
+						client.patchmode = patchmode;
+						println!("Client has patchmode {:?}", patchmode);
+					}
+					None =>
+					{}
+				}
+
+				LoginCluster::welcome_client(client, closing);
+			}
+			Message::Quit =>
+			{
+				println!("Client gracefully disconnected.");
+				client.stop_receiving();
+			}
+			Message::Closing =>
+			{
+				println!("Invalid message from client: {:?}", message);
+				client.stop_receiving();
+			}
+			Message::Chat {
+				content: _,
+				sender: _,
+				target: _,
+			} =>
+			{
+				// TODO handle
+			}
+		}
+	}
+
+	fn welcome_client(client: &mut ServerClient, closing: bool)
+	{
+		let myversion = Version::current();
+		client.send(Message::Version {
+			version: myversion,
+			metadata: None,
+		});
+
+		if client.version.major != myversion.major
+			|| client.version == Version::undefined()
+		{
+			client.stop_receiving();
+			return;
+		}
+		else if (client.patchmode == Patchmode::Itchio
+			|| client.patchmode == Patchmode::Gamejolt)
+			&& client.version < Version::exact(0, 29, 0, 0)
+		{
+			// Version 0.29.0 was the first closed beta
+			// version, which means clients with non-server
+			// patchmodes (itch or gamejolt) cannot patch.
+			// It is also the first version with keys.
+			// Older versions do not properly display the
+			// warning that joining failed because of
+			// ResponseStatus::KEY_REQUIRED. Instead, we
+			// overwrite the 'Version mismatch' message.
+			client.send(Message::Chat {
+				content: "The Open Beta has ended. \
+				          Join our Discord community at \
+				          www.epicinium.nl/discord \
+				          to qualify for access to the \
+				          Closed Beta."
+					.to_string(),
+				sender: "server".to_string(),
+				target: ChatTarget::General,
+			});
+
+			client.stop_receiving();
+			return;
+		}
+		else if closing
+		{
+			client.send(Message::Closing);
+
+			client.stop_receiving();
+			return;
+		}
+		else
+		{
+			// TODO notice
+		}
+
+		// TODO change state to VERSIONED
+
+		// TODO enable pulses enzo
 	}
 }
