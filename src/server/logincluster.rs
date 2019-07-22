@@ -9,11 +9,12 @@ use std::net;
 
 pub struct LoginCluster
 {
-	closing: bool,
-
 	clients: Vec<ServerClient>,
 
 	listener: net::TcpListener,
+
+	welcome_party: WelcomeParty,
+	closing: bool,
 }
 
 impl LoginCluster
@@ -24,15 +25,17 @@ impl LoginCluster
 		listener.set_nonblocking(true)?;
 
 		Ok(LoginCluster {
-			closing: false,
 			clients: Vec::new(),
 			listener: listener,
+			welcome_party: WelcomeParty { closing: false },
+			closing: false,
 		})
 	}
 
 	pub fn close(&mut self)
 	{
 		self.closing = true;
+		self.welcome_party.closing = true;
 	}
 
 	pub fn closed(&self) -> bool
@@ -72,11 +75,43 @@ impl LoginCluster
 				{
 					Ok(message) =>
 					{
-						LoginCluster::handle_message(
-							client,
-							message,
-							self.closing,
-						);
+						match message
+						{
+							Message::Pulse =>
+							{
+								// TODO handle
+							}
+							Message::Ping =>
+							{
+								// Pings must always be responded with pongs.
+								client.send(Message::Pong);
+							}
+							Message::Pong =>
+							{
+								// TODO handle
+							}
+							Message::Version { .. } =>
+							{
+								self.welcome_party.handle(client, message);
+							}
+							Message::Quit =>
+							{
+								println!("Client gracefully disconnected.");
+								client.stop_receiving();
+							}
+							Message::Closing =>
+							{
+								println!(
+									"Invalid message from client: {:?}",
+									message
+								);
+								client.stop_receiving();
+							}
+							Message::Chat { .. } =>
+							{
+								// TODO handle
+							}
+						}
 					}
 					Err(ref e) if e.kind() == io::ErrorKind::WouldBlock =>
 					{
@@ -87,14 +122,12 @@ impl LoginCluster
 					{
 						// The client has disconnected.
 						println!("Client ungracefully disconnected.");
-						client.stop_receiving();
-						client.stop_sending();
+						client.kill();
 					}
 					Err(e) =>
 					{
 						eprintln!("Client connection failed: {:?}", e);
-						client.stop_receiving();
-						client.stop_sending();
+						client.kill();
 					}
 				}
 			}
@@ -117,14 +150,12 @@ impl LoginCluster
 					{
 						// The client has disconnected.
 						println!("Client ungracefully disconnected.");
-						client.stop_receiving();
-						client.stop_sending();
+						client.kill();
 					}
 					Err(e) =>
 					{
 						eprintln!("Client connection failed: {:?}", e);
-						client.stop_receiving();
-						client.stop_sending();
+						client.kill();
 					}
 				}
 			}
@@ -132,28 +163,19 @@ impl LoginCluster
 
 		self.clients.retain(|client| !client.dead());
 	}
+}
 
-	fn handle_message(
-		client: &mut ServerClient,
-		message: Message,
-		closing: bool,
-	)
+pub struct WelcomeParty
+{
+	pub closing: bool,
+}
+
+impl WelcomeParty
+{
+	pub fn handle(&mut self, client: &mut ServerClient, message: Message)
 	{
 		match message
 		{
-			Message::Pulse =>
-			{
-				// TODO handle
-			}
-			Message::Ping =>
-			{
-				// Pings must always be responded with pongs.
-				client.send(Message::Pong);
-			}
-			Message::Pong =>
-			{
-				// TODO handle
-			}
 			Message::Version { version, metadata } =>
 			{
 				client.version = version;
@@ -175,30 +197,21 @@ impl LoginCluster
 					{}
 				}
 
-				LoginCluster::welcome_client(client, closing);
+				self.greet(client);
 			}
-			Message::Quit =>
+			Message::Pulse
+			| Message::Ping
+			| Message::Pong
+			| Message::Chat { .. }
+			| Message::Closing
+			| Message::Quit =>
 			{
-				println!("Client gracefully disconnected.");
-				client.stop_receiving();
-			}
-			Message::Closing =>
-			{
-				println!("Invalid message from client: {:?}", message);
-				client.stop_receiving();
-			}
-			Message::Chat {
-				content: _,
-				sender: _,
-				target: _,
-			} =>
-			{
-				// TODO handle
+				panic!("Message misrouted");
 			}
 		}
 	}
 
-	fn welcome_client(client: &mut ServerClient, closing: bool)
+	fn greet(&mut self, client: &mut ServerClient)
 	{
 		let myversion = Version::current();
 		client.send(Message::Version {
@@ -238,17 +251,15 @@ impl LoginCluster
 			client.stop_receiving();
 			return;
 		}
-		else if closing
+		else if self.closing
 		{
 			client.send(Message::Closing);
 
 			client.stop_receiving();
 			return;
 		}
-		else
-		{
-			// TODO notice
-		}
+
+		// TODO load notice
 
 		// TODO change state to VERSIONED
 
