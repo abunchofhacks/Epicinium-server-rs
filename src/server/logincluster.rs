@@ -63,14 +63,14 @@ impl LoginCluster
 
 		for client in &mut self.clients
 		{
-			// TODO replace loop with for loop to avoid client from DOSing?
+			// TODO replace loop with for loop to prevent one client DOSing us?
 			loop
 			{
 				match client.receive()
 				{
 					Ok(message) =>
 					{
-						println!("Received message: {:?}", message);
+						println!("Message: '{}'", message);
 					}
 					Err(ref e) if e.kind() == io::ErrorKind::WouldBlock =>
 					{

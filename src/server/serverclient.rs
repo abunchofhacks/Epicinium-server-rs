@@ -31,7 +31,7 @@ impl ServerClient
 		})
 	}
 
-	pub fn receive(&mut self) -> io::Result<Vec<u8>>
+	pub fn receive(&mut self) -> io::Result<String>
 	{
 		let length: u32;
 		match self.last_length
@@ -60,10 +60,34 @@ impl ServerClient
 		println!("Received message of length {}", length);
 		if length < 100
 		{
-			println!("Received message: '{:?}'", buffer);
+			println!("Received message: {:?}", buffer);
 		}
 
-		Ok(buffer)
+		// TODO if download
+		if buffer.len() == 0
+		{
+			Ok("".to_string())
+		}
+		else if buffer[0] == '=' as u8
+		{
+			Err(io::Error::new(
+				io::ErrorKind::InvalidData,
+				"Not implemented yet.",
+			))
+		}
+		else
+		{
+			let jsonstr = match String::from_utf8(buffer)
+			{
+				Ok(x) => x,
+				Err(e) =>
+				{
+					return Err(io::Error::new(io::ErrorKind::InvalidData, e));
+				}
+			};
+
+			Ok(jsonstr)
+		}
 	}
 }
 

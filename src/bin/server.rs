@@ -8,7 +8,7 @@ use std::io;
 
 fn main() -> io::Result<()>
 {
-	let logname = String::from("rust");
+	let logname = "rust".to_string();
 	let currentversion = Version::current();
 
 	println!(
