@@ -1,34 +1,43 @@
 /* Version */
 
-use std::fmt::Display;
-use std::fmt::Formatter;
-use std::str::FromStr;
-use std::num::ParseIntError;
-use std::result::Result;
-use serde::Serialize;
-use serde::Serializer;
 use serde::Deserialize;
 use serde::Deserializer;
+use serde::Serialize;
+use serde::Serializer;
+use std::fmt::Display;
+use std::fmt::Formatter;
+use std::num::ParseIntError;
+use std::result::Result;
+use std::str::FromStr;
 
-
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub struct Version
 {
-	pub major : i8,
-	pub minor : i8,
-	pub patch : i8,
-	pub release : i8
+	pub major: u8,
+	pub minor: u8,
+	pub patch: u8,
+	pub release: u8,
 }
 
 impl Version
 {
 	pub fn current() -> Version
 	{
-		Version{
+		Version {
 			major: 0,
 			minor: 1,
 			patch: 0,
-			release: 0
+			release: 0,
+		}
+	}
+
+	pub fn undefined() -> Version
+	{
+		Version {
+			major: 255,
+			minor: 255,
+			patch: 255,
+			release: 255,
 		}
 	}
 }
@@ -51,8 +60,10 @@ impl ToString for Version
 		}
 		else
 		{
-			format!("{}.{}.{}-rc{}", self.major, self.minor, self.patch,
-					self.release)
+			format!(
+				"{}.{}.{}-rc{}",
+				self.major, self.minor, self.patch, self.release
+			)
 		}
 	}
 }
@@ -60,13 +71,13 @@ impl ToString for Version
 #[derive(Debug)]
 pub enum VersionParseError
 {
-	INTERROR
+	IntError
 	{
-		error : ParseIntError,
+		error: ParseIntError
 	},
-	PARSEERROR
+	ParseError
 	{
-		message : String,
+		message: String
 	},
 }
 
@@ -76,19 +87,17 @@ impl Display for VersionParseError
 	{
 		match self
 		{
-			&VersionParseError::INTERROR { ref error } => error.fmt(f),
-			&VersionParseError::PARSEERROR { ref message } => message.fmt(f),
+			&VersionParseError::IntError { ref error } => error.fmt(f),
+			&VersionParseError::ParseError { ref message } => message.fmt(f),
 		}
 	}
 }
 
 impl From<ParseIntError> for VersionParseError
 {
-	fn from(err : ParseIntError) -> VersionParseError
+	fn from(err: ParseIntError) -> VersionParseError
 	{
-		VersionParseError::INTERROR{
-			error: err
-		}
+		VersionParseError::IntError { error: err }
 	}
 }
 
@@ -96,34 +105,36 @@ impl FromStr for Version
 {
 	type Err = VersionParseError;
 
-	fn from_str(s : &str) -> Result<Version, VersionParseError>
+	fn from_str(s: &str) -> Result<Version, VersionParseError>
 	{
-		let parts : Vec<&str> = s.trim_matches(|p| p == 'v')
-				.split("-rc")
-				.flat_map(|p| p.split("."))
-				.collect();
+		let parts: Vec<&str> = s
+			.trim_matches(|p| p == 'v')
+			.split("-rc")
+			.flat_map(|p| p.split("."))
+			.collect();
 
 		if parts.len() == 3
 		{
-			Ok(Version{
-				major: parts[0].parse::<i8>()?,
-				minor: parts[1].parse::<i8>()?,
-				patch: parts[2].parse::<i8>()?,
+			Ok(Version {
+				major: parts[0].parse::<u8>()?,
+				minor: parts[1].parse::<u8>()?,
+				patch: parts[2].parse::<u8>()?,
 				release: 0,
 			})
 		}
 		else if parts.len() == 4
 		{
-			Ok(Version{
-				major: parts[0].parse::<i8>()?,
-				minor: parts[1].parse::<i8>()?,
-				patch: parts[2].parse::<i8>()?,
-				release: parts[3].parse::<i8>()?,
+			Ok(Version {
+				major: parts[0].parse::<u8>()?,
+				minor: parts[1].parse::<u8>()?,
+				patch: parts[2].parse::<u8>()?,
+				release: parts[3].parse::<u8>()?,
 			})
 		}
-		else {
-			Err(VersionParseError::PARSEERROR{
-				message: "Cannot parse ".to_owned() + s
+		else
+		{
+			Err(VersionParseError::ParseError {
+				message: "Cannot parse ".to_owned() + s,
 			})
 		}
 	}
@@ -141,8 +152,9 @@ impl Serialize for Version
 
 impl<'de> Deserialize<'de> for Version
 {
-	fn deserialize<D>(deserializer : D) -> Result<Self, D::Error>
-		where D: Deserializer<'de>
+	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+	where
+		D: Deserializer<'de>,
 	{
 		let s = String::deserialize(deserializer)?;
 		FromStr::from_str(&s).map_err(::serde::de::Error::custom)

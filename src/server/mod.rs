@@ -1,6 +1,7 @@
 /* Server */
 
 mod logincluster;
+mod message;
 mod serverclient;
 
 pub mod servercluster;

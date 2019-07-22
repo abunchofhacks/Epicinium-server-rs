@@ -1,5 +1,7 @@
 /* LoginCluster */
 
+use server::message::Message::*;
+use server::message::*;
 use server::serverclient::*;
 
 use std::io;
@@ -63,15 +65,58 @@ impl LoginCluster
 
 		for client in &mut self.clients
 		{
-			// TODO replace loop with for loop to prevent one client DOSing us?
-			loop
+			// TODO add counter to prevent one client DOSing us?
+			while !client.killed
 			{
 				match client.receive()
 				{
-					Ok(message) =>
+					Ok(message) => match message
 					{
-						println!("Message: '{}'", message);
-					}
+						Pulse =>
+						{
+							// TODO
+						}
+						Ping =>
+						{
+							// TODO write response
+						}
+						Pong =>
+						{
+							// TODO
+						}
+						Version {
+							version,
+							metadata:
+								PlatformMetadata {
+									platform,
+									patchmode,
+								},
+						} =>
+						{
+							client.version = version;
+							println!(
+								"Client has version {}",
+								version.to_string()
+							);
+							client.platform = platform;
+							println!("Client has platform {:?}", platform);
+							client.patchmode = patchmode;
+							println!("Client has patchmode {:?}", patchmode);
+						}
+						Quit =>
+						{
+							println!("Client has gracefully disconnected.");
+							client.killed = true;
+						}
+						Closing =>
+						{
+							println!(
+								"Invalid message from client: {:?}",
+								message
+							);
+							client.killed = true;
+						}
+					},
 					Err(ref e) if e.kind() == io::ErrorKind::WouldBlock =>
 					{
 						// There are no more incoming messages from this client.
@@ -80,15 +125,16 @@ impl LoginCluster
 					Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof =>
 					{
 						// The client has disconnected.
-						println!("Client disconnected.");
-						client.killed = true;
-						break;
+						if !client.killed
+						{
+							println!("Client has ungracefully disconnected.");
+							client.killed = true;
+						}
 					}
 					Err(e) =>
 					{
 						eprintln!("Client connection failed: {:?}", e);
 						client.killed = true;
-						break;
 					}
 				}
 			}

@@ -1,5 +1,8 @@
 /* ServerClient */
 
+use common::version::*;
+use server::message::*;
+
 use std::io;
 use std::io::Read;
 use std::net;
@@ -9,6 +12,9 @@ pub struct ServerClient
 	stream: net::TcpStream,
 	last_length: Option<u32>,
 
+	pub version: Version,
+	pub platform: Platform,
+	pub patchmode: Patchmode,
 	pub killed: bool,
 }
 
@@ -27,11 +33,14 @@ impl ServerClient
 		Ok(ServerClient {
 			stream: stream,
 			last_length: None,
+			version: Version::undefined(),
+			platform: Platform::Unknown,
+			patchmode: Patchmode::None,
 			killed: false,
 		})
 	}
 
-	pub fn receive(&mut self) -> io::Result<String>
+	pub fn receive(&mut self) -> io::Result<Message>
 	{
 		let length: u32;
 		match self.last_length
@@ -44,7 +53,6 @@ impl ServerClient
 			{
 				let mut lengthbuffer = [0u8; 4];
 				self.stream.read_exact(&mut lengthbuffer)?;
-				println!("Read bytes {:?}", lengthbuffer);
 
 				length = u32_from_little_endian_bytes(&lengthbuffer);
 				self.last_length = Some(length);
@@ -58,15 +66,11 @@ impl ServerClient
 		self.last_length = None;
 
 		println!("Received message of length {}", length);
-		if length < 100
-		{
-			println!("Received message: {:?}", buffer);
-		}
 
 		// TODO if download
 		if buffer.len() == 0
 		{
-			Ok("".to_string())
+			Ok(Message::Pulse)
 		}
 		else if buffer[0] == '=' as u8
 		{
@@ -86,7 +90,14 @@ impl ServerClient
 				}
 			};
 
-			Ok(jsonstr)
+			if jsonstr.len() < 200
+			{
+				println!("Received message: {}", jsonstr);
+			}
+
+			let message: Message = serde_json::from_str(&jsonstr)?;
+
+			Ok(message)
 		}
 	}
 }
