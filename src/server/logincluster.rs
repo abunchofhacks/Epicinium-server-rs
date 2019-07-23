@@ -281,9 +281,47 @@ impl WelcomeParty
 
 		// TODO change state to VERSIONED
 
-		// TODO enable pulses enzo
+		if client.version >= Version::exact(0, 31, 1, 0)
+		{
+			client.supports_empty_pulses = true;
+		}
+
+		if client.version >= Version::exact(0, 32, 0, 0)
+		{
+			// TODO enable compression
+		}
+
+		if client.version >= Version::exact(0, 31, 1, 0)
+		{
+			match client.platform
+			{
+				Platform::Unknown
+				| Platform::Windows32
+				| Platform::Windows64 =>
+				{}
+				Platform::Osx32
+				| Platform::Osx64
+				| Platform::Debian32
+				| Platform::Debian64 =>
+				{
+					// TODO client.supports_constructed_symlinks = true;
+				}
+			}
+		}
+
+		if client.version >= Version::exact(0, 31, 1, 0)
+		{
+			// TODO client.supports_gzipped_downloads = true;
+		}
+
+		if client.version >= Version::exact(0, 31, 1, 0)
+		{
+			// TODO client.supports_manifest_files = true;
+		}
 
 		// Send a ping message, just to get an estimated ping.
 		client.ping();
+
+		// TODO mention patches
 	}
 }

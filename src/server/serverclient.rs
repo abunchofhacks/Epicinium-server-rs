@@ -21,6 +21,7 @@ pub struct ServerClient
 	pub version: Version,
 	pub platform: Platform,
 	pub patchmode: Patchmode,
+	pub supports_empty_pulses: bool,
 
 	last_receive_time: time::Instant,
 	last_queue_time: time::Instant,
@@ -53,6 +54,7 @@ impl ServerClient
 			version: Version::undefined(),
 			platform: Platform::Unknown,
 			patchmode: Patchmode::None,
+			supports_empty_pulses: false,
 			last_receive_time: time::Instant::now(),
 			last_queue_time: time::Instant::now(),
 			ping_send_time: None,
@@ -192,7 +194,7 @@ impl ServerClient
 		}
 	}
 
-	pub fn pulse(&mut self)
+	fn pulse(&mut self)
 	{
 		println!("Queuing pulse...");
 
@@ -335,7 +337,8 @@ impl ServerClient
 			}
 		}
 
-		if self.last_queue_time.elapsed() > time::Duration::from_secs(1)
+		if self.supports_empty_pulses
+			&& self.last_queue_time.elapsed() > time::Duration::from_secs(1)
 		{
 			self.pulse();
 		}
