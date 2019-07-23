@@ -18,6 +18,8 @@ pub enum Message
 		#[serde(default, skip_serializing_if = "is_zero")]
 		metadata: Option<PlatformMetadata>,
 	},
+	JoinServer,
+	LeaveServer,
 	Closing,
 	Quit,
 	Chat

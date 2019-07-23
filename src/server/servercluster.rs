@@ -1,5 +1,6 @@
 /* ServerCluster */
 
+use server::clientcluster::*;
 use server::logincluster::*;
 
 use signal_hook;
@@ -12,7 +13,8 @@ use std::time;
 
 pub struct ServerCluster
 {
-	login: LoginCluster,
+	logincluster: LoginCluster,
+	clientclusters: Vec<ClientCluster>,
 	closing: bool,
 	terminating: bool,
 }
@@ -21,8 +23,17 @@ impl ServerCluster
 {
 	pub fn create() -> io::Result<ServerCluster>
 	{
+		let logincluster = LoginCluster::create()?;
+
+		let mut clientclusters = Vec::<ClientCluster>::new();
+		for _ in 0..2
+		{
+			clientclusters.push(ClientCluster::create()?);
+		}
+
 		Ok(ServerCluster {
-			login: LoginCluster::create()?,
+			logincluster: logincluster,
+			clientclusters: clientclusters,
 			closing: false,
 			terminating: false,
 		})
@@ -48,20 +59,25 @@ impl ServerCluster
 				}
 				else
 				{
-					self.login.close();
+					self.logincluster.close();
+					for cluster in &mut self.clientclusters
+					{
+						cluster.close();
+					}
 					self.closing = true;
 				}
 			}
 
 			if self.closing
 			{
-				if self.login.closed()
+				if self.logincluster.closed()
+					&& self.clientclusters.iter().all(|x| x.closed())
 				{
 					break /* out of main while loop */;
 				}
 			}
 
-			self.login.update();
+			self.logincluster.update();
 
 			thread::sleep(time::Duration::from_millis(100));
 		}

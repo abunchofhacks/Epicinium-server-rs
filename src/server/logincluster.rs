@@ -101,17 +101,37 @@ impl LoginCluster
 								println!("Client gracefully disconnected.");
 								client.stop_receiving();
 							}
+							Message::JoinServer =>
+							{
+								if client.version != Version::undefined()
+								{
+									// TODO join server
+								}
+								else
+								{
+									println!(
+										"Invalid message from unversioned \
+										 client: {:?}",
+										message
+									);
+									client.kill();
+								}
+							}
+							Message::LeaveServer | Message::Chat { .. } =>
+							{
+								println!(
+									"Invalid message from offline client: {:?}",
+									message
+								);
+								client.kill();
+							}
 							Message::Closing =>
 							{
 								println!(
 									"Invalid message from client: {:?}",
 									message
 								);
-								client.stop_receiving();
-							}
-							Message::Chat { .. } =>
-							{
-								// TODO handle
+								client.kill();
 							}
 						}
 					}
@@ -220,6 +240,8 @@ impl WelcomeParty
 			Message::Pulse
 			| Message::Ping
 			| Message::Pong
+			| Message::JoinServer
+			| Message::LeaveServer
 			| Message::Chat { .. }
 			| Message::Closing
 			| Message::Quit =>
