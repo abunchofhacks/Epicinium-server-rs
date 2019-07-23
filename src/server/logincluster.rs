@@ -79,7 +79,8 @@ impl LoginCluster
 						{
 							Message::Pulse =>
 							{
-								// TODO handle
+								// The client just let us know that it is
+								// still breathing.
 							}
 							Message::Ping =>
 							{
@@ -88,7 +89,8 @@ impl LoginCluster
 							}
 							Message::Pong =>
 							{
-								// TODO handle
+								// Remember the ping time.
+								client.handle_pong();
 							}
 							Message::Version { .. } =>
 							{
@@ -158,6 +160,14 @@ impl LoginCluster
 						client.kill();
 					}
 				}
+			}
+		}
+
+		for client in &mut self.clients
+		{
+			if !client.dead()
+			{
+				client.check_vitals();
 			}
 		}
 
@@ -272,5 +282,8 @@ impl WelcomeParty
 		// TODO change state to VERSIONED
 
 		// TODO enable pulses enzo
+
+		// Send a ping message, just to get an estimated ping.
+		client.ping();
 	}
 }

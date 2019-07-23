@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::io;
 use std::io::{Read, Write};
 use std::net;
+use std::time;
 
 pub struct ServerClient
 {
@@ -20,6 +21,12 @@ pub struct ServerClient
 	pub version: Version,
 	pub platform: Platform,
 	pub patchmode: Patchmode,
+
+	last_receive_time: time::Instant,
+	last_queue_time: time::Instant,
+	ping_send_time: Option<time::Instant>,
+	last_known_ping: time::Duration,
+	ping_tolerance: time::Duration,
 
 	stopped_receiving: bool,
 	killed: bool,
@@ -46,6 +53,14 @@ impl ServerClient
 			version: Version::undefined(),
 			platform: Platform::Unknown,
 			patchmode: Patchmode::None,
+			last_receive_time: time::Instant::now(),
+			last_queue_time: time::Instant::now(),
+			ping_send_time: None,
+			last_known_ping: time::Duration::from_secs(0),
+			// The client should reset the connection after 71 seconds of
+			// no contact with the server. Therefore, a 2-minute tolerance
+			// seems reasonable.
+			ping_tolerance: time::Duration::from_secs(120),
 			stopped_receiving: false,
 			killed: false,
 		})
@@ -97,6 +112,12 @@ impl ServerClient
 
 		if length == 0
 		{
+			println!("Received pulse.");
+			self.active_receive_length = None;
+
+			// An empty message (i.e. without a body) is a pulse message.
+			// We just received something, thus the client is not silent.
+			self.last_receive_time = time::Instant::now();
 			return Ok(Message::Pulse);
 		}
 		else if self.unversioned()
@@ -137,11 +158,13 @@ impl ServerClient
 
 		println!("Received message of length {}.", length);
 
+		// We just received something, thus the client is not silent.
+		self.last_receive_time = time::Instant::now();
+
 		// TODO if download
 		if self.chunk_incoming
 		{
-			// TODO
-			Ok(Message::Closing)
+			panic!("Not implemented yet.");
 		}
 		else if buffer[0] == '=' as u8
 		{
@@ -177,6 +200,17 @@ impl ServerClient
 		self.sendqueue.push_back(zeroes.to_vec());
 
 		println!("Queued pulse.");
+
+		// After a couple of seconds of silence (i.e. not sending any message)
+		// we send a pulse message so the client knows we are still breathing.
+		// We are now actively sending, thus not silent.
+		self.last_queue_time = time::Instant::now();
+	}
+
+	pub fn ping(&mut self)
+	{
+		self.ping_send_time = Some(time::Instant::now());
+		self.send(Message::Ping);
 	}
 
 	pub fn send(&mut self, message: Message)
@@ -222,6 +256,11 @@ impl ServerClient
 		{
 			println!("Queued message: {}", jsonstr);
 		}
+
+		// After a couple of seconds of silence (i.e. not sending any message)
+		// we send a pulse message so the client knows we are still breathing.
+		// We are now actively sending, thus not silent.
+		self.last_queue_time = time::Instant::now();
 	}
 
 	pub fn has_queued(&self) -> bool
@@ -266,6 +305,55 @@ impl ServerClient
 				}
 			}
 			None => Ok(()),
+		}
+	}
+
+	pub fn check_vitals(&mut self)
+	{
+		// If the client does not respond to a ping within
+		// their ping tolerance (by default 2 minutes)...
+		match self.ping_send_time
+		{
+			Some(time) =>
+			{
+				if time.elapsed() > self.ping_tolerance
+				{
+					println!("Disconnecting inactive client");
+
+					self.kill();
+
+					// TODO ghostbusters, but how?
+				}
+			}
+			None =>
+			{
+				if self.last_receive_time.elapsed()
+					> time::Duration::from_secs(5)
+				{
+					self.ping();
+				}
+			}
+		}
+
+		if self.last_queue_time.elapsed() > time::Duration::from_secs(1)
+		{
+			self.pulse();
+		}
+	}
+
+	pub fn handle_pong(&mut self)
+	{
+		match self.ping_send_time
+		{
+			Some(time) =>
+			{
+				println!("Client has {}ms ping.", time.elapsed().as_millis());
+
+				self.last_known_ping = time.elapsed();
+				self.ping_send_time = None;
+			}
+			None =>
+			{}
 		}
 	}
 }
