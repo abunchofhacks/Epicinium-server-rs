@@ -238,20 +238,7 @@ impl LoginCluster
 		self.clients.retain(|client| !client.dead());
 
 		{
-			let mut drained: Vec<ServerClient> =
-				self.clients.e_drain_where(|client| client.online).collect();
-			for client in &mut drained
-			{
-				client.send(Message::JoinServer {
-					status: None,
-					content: Some(client.username.clone()),
-					sender: None,
-					metadata: None,
-				});
-				// TODO init client
-				client.send(Message::Init);
-			}
-
+			let drained = self.clients.e_drain_where(|x| x.online).collect();
 			{
 				self.outgoing_clients = drained;
 			}
@@ -394,8 +381,6 @@ impl WelcomeParty
 		}
 
 		// TODO load notice
-
-		// TODO change state to VERSIONED
 
 		if client.version >= Version::exact(0, 31, 1, 0)
 		{

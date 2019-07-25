@@ -81,8 +81,7 @@ impl ClientCluster
 							}
 							Message::Init =>
 							{
-								// TODO init client
-								client.send(Message::Init);
+								init_client(client);
 							}
 							Message::Chat { .. } =>
 							{
@@ -187,8 +186,31 @@ impl ClientCluster
 			{
 				added = self.incoming_clients.drain(..).collect();
 			}
+			for client in &mut added
+			{
+				joined_server(client);
+			}
 			added.retain(|client| !client.dead());
 			self.clients.append(&mut added);
 		}
 	}
+}
+
+fn joined_server(client: &mut ServerClient)
+{
+	client.send(Message::JoinServer {
+		status: None,
+		content: Some(client.username.clone()),
+		sender: None,
+		metadata: None,
+	});
+
+	init_client(client);
+}
+
+fn init_client(client: &mut ServerClient)
+{
+	// TODO init client
+
+	client.send(Message::Init);
 }
