@@ -6,14 +6,15 @@ use server::serverclient::*;
 
 use std::io;
 use std::net;
+use std::sync;
 use vec_drain_where::VecDrainWhereExt;
 
 pub struct LoginCluster
 {
 	clients: Vec<ServerClient>,
 
-	pub outgoing_clients: Vec<ServerClient>,
-	pub incoming_clients: Vec<ServerClient>,
+	outgoing_clients: sync::mpsc::Sender<ServerClient>,
+	incoming_clients: sync::mpsc::Receiver<ServerClient>,
 
 	listener: net::TcpListener,
 
@@ -24,15 +25,18 @@ pub struct LoginCluster
 
 impl LoginCluster
 {
-	pub fn create() -> io::Result<LoginCluster>
+	pub fn create(
+		outgoing: sync::mpsc::Sender<ServerClient>,
+		incoming: sync::mpsc::Receiver<ServerClient>,
+	) -> io::Result<LoginCluster>
 	{
 		let listener = net::TcpListener::bind("127.0.0.1:9999")?;
 		listener.set_nonblocking(true)?;
 
 		Ok(LoginCluster {
 			clients: Vec::new(),
-			outgoing_clients: Vec::new(),
-			incoming_clients: Vec::new(),
+			outgoing_clients: outgoing,
+			incoming_clients: incoming,
 			listener: listener,
 			ticker: rand::random(),
 			welcome_party: WelcomeParty { closing: false },
@@ -237,20 +241,28 @@ impl LoginCluster
 
 		self.clients.retain(|client| !client.dead());
 
+		for client in self.clients.e_drain_where(|x| x.online)
 		{
-			let drained = self.clients.e_drain_where(|x| x.online).collect();
-			{
-				self.outgoing_clients = drained;
-			}
+			self.outgoing_clients.send(client).unwrap();
 		}
 
+		loop
 		{
-			let mut added: Vec<ServerClient>;
+			match self.incoming_clients.try_recv()
 			{
-				added = self.incoming_clients.drain(..).collect();
+				Ok(client) =>
+				{
+					if !client.dead()
+					{
+						self.clients.push(client);
+					}
+				}
+				Err(_) =>
+				{
+					// There are no more incoming clients at the moment.
+					break;
+				}
 			}
-			added.retain(|client| !client.dead());
-			self.clients.append(&mut added);
 		}
 	}
 }

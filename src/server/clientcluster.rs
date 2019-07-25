@@ -4,14 +4,15 @@ use server::message::*;
 use server::serverclient::*;
 
 use std::io;
+use std::sync;
 use vec_drain_where::VecDrainWhereExt;
 
 pub struct ClientCluster
 {
 	clients: Vec<ServerClient>,
 
-	pub outgoing_clients: Vec<ServerClient>,
-	pub incoming_clients: Vec<ServerClient>,
+	outgoing_clients: sync::mpsc::Sender<ServerClient>,
+	incoming_clients: sync::mpsc::Receiver<ServerClient>,
 
 	broadcasts: Vec<(Message, Option<String>)>,
 
@@ -20,12 +21,15 @@ pub struct ClientCluster
 
 impl ClientCluster
 {
-	pub fn create() -> io::Result<ClientCluster>
+	pub fn create(
+		incoming: sync::mpsc::Receiver<ServerClient>,
+		outgoing: sync::mpsc::Sender<ServerClient>,
+	) -> io::Result<ClientCluster>
 	{
 		Ok(ClientCluster {
 			clients: Vec::new(),
-			outgoing_clients: Vec::new(),
-			incoming_clients: Vec::new(),
+			outgoing_clients: outgoing,
+			incoming_clients: incoming,
 			broadcasts: Vec::new(),
 			closing: false,
 		})
@@ -249,34 +253,32 @@ impl ClientCluster
 
 		self.clients.retain(|client| !client.dead());
 
+		for mut client in self.clients.e_drain_where(|x| !x.online)
 		{
-			let mut drained: Vec<ServerClient> = self
-				.clients
-				.e_drain_where(|client| !client.online)
-				.collect();
-			for client in &mut drained
-			{
-				client.send(Message::LeaveServer {
-					content: Some(client.username.clone()),
-				});
-			}
-
-			{
-				self.outgoing_clients = drained;
-			}
+			client.send(Message::LeaveServer {
+				content: Some(client.username.clone()),
+			});
+			self.outgoing_clients.send(client).unwrap();
 		}
 
+		loop
 		{
-			let mut added: Vec<ServerClient>;
+			match self.incoming_clients.try_recv()
 			{
-				added = self.incoming_clients.drain(..).collect();
+				Ok(mut client) =>
+				{
+					joined_server(&mut client);
+					if !client.dead()
+					{
+						self.clients.push(client);
+					}
+				}
+				Err(_) =>
+				{
+					// There are no more incoming clients at the moment.
+					break;
+				}
 			}
-			for client in &mut added
-			{
-				joined_server(client);
-			}
-			added.retain(|client| !client.dead());
-			self.clients.append(&mut added);
 		}
 	}
 }

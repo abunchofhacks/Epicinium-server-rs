@@ -2,6 +2,7 @@
 
 use server::clientcluster::*;
 use server::logincluster::*;
+use server::serverclient::*;
 
 use signal_hook;
 use signal_hook::{SIGHUP, SIGTERM};
@@ -15,22 +16,26 @@ pub fn run_server() -> io::Result<()>
 {
 	let shutdown = sync::Arc::new(atomic::AtomicBool::new(false));
 
-	let login_thread = thread::spawn(|| {
-		let mut cluster = LoginCluster::create()?;
+	let (join_in, join_out) = sync::mpsc::channel::<ServerClient>();
+	let (leave_in, leave_out) = sync::mpsc::channel::<ServerClient>();
+
+	let login_thread = thread::spawn(move || {
+		let mut cluster = LoginCluster::create(join_in, leave_out)?;
 		while !cluster.closed()
 		{
 			cluster.update();
 		}
 		Ok(())
 	});
-	let client_thread = thread::spawn(|| {
-		let mut cluster = ClientCluster::create()?;
+	let client_thread = thread::spawn(move || {
+		let mut cluster = ClientCluster::create(join_out, leave_in)?;
 		while !cluster.closed()
 		{
 			cluster.update();
 		}
 		Ok(())
 	});
+
 	let mut closing = false;
 	let mut terminating = false;
 
