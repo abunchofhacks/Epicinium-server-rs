@@ -17,6 +17,7 @@ pub struct LoginCluster
 
 	listener: net::TcpListener,
 
+	ticker: u64,
 	welcome_party: WelcomeParty,
 	closing: bool,
 }
@@ -33,6 +34,7 @@ impl LoginCluster
 			outgoing_clients: Vec::new(),
 			incoming_clients: Vec::new(),
 			listener: listener,
+			ticker: rand::random(),
 			welcome_party: WelcomeParty { closing: false },
 			closing: false,
 		})
@@ -53,11 +55,12 @@ impl LoginCluster
 	{
 		for stream in self.listener.incoming()
 		{
-			match ServerClient::create(stream)
+			match ServerClient::create(stream, self.ticker)
 			{
 				Ok(client) =>
 				{
 					self.clients.push(client);
+					self.ticker += 1;
 				}
 				Err(ref e) if e.kind() == io::ErrorKind::WouldBlock =>
 				{
@@ -107,34 +110,54 @@ impl LoginCluster
 								println!("Client gracefully disconnected.");
 								client.stop_receiving();
 							}
-							Message::JoinServer { .. } =>
+							Message::JoinServer { .. }
+								if client.version == Version::undefined() =>
+							{
+								println!(
+									"Invalid message from unversioned \
+									 client: {:?}",
+									message
+								);
+								client.kill();
+							}
+							Message::JoinServer {
+								status: None,
+								content: Some(_),
+								sender: Some(account_id),
+								metadata: _,
+							} =>
 							{
 								let curver = Version::current();
-								if client.version == Version::undefined()
-								{
-									println!(
-										"Invalid message from unversioned \
-										 client: {:?}",
-										message
-									);
-									client.kill();
-									break;
-								}
-								else if client.version.major != curver.major
+								if client.version.major != curver.major
 									|| client.version.minor != curver.minor
 								{
+									// Why is this LEAVE_SERVER {} and not
+									// JOIN_SERVER {}? Maybe it has something
+									// to do with MainMenu. Well, let's leave
+									// it until we do proper error handling.
+									// TODO #962
 									client.send(Message::LeaveServer {
 										content: None,
 									})
 								}
 								else
 								{
+									join_server(client, account_id);
+
 									client.online = true;
 
 									// Stop receiving until we move this client
 									// from our list to somewhere else.
 									break;
 								}
+							}
+							Message::JoinServer { .. } =>
+							{
+								println!(
+									"Invalid message from client: {:?}",
+									message
+								);
+								client.kill();
 							}
 							Message::LeaveServer { .. }
 							| Message::Init
@@ -219,7 +242,6 @@ impl LoginCluster
 				self.clients.e_drain_where(|client| client.online).collect();
 			for client in &mut drained
 			{
-				client.username = "alice".to_string();
 				client.send(Message::JoinServer {
 					status: None,
 					content: Some(client.username.clone()),
@@ -244,6 +266,26 @@ impl LoginCluster
 			self.clients.append(&mut added);
 		}
 	}
+}
+
+fn join_server(client: &mut ServerClient, account_id: String)
+{
+	match account_id.parse::<u8>()
+	{
+		Ok(x) if x > 0 && x <= 8 =>
+		{
+			const NAMES: [&str; 8] = [
+				"Alice", "Bob", "Carol", "Dave", "Emma", "Frank", "Gwen",
+				"Harold",
+			];
+			client.username = NAMES[x as usize].to_string();
+		}
+		_ =>
+		{
+			client.username = client.id.clone();
+		}
+	}
+	client.id_and_username = format!("{} '{}'", client.id, client.username);
 }
 
 pub struct WelcomeParty

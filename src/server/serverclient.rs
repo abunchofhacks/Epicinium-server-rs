@@ -1,5 +1,6 @@
 /* ServerClient */
 
+use common::keycode::*;
 use common::version::*;
 use server::limits::*;
 use server::message::*;
@@ -23,6 +24,8 @@ pub struct ServerClient
 	pub patchmode: Patchmode,
 	pub supports_empty_pulses: bool,
 
+	pub id_and_username: String,
+	pub id: String,
 	pub username: String,
 	pub online: bool,
 
@@ -40,6 +43,7 @@ impl ServerClient
 {
 	pub fn create(
 		stream: io::Result<net::TcpStream>,
+		serial: u64,
 	) -> io::Result<ServerClient>
 	{
 		let stream = stream?;
@@ -47,6 +51,9 @@ impl ServerClient
 		println!("Incoming connection: {:?}", stream.peer_addr()?);
 
 		stream.set_nonblocking(true)?;
+
+		let key: u16 = rand::random();
+		let id = keycode(key, serial);
 
 		Ok(ServerClient {
 			stream: stream,
@@ -58,6 +65,8 @@ impl ServerClient
 			platform: Platform::Unknown,
 			patchmode: Patchmode::None,
 			supports_empty_pulses: false,
+			id_and_username: id.clone(),
+			id: id,
 			username: "".to_string(),
 			online: false,
 			last_receive_time: time::Instant::now(),
@@ -112,7 +121,7 @@ impl ServerClient
 				let mut lengthbuffer = [0u8; 4];
 				self.stream.read_exact(&mut lengthbuffer)?;
 
-				length = u32_from_little_endian_bytes(&lengthbuffer);
+				length = u32::from_le_bytes(lengthbuffer);
 				self.active_receive_length = Some(length);
 			}
 		}
@@ -251,7 +260,7 @@ impl ServerClient
 
 		println!("Queueing message of length {}...", length);
 
-		let lengthbuffer = little_endian_bytes_from_u32(length);
+		let lengthbuffer = length.to_le_bytes();
 		self.sendqueue.push_back(lengthbuffer.to_vec());
 
 		let data = jsonstr.as_bytes();
@@ -364,31 +373,4 @@ impl ServerClient
 			{}
 		}
 	}
-}
-
-#[allow(dead_code)]
-fn u32_from_big_endian_bytes(data: &[u8; 4]) -> u32
-{
-	(/*  */(data[0] as u32) << 24)
-		+ ((data[1] as u32) << 16)
-		+ ((data[2] as u32) << 8)
-		+ ((data[3] as u32) << 0)
-}
-
-fn u32_from_little_endian_bytes(data: &[u8; 4]) -> u32
-{
-	(/*  */(data[0] as u32) << 0)
-		+ ((data[1] as u32) << 8)
-		+ ((data[2] as u32) << 16)
-		+ ((data[3] as u32) << 24)
-}
-
-fn little_endian_bytes_from_u32(x: u32) -> [u8; 4]
-{
-	[
-		(x & 0xFF) as u8,
-		((x >> 8) & 0xFF) as u8,
-		((x >> 16) & 0xFF) as u8,
-		((x >> 24) & 0xFF) as u8,
-	]
 }
