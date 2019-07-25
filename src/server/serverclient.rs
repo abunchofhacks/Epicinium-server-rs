@@ -23,6 +23,7 @@ pub struct ServerClient
 	pub patchmode: Patchmode,
 	pub supports_empty_pulses: bool,
 
+	pub username: String,
 	pub online: bool,
 
 	last_receive_time: time::Instant,
@@ -57,6 +58,7 @@ impl ServerClient
 			platform: Platform::Unknown,
 			patchmode: Patchmode::None,
 			supports_empty_pulses: false,
+			username: "".to_string(),
 			online: false,
 			last_receive_time: time::Instant::now(),
 			last_queue_time: time::Instant::now(),

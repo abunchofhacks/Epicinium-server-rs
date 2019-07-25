@@ -219,10 +219,10 @@ impl LoginCluster
 				self.clients.e_drain_where(|client| client.online).collect();
 			for client in &mut drained
 			{
-				let username = "alice".to_string();
+				client.username = "alice".to_string();
 				client.send(Message::JoinServer {
 					status: None,
-					content: Some(username),
+					content: Some(client.username.clone()),
 					sender: None,
 					metadata: None,
 				});

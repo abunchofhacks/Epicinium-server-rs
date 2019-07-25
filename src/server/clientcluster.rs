@@ -172,7 +172,9 @@ impl ClientCluster
 				.collect();
 			for client in &mut drained
 			{
-				client.send(Message::LeaveServer { content: None });
+				client.send(Message::LeaveServer {
+					content: Some(client.username.clone()),
+				});
 			}
 
 			{
