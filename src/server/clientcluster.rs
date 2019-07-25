@@ -13,6 +13,8 @@ pub struct ClientCluster
 	pub outgoing_clients: Vec<ServerClient>,
 	pub incoming_clients: Vec<ServerClient>,
 
+	broadcasts: Vec<(Message, Option<String>)>,
+
 	closing: bool,
 }
 
@@ -24,6 +26,7 @@ impl ClientCluster
 			clients: Vec::new(),
 			outgoing_clients: Vec::new(),
 			incoming_clients: Vec::new(),
+			broadcasts: Vec::new(),
 			closing: false,
 		})
 	}
@@ -83,9 +86,67 @@ impl ClientCluster
 							{
 								init_client(client);
 							}
+							Message::Chat {
+								content,
+								sender: None,
+								target: ChatTarget::General,
+							} =>
+							{
+								println!(
+									"Client {} sent chat message: {}",
+									client.id_and_username, content
+								);
+								self.broadcasts.push((
+									Message::Chat {
+										content: content,
+										sender: Some(client.username.clone()),
+										target: ChatTarget::General,
+									},
+									None,
+								));
+							}
+							Message::Chat {
+								content,
+								sender: None,
+								target: ChatTarget::Lobby,
+							} => match client.lobby
+							{
+								Some(ref lobbyid) =>
+								{
+									println!(
+										"Client {} sent chat message to \
+										 lobby {}: {}",
+										client.id_and_username,
+										lobbyid,
+										content
+									);
+									self.broadcasts.push((
+										Message::Chat {
+											content: content,
+											sender: Some(
+												client.username.clone(),
+											),
+											target: ChatTarget::Lobby,
+										},
+										Some(lobbyid.clone()),
+									));
+								}
+								None =>
+								{
+									println!(
+										"Invalid lobby chat message from \
+										 client not in a lobby"
+									);
+									client.kill();
+								}
+							},
 							Message::Chat { .. } =>
 							{
-								// TODO chat
+								println!(
+									"Invalid message from client: {:?}",
+									message
+								);
+								client.kill();
 							}
 							Message::Version { .. }
 							| Message::JoinServer { .. } =>
@@ -121,6 +182,30 @@ impl ClientCluster
 					{
 						eprintln!("Client connection failed: {:?}", e);
 						client.kill();
+					}
+				}
+			}
+		}
+
+		for x in self.broadcasts.drain(..)
+		{
+			match x
+			{
+				(message, None) =>
+				{
+					for client in &mut self.clients
+					{
+						client.send(message.clone());
+					}
+				}
+				(message, lobbyid @ Some(_)) =>
+				{
+					for client in &mut self.clients
+					{
+						if client.lobby == lobbyid
+						{
+							client.send(message.clone());
+						}
 					}
 				}
 			}

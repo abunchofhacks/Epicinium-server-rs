@@ -365,7 +365,7 @@ impl WelcomeParty
 				          to qualify for access to the \
 				          Closed Beta."
 					.to_string(),
-				sender: "server".to_string(),
+				sender: Some("server".to_string()),
 				target: ChatTarget::General,
 			});
 

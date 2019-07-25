@@ -43,7 +43,10 @@ pub enum Message
 	Chat
 	{
 		content: String,
-		sender: String,
+
+		#[serde(default, skip_serializing_if = "is_zero")]
+		sender: Option<String>,
+
 		target: ChatTarget,
 	},
 }
