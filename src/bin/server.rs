@@ -19,8 +19,7 @@ fn main() -> io::Result<()>
 	println!("");
 
 	{
-		let mut server = ServerCluster::create()?;
-		server.run()?;
+		run_server()?;
 	}
 
 	println!("");

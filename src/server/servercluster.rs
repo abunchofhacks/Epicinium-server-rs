@@ -11,75 +11,85 @@ use std::sync::atomic;
 use std::thread;
 use std::time;
 
-pub struct ServerCluster
+pub fn run_server() -> io::Result<()>
 {
-	logincluster: LoginCluster,
-	clientcluster: ClientCluster,
-	closing: bool,
-	terminating: bool,
-}
+	let shutdown = sync::Arc::new(atomic::AtomicBool::new(false));
 
-impl ServerCluster
-{
-	pub fn create() -> io::Result<ServerCluster>
-	{
-		Ok(ServerCluster {
-			logincluster: LoginCluster::create()?,
-			clientcluster: ClientCluster::create()?,
-			closing: false,
-			terminating: false,
-		})
-	}
-
-	pub fn run(&mut self) -> io::Result<()>
-	{
-		let shutdown = sync::Arc::new(atomic::AtomicBool::new(false));
-
-		// Install the handler. This happens after the server has been created
-		// because if creation hangs we just want to kill it immediately.
-		signal_hook::flag::register(SIGTERM, sync::Arc::clone(&shutdown))?;
-		signal_hook::flag::register(SIGHUP, sync::Arc::clone(&shutdown))?;
-		// TODO replace SIGHUP with SIGBREAK on Windows?
-
-		while !self.terminating
+	let login_thread = thread::spawn(|| {
+		let mut cluster = LoginCluster::create()?;
+		while !cluster.closed()
 		{
-			if shutdown.load(atomic::Ordering::Relaxed)
+			cluster.update();
+		}
+		Ok(())
+	});
+	let client_thread = thread::spawn(|| {
+		let mut cluster = ClientCluster::create()?;
+		while !cluster.closed()
+		{
+			cluster.update();
+		}
+		Ok(())
+	});
+	let mut closing = false;
+	let mut terminating = false;
+
+	// Install the handler. This happens after the server has been created
+	// because if creation hangs we just want to kill it immediately.
+	signal_hook::flag::register(SIGTERM, shutdown.clone())?;
+	signal_hook::flag::register(SIGHUP, shutdown.clone())?;
+	// TODO replace SIGHUP with SIGBREAK on Windows?
+
+	while !terminating
+	{
+		if shutdown.load(atomic::Ordering::Relaxed)
+		{
+			if closing
 			{
-				if self.closing
-				{
-					self.terminating = true;
-				}
-				else
-				{
-					self.logincluster.close();
-					self.clientcluster.close();
-					self.closing = true;
-				}
+				terminating = true;
 			}
-
-			if self.closing
+			else
 			{
-				if self.logincluster.closed() && self.clientcluster.closed()
-				{
-					break /* out of main while loop */;
-				}
+				closing = true;
 			}
-
-			self.logincluster.update();
-			self.clientcluster.update();
-
-			std::mem::swap(
-				&mut self.logincluster.outgoing_clients,
-				&mut self.clientcluster.incoming_clients,
-			);
-			std::mem::swap(
-				&mut self.logincluster.incoming_clients,
-				&mut self.clientcluster.outgoing_clients,
-			);
-
-			thread::sleep(time::Duration::from_millis(100));
 		}
 
-		Ok(())
+		thread::sleep(time::Duration::from_millis(100));
 	}
+
+	match login_thread.join()
+	{
+		Ok(x) => match x
+		{
+			Ok(()) =>
+			{}
+			Err(e) =>
+			{
+				return Err(e);
+			}
+		},
+		Err(e) =>
+		{
+			panic!("Thread panicked: {:?}", e);
+		}
+	}
+
+	match client_thread.join()
+	{
+		Ok(x) => match x
+		{
+			Ok(()) =>
+			{}
+			Err(e) =>
+			{
+				return Err(e);
+			}
+		},
+		Err(e) =>
+		{
+			panic!("Thread panicked: {:?}", e);
+		}
+	}
+
+	Ok(())
 }
