@@ -4,10 +4,14 @@ use server::message::*;
 use server::serverclient::*;
 
 use std::io;
+use vec_drain_where::VecDrainWhereExt;
 
 pub struct ClientCluster
 {
 	clients: Vec<ServerClient>,
+
+	pub outgoing_clients: Vec<ServerClient>,
+	pub incoming_clients: Vec<ServerClient>,
 
 	closing: bool,
 }
@@ -18,6 +22,8 @@ impl ClientCluster
 	{
 		Ok(ClientCluster {
 			clients: Vec::new(),
+			outgoing_clients: Vec::new(),
+			incoming_clients: Vec::new(),
 			closing: false,
 		})
 	}
@@ -65,15 +71,25 @@ impl ClientCluster
 								println!("Client gracefully disconnected.");
 								client.stop_receiving();
 							}
-							Message::LeaveServer =>
+							Message::LeaveServer { .. } =>
 							{
-								// TODO leave server
+								client.online = false;
+
+								// Stop receiving until we move this client
+								// from our list to somewhere else.
+								break;
+							}
+							Message::Init =>
+							{
+								// TODO init client
+								client.send(Message::Init);
 							}
 							Message::Chat { .. } =>
 							{
 								// TODO chat
 							}
-							Message::Version { .. } | Message::JoinServer =>
+							Message::Version { .. }
+							| Message::JoinServer { .. } =>
 							{
 								println!(
 									"Invalid message from online client: {:?}",
@@ -148,5 +164,29 @@ impl ClientCluster
 		}
 
 		self.clients.retain(|client| !client.dead());
+
+		{
+			let mut drained: Vec<ServerClient> = self
+				.clients
+				.e_drain_where(|client| !client.online)
+				.collect();
+			for client in &mut drained
+			{
+				client.send(Message::LeaveServer { content: None });
+			}
+
+			{
+				self.outgoing_clients = drained;
+			}
+		}
+
+		{
+			let mut added: Vec<ServerClient>;
+			{
+				added = self.incoming_clients.drain(..).collect();
+			}
+			added.retain(|client| !client.dead());
+			self.clients.append(&mut added);
+		}
 	}
 }

@@ -6,10 +6,14 @@ use server::serverclient::*;
 
 use std::io;
 use std::net;
+use vec_drain_where::VecDrainWhereExt;
 
 pub struct LoginCluster
 {
 	clients: Vec<ServerClient>,
+
+	pub outgoing_clients: Vec<ServerClient>,
+	pub incoming_clients: Vec<ServerClient>,
 
 	listener: net::TcpListener,
 
@@ -26,6 +30,8 @@ impl LoginCluster
 
 		Ok(LoginCluster {
 			clients: Vec::new(),
+			outgoing_clients: Vec::new(),
+			incoming_clients: Vec::new(),
 			listener: listener,
 			welcome_party: WelcomeParty { closing: false },
 			closing: false,
@@ -101,13 +107,10 @@ impl LoginCluster
 								println!("Client gracefully disconnected.");
 								client.stop_receiving();
 							}
-							Message::JoinServer =>
+							Message::JoinServer { .. } =>
 							{
-								if client.version != Version::undefined()
-								{
-									// TODO join server
-								}
-								else
+								let curver = Version::current();
+								if client.version == Version::undefined()
 								{
 									println!(
 										"Invalid message from unversioned \
@@ -115,9 +118,27 @@ impl LoginCluster
 										message
 									);
 									client.kill();
+									break;
+								}
+								else if client.version.major != curver.major
+									|| client.version.minor != curver.minor
+								{
+									client.send(Message::LeaveServer {
+										content: None,
+									})
+								}
+								else
+								{
+									client.online = true;
+
+									// Stop receiving until we move this client
+									// from our list to somewhere else.
+									break;
 								}
 							}
-							Message::LeaveServer | Message::Chat { .. } =>
+							Message::LeaveServer { .. }
+							| Message::Init
+							| Message::Chat { .. } =>
 							{
 								println!(
 									"Invalid message from offline client: {:?}",
@@ -192,6 +213,36 @@ impl LoginCluster
 		}
 
 		self.clients.retain(|client| !client.dead());
+
+		{
+			let mut drained: Vec<ServerClient> =
+				self.clients.e_drain_where(|client| client.online).collect();
+			for client in &mut drained
+			{
+				let username = "alice".to_string();
+				client.send(Message::JoinServer {
+					status: None,
+					content: Some(username),
+					sender: None,
+					metadata: None,
+				});
+				// TODO init client
+				client.send(Message::Init);
+			}
+
+			{
+				self.outgoing_clients = drained;
+			}
+		}
+
+		{
+			let mut added: Vec<ServerClient>;
+			{
+				added = self.incoming_clients.drain(..).collect();
+			}
+			added.retain(|client| !client.dead());
+			self.clients.append(&mut added);
+		}
 	}
 }
 
@@ -240,8 +291,9 @@ impl WelcomeParty
 			Message::Pulse
 			| Message::Ping
 			| Message::Pong
-			| Message::JoinServer
-			| Message::LeaveServer
+			| Message::JoinServer { .. }
+			| Message::LeaveServer { .. }
+			| Message::Init
 			| Message::Chat { .. }
 			| Message::Closing
 			| Message::Quit =>

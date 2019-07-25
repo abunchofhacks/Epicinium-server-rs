@@ -68,6 +68,15 @@ impl ServerCluster
 			self.logincluster.update();
 			self.clientcluster.update();
 
+			std::mem::swap(
+				&mut self.logincluster.outgoing_clients,
+				&mut self.clientcluster.incoming_clients,
+			);
+			std::mem::swap(
+				&mut self.logincluster.incoming_clients,
+				&mut self.clientcluster.outgoing_clients,
+			);
+
 			thread::sleep(time::Duration::from_millis(100));
 		}
 

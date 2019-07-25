@@ -5,7 +5,7 @@ use common::version::*;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum Message
 {
 	Pulse,
@@ -18,8 +18,26 @@ pub enum Message
 		#[serde(default, skip_serializing_if = "is_zero")]
 		metadata: Option<PlatformMetadata>,
 	},
-	JoinServer,
-	LeaveServer,
+	JoinServer
+	{
+		#[serde(default, skip_serializing_if = "is_zero")]
+		status: Option<i32>,
+
+		#[serde(default, skip_serializing_if = "is_zero")]
+		content: Option<String>,
+
+		#[serde(default, skip_serializing_if = "is_zero")]
+		sender: Option<String>,
+
+		#[serde(default, skip_serializing_if = "is_zero")]
+		metadata: Option<JoinMetadata>,
+	},
+	LeaveServer
+	{
+		#[serde(default, skip_serializing_if = "is_zero")]
+		content: Option<String>,
+	},
+	Init,
 	Closing,
 	Quit,
 	Chat
@@ -34,7 +52,10 @@ pub enum Message
 #[serde(rename_all = "lowercase")]
 pub struct PlatformMetadata
 {
+	#[serde(default, skip_serializing_if = "is_zero")]
 	pub platform: Platform,
+
+	#[serde(default)]
 	pub patchmode: Patchmode,
 }
 
@@ -83,4 +104,15 @@ pub enum ChatTarget
 {
 	General,
 	Lobby,
+}
+
+#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]
+#[serde(rename_all = "lowercase")]
+pub struct JoinMetadata
+{
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub dev: bool,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub guest: bool,
 }

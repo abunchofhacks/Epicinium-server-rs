@@ -12,6 +12,7 @@ extern crate enum_map;
 extern crate enum_map_derive;
 
 extern crate signal_hook;
+extern crate vec_drain_where;
 
 pub mod common;
 pub mod logic;

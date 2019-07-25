@@ -23,6 +23,8 @@ pub struct ServerClient
 	pub patchmode: Patchmode,
 	pub supports_empty_pulses: bool,
 
+	pub online: bool,
+
 	last_receive_time: time::Instant,
 	last_queue_time: time::Instant,
 	ping_send_time: Option<time::Instant>,
@@ -55,6 +57,7 @@ impl ServerClient
 			platform: Platform::Unknown,
 			patchmode: Patchmode::None,
 			supports_empty_pulses: false,
+			online: false,
 			last_receive_time: time::Instant::now(),
 			last_queue_time: time::Instant::now(),
 			ping_send_time: None,
