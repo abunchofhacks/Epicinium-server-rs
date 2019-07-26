@@ -37,7 +37,17 @@ impl ClientCluster
 
 	pub fn close(&mut self)
 	{
+		if self.closing
+		{
+			return;
+		}
+
 		self.closing = true;
+
+		for client in &mut self.clients
+		{
+			client.send(Message::Closing);
+		}
 	}
 
 	pub fn closed(&self) -> bool
@@ -258,7 +268,15 @@ impl ClientCluster
 			client.send(Message::LeaveServer {
 				content: Some(client.username.clone()),
 			});
-			self.outgoing_clients.send(client).unwrap();
+			match self.outgoing_clients.send(client)
+			{
+				Ok(_) =>
+				{}
+				Err(_) =>
+				{
+					panic!("The LoginCluster should outlast me.");
+				}
+			}
 		}
 
 		loop

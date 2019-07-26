@@ -46,8 +46,18 @@ impl LoginCluster
 
 	pub fn close(&mut self)
 	{
+		if self.closing
+		{
+			return;
+		}
+
 		self.closing = true;
 		self.welcome_party.closing = true;
+
+		for client in &mut self.clients
+		{
+			client.send(Message::Closing);
+		}
 	}
 
 	pub fn closed(&self) -> bool
@@ -123,6 +133,10 @@ impl LoginCluster
 									message
 								);
 								client.kill();
+							}
+							Message::JoinServer { .. } if self.closing =>
+							{
+								client.send(Message::Closing);
 							}
 							Message::JoinServer {
 								status: None,
@@ -243,7 +257,15 @@ impl LoginCluster
 
 		for client in self.clients.e_drain_where(|x| x.online)
 		{
-			self.outgoing_clients.send(client).unwrap();
+			match self.outgoing_clients.send(client)
+			{
+				Ok(_) =>
+				{}
+				Err(_) =>
+				{
+					// TODO this can happen due to data races
+				}
+			}
 		}
 
 		loop
