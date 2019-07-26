@@ -343,7 +343,7 @@ fn join_server(client: &mut ServerClient, account_id: String)
 				"Alice", "Bob", "Carol", "Dave", "Emma", "Frank", "Gwen",
 				"Harold",
 			];
-			client.username = NAMES[x as usize].to_string();
+			client.username = NAMES[(x - 1) as usize].to_string();
 		}
 		_ =>
 		{

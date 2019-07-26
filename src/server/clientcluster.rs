@@ -111,6 +111,13 @@ impl ClientCluster
 								println!("Client gracefully disconnected.");
 								client.stop_receiving();
 							}
+							Message::JoinServer { .. } =>
+							{
+								println!(
+									"Ignoring message from client: {:?}",
+									message
+								);
+							}
 							Message::LeaveServer { .. } =>
 							{
 								client.online = false;
@@ -185,8 +192,7 @@ impl ClientCluster
 								);
 								client.kill();
 							}
-							Message::Version { .. }
-							| Message::JoinServer { .. } =>
+							Message::Version { .. } =>
 							{
 								println!(
 									"Invalid message from online client: {:?}",
@@ -308,7 +314,79 @@ impl ClientCluster
 			{
 				Ok(mut client) =>
 				{
-					joined_server(&mut client);
+					// Confirm to the newcomer that they have joined.
+					client.send(Message::JoinServer {
+						status: None,
+						content: Some(client.username.clone()),
+						sender: None,
+						metadata: None,
+					});
+
+					// Tell the newcomer that they are online.
+					// TODO this is weird
+					client.send(Message::JoinServer {
+						status: None,
+						content: Some(client.username.clone()),
+						sender: None,
+						metadata: None,
+					});
+
+					// Tell everyone who the newcomer is.
+					if !client.hidden
+					{
+						for otherclient in &mut self.clients
+						{
+							otherclient.send(Message::JoinServer {
+								status: None,
+								content: Some(client.username.clone()),
+								sender: None,
+								metadata: None,
+							});
+						}
+
+						// Tell everyone the rating and stars of the newcomer.
+						// TODO rating and stars
+					}
+
+					// Let the client know which lobbies there are.
+					// TODO lobbies
+
+					// Let the client know who else is online.
+					for otherclient in &mut self.clients
+					{
+						if !otherclient.hidden
+						{
+							client.send(Message::JoinServer {
+								status: None,
+								content: Some(otherclient.username.clone()),
+								sender: None,
+								metadata: None,
+							});
+
+							// TODO rating
+							// TODO stars
+							// TODO join_lobby
+							// TODO in_game
+						}
+					}
+
+					// Let the client know the rankings.
+					// TODO rankings
+
+					// Let the client know what the current challenge is called.
+					// TODO challenge
+
+					// Let the client know how many stars they have for the
+					// current challenge.
+					// TODO recent_stars
+
+					// Let the client know we are done initializing.
+					client.send(Message::Init);
+
+					// TODO join lobby if still in progress
+
+					welcome_client(&mut client);
+
 					if !client.dead()
 					{
 						self.clients.push(client);
@@ -324,21 +402,35 @@ impl ClientCluster
 	}
 }
 
-fn joined_server(client: &mut ServerClient)
-{
-	client.send(Message::JoinServer {
-		status: None,
-		content: Some(client.username.clone()),
-		sender: None,
-		metadata: None,
-	});
-
-	init_client(client);
-}
-
 fn init_client(client: &mut ServerClient)
 {
-	// TODO init client
+	// The client just finished a game; tell everyone their rating and stars.
+	if !client.hidden
+	{
+		// TODO rating and stars
+	}
 
+	// Let the client know which lobbies there are.
+	// TODO lobbies
+
+	// Let the client know who else is online.
+	// TODO other clients
+
+	// Let the client know the rankings.
+	// TODO rankings
+
+	// Let the client know what the current challenge is called.
+	// TODO challenge
+
+	// Let the client know how many stars they have for the
+	// current challenge.
+	// TODO recent_stars
+
+	// Let the client know we are done initializing.
 	client.send(Message::Init);
+}
+
+fn welcome_client(_client: &mut ServerClient)
+{
+	// No welcome message at the moment.
 }

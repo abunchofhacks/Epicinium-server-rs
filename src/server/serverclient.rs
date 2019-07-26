@@ -28,6 +28,7 @@ pub struct ServerClient
 	pub id: String,
 	pub username: String,
 	pub online: bool,
+	pub hidden: bool,
 	pub lobby: Option<String>,
 
 	last_receive_time: time::Instant,
@@ -70,6 +71,7 @@ impl ServerClient
 			id: id,
 			username: "".to_string(),
 			online: false,
+			hidden: false,
 			lobby: None,
 			last_receive_time: time::Instant::now(),
 			last_queue_time: time::Instant::now(),
