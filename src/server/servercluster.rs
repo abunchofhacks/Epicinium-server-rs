@@ -10,16 +10,35 @@ use std::io;
 use std::sync;
 use std::sync::atomic;
 use std::thread;
+use std::time;
 
 pub fn run_server() -> io::Result<()>
 {
 	let shutdown = sync::Arc::new(atomic::AtomicBool::new(false));
+	let shutdown_killcount = sync::Arc::new(atomic::AtomicU8::new(0));
 
-	// Install the handler. This happens after the server has been created
-	// because if creation hangs we just want to kill it immediately.
 	signal_hook::flag::register(SIGTERM, shutdown.clone())?;
 	signal_hook::flag::register(SIGHUP, shutdown.clone())?;
-	// TODO replace SIGHUP with SIGBREAK on Windows?
+	// On Windows we would want to use SIGBREAK instead of SIGHUP, but the
+	// crate we use does not support that.
+
+	// LoginCluster should be fully closed before this thread ends.
+	let login_closed = sync::Arc::new(atomic::AtomicBool::new(false));
+
+	let signal_dep = login_closed.clone();
+	let signal_killcount = shutdown_killcount.clone();
+	let signal_thread = thread::spawn(move || {
+		while !signal_dep.load(atomic::Ordering::Relaxed)
+		{
+			if shutdown.load(atomic::Ordering::Relaxed)
+			{
+				shutdown.store(false, atomic::Ordering::Relaxed);
+				signal_killcount.fetch_add(1, atomic::Ordering::Relaxed);
+			}
+
+			thread::sleep(time::Duration::from_millis(50));
+		}
+	});
 
 	let (join_in, join_out) = sync::mpsc::channel::<ServerClient>();
 	let (leave_in, leave_out) = sync::mpsc::channel::<ServerClient>();
@@ -28,28 +47,57 @@ pub fn run_server() -> io::Result<()>
 	let client_closed = sync::Arc::new(atomic::AtomicBool::new(false));
 
 	let login_dep = client_closed.clone();
-	let login_shutdown = shutdown.clone();
+	let login_killcount = shutdown_killcount.clone();
 	let login_thread = thread::spawn(move || {
+		let mut last_killcount = 0;
 		let mut cluster = LoginCluster::create(join_in, leave_out, login_dep)?;
 		while !cluster.closed()
 		{
-			if login_shutdown.load(atomic::Ordering::Relaxed)
+			let killcount = login_killcount.load(atomic::Ordering::Relaxed);
+			if killcount > last_killcount
 			{
-				cluster.close();
+				if killcount == 1
+				{
+					cluster.close();
+				}
+				else if killcount == 2
+				{
+					cluster.close_and_kick();
+				}
+				else
+				{
+					cluster.close_and_terminate();
+				}
+				last_killcount = killcount;
 			}
 			cluster.update();
 		}
+		login_closed.store(true, atomic::Ordering::Relaxed);
 		Ok(())
 	});
 
-	let client_shutdown = shutdown.clone();
+	let client_killcount = shutdown_killcount.clone();
 	let client_thread = thread::spawn(move || {
+		let mut last_killcount = 0;
 		let mut cluster = ClientCluster::create(join_out, leave_in)?;
 		while !cluster.closed()
 		{
-			if client_shutdown.load(atomic::Ordering::Relaxed)
+			let killcount = client_killcount.load(atomic::Ordering::Relaxed);
+			if killcount > last_killcount
 			{
-				cluster.close();
+				if killcount == 1
+				{
+					cluster.close();
+				}
+				else if killcount == 2
+				{
+					cluster.close_and_kick();
+				}
+				else
+				{
+					cluster.close_and_terminate();
+				}
+				last_killcount = killcount;
 			}
 			cluster.update();
 		}
@@ -57,7 +105,22 @@ pub fn run_server() -> io::Result<()>
 		Ok(())
 	});
 
-	drop(shutdown);
+	match client_thread.join()
+	{
+		Ok(x) => match x
+		{
+			Ok(()) =>
+			{}
+			Err(e) =>
+			{
+				return Err(e);
+			}
+		},
+		Err(e) =>
+		{
+			panic!("Thread panicked: {:?}", e);
+		}
+	}
 
 	match login_thread.join()
 	{
@@ -76,17 +139,10 @@ pub fn run_server() -> io::Result<()>
 		}
 	}
 
-	match client_thread.join()
+	match signal_thread.join()
 	{
-		Ok(x) => match x
-		{
-			Ok(()) =>
-			{}
-			Err(e) =>
-			{
-				return Err(e);
-			}
-		},
+		Ok(()) =>
+		{}
 		Err(e) =>
 		{
 			panic!("Thread panicked: {:?}", e);

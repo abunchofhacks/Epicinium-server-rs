@@ -37,16 +37,39 @@ impl ClientCluster
 
 	pub fn close(&mut self)
 	{
-		if self.closing
-		{
-			return;
-		}
-
 		self.closing = true;
 
 		for client in &mut self.clients
 		{
 			client.send(Message::Closing);
+		}
+	}
+
+	pub fn close_and_kick(&mut self)
+	{
+		if !self.closing
+		{
+			self.close();
+		}
+
+		for client in &mut self.clients
+		{
+			client.send(Message::Quit);
+			client.stop_receiving();
+		}
+	}
+
+	pub fn close_and_terminate(&mut self)
+	{
+		if !self.closing
+		{
+			self.close();
+		}
+
+		for client in &mut self.clients
+		{
+			client.send(Message::Quit);
+			client.kill();
 		}
 	}
 
