@@ -7,6 +7,7 @@ use server::serverclient::*;
 use std::io;
 use std::net;
 use std::sync;
+use std::sync::atomic;
 use vec_drain_where::VecDrainWhereExt;
 
 pub struct LoginCluster
@@ -15,6 +16,7 @@ pub struct LoginCluster
 
 	outgoing_clients: sync::mpsc::Sender<ServerClient>,
 	incoming_clients: sync::mpsc::Receiver<ServerClient>,
+	close_dependency: sync::Arc<atomic::AtomicBool>,
 
 	listener: net::TcpListener,
 
@@ -28,6 +30,7 @@ impl LoginCluster
 	pub fn create(
 		outgoing: sync::mpsc::Sender<ServerClient>,
 		incoming: sync::mpsc::Receiver<ServerClient>,
+		close_dep: sync::Arc<atomic::AtomicBool>,
 	) -> io::Result<LoginCluster>
 	{
 		let listener = net::TcpListener::bind("127.0.0.1:9999")?;
@@ -37,6 +40,7 @@ impl LoginCluster
 			clients: Vec::new(),
 			outgoing_clients: outgoing,
 			incoming_clients: incoming,
+			close_dependency: close_dep,
 			listener: listener,
 			ticker: rand::random(),
 			welcome_party: WelcomeParty { closing: false },
@@ -62,7 +66,9 @@ impl LoginCluster
 
 	pub fn closed(&self) -> bool
 	{
-		self.closing && self.clients.is_empty()
+		self.closing
+			&& self.clients.is_empty()
+			&& self.close_dependency.load(atomic::Ordering::Relaxed)
 	}
 
 	pub fn update(&mut self)
@@ -177,9 +183,14 @@ impl LoginCluster
 								);
 								client.kill();
 							}
-							Message::LeaveServer { .. }
-							| Message::Init
-							| Message::Chat { .. } =>
+							Message::LeaveServer { .. } =>
+							{
+								println!(
+									"Ignoring message from client: {:?}",
+									message
+								);
+							}
+							Message::Init | Message::Chat { .. } =>
 							{
 								println!(
 									"Invalid message from offline client: {:?}",
@@ -255,17 +266,27 @@ impl LoginCluster
 
 		self.clients.retain(|client| !client.dead());
 
+		let mut stranded = Vec::<ServerClient>::new();
 		for client in self.clients.e_drain_where(|x| x.online)
 		{
 			match self.outgoing_clients.send(client)
 			{
 				Ok(_) =>
 				{}
-				Err(_) =>
+				Err(sync::mpsc::SendError(mut client)) =>
 				{
-					// TODO this can happen due to data races
+					if self.closing
+					{
+						client.send(Message::Closing);
+					}
+					stranded.push(client);
 				}
 			}
+		}
+		if !stranded.is_empty()
+		{
+			stranded.retain(|client| !client.dead());
+			self.clients.append(&mut stranded);
 		}
 
 		loop

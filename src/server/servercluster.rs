@@ -24,9 +24,13 @@ pub fn run_server() -> io::Result<()>
 	let (join_in, join_out) = sync::mpsc::channel::<ServerClient>();
 	let (leave_in, leave_out) = sync::mpsc::channel::<ServerClient>();
 
+	// ClientCluster should be fully closed before LoginCluster is destroyed.
+	let client_closed = sync::Arc::new(atomic::AtomicBool::new(false));
+
+	let login_dep = client_closed.clone();
 	let login_shutdown = shutdown.clone();
 	let login_thread = thread::spawn(move || {
-		let mut cluster = LoginCluster::create(join_in, leave_out)?;
+		let mut cluster = LoginCluster::create(join_in, leave_out, login_dep)?;
 		while !cluster.closed()
 		{
 			if login_shutdown.load(atomic::Ordering::Relaxed)
@@ -37,6 +41,7 @@ pub fn run_server() -> io::Result<()>
 		}
 		Ok(())
 	});
+
 	let client_shutdown = shutdown.clone();
 	let client_thread = thread::spawn(move || {
 		let mut cluster = ClientCluster::create(join_out, leave_in)?;
@@ -48,8 +53,11 @@ pub fn run_server() -> io::Result<()>
 			}
 			cluster.update();
 		}
+		client_closed.store(true, atomic::Ordering::Relaxed);
 		Ok(())
 	});
+
+	drop(shutdown);
 
 	match login_thread.join()
 	{
