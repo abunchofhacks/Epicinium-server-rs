@@ -1,5 +1,6 @@
 /* ClientCluster */
 
+use common::keycode::*;
 use server::message::*;
 use server::serverclient::*;
 
@@ -13,8 +14,6 @@ pub struct ClientCluster
 
 	outgoing_clients: sync::mpsc::Sender<ServerClient>,
 	incoming_clients: sync::mpsc::Receiver<ServerClient>,
-
-	broadcasts: Vec<(Message, Option<String>)>,
 
 	closing: bool,
 }
@@ -30,7 +29,6 @@ impl ClientCluster
 			clients: Vec::new(),
 			outgoing_clients: outgoing,
 			incoming_clients: incoming,
-			broadcasts: Vec::new(),
 			closing: false,
 		})
 	}
@@ -80,6 +78,9 @@ impl ClientCluster
 
 	pub fn update(&mut self)
 	{
+		let mut actions: Vec<(Keycode, Message)> = Vec::new();
+		let mut broadcasts: Vec<(Message, Option<String>)> = Vec::new();
+
 		for client in &mut self.clients
 		{
 			// TODO add counter to prevent one client DOSing us?
@@ -120,6 +121,16 @@ impl ClientCluster
 							}
 							Message::LeaveServer { .. } =>
 							{
+								client.send(Message::LeaveServer {
+									content: Some(client.username.clone()),
+								});
+								broadcasts.push((
+									Message::LeaveServer {
+										content: Some(client.username.clone()),
+									},
+									None,
+								));
+
 								client.online = false;
 
 								// Stop receiving until we move this client
@@ -128,7 +139,7 @@ impl ClientCluster
 							}
 							Message::Init =>
 							{
-								init_client(client);
+								actions.push((client.id, message));
 							}
 							Message::Chat {
 								content,
@@ -140,7 +151,7 @@ impl ClientCluster
 									"Client {} sent chat message: {}",
 									client.id_and_username, content
 								);
-								self.broadcasts.push((
+								broadcasts.push((
 									Message::Chat {
 										content: content,
 										sender: Some(client.username.clone()),
@@ -164,7 +175,7 @@ impl ClientCluster
 										lobbyid,
 										content
 									);
-									self.broadcasts.push((
+									broadcasts.push((
 										Message::Chat {
 											content: content,
 											sender: Some(
@@ -230,7 +241,95 @@ impl ClientCluster
 			}
 		}
 
-		for x in self.broadcasts.drain(..)
+		for (cid, message) in actions.drain(..)
+		{
+			match message
+			{
+				Message::Init =>
+				{
+					// The client just finished a game; tell everyone their
+					// rating and stars.
+					match self.find_client(cid)
+					{
+						Some(client) =>
+						{
+							if !client.hidden
+							{
+								// TODO add rating and stars to broadcasts
+							}
+						}
+						None =>
+						{
+							// If we cannot find the client, there is no need
+							// to send the messages.
+							continue;
+						}
+					}
+
+					let mut messages: Vec<Message> = Vec::new();
+
+					// Let the client know which lobbies there are.
+					// TODO lobbies
+
+					// Let the client know who else is online.
+					for other in self.clients.iter().filter(|x| !x.hidden)
+					{
+						// TODO dev?
+						// TODO guest?
+						messages.push(Message::JoinServer {
+							status: None,
+							content: Some(other.username.clone()),
+							sender: None,
+							metadata: None,
+						});
+						// TODO rating
+						// TODO stars
+						// TODO join_lobby
+						// TODO in_game
+					}
+
+					// Let the client know the rankings.
+					// TODO rankings
+
+					// Let the client know what the current challenge is called.
+					// TODO challenge
+
+					// Let the client know how many stars they have for the
+					// current challenge.
+					// TODO recent_stars
+
+					// Let the client know we are done initializing.
+					match self.find_client(cid)
+					{
+						Some(client) =>
+						{
+							for message in messages
+							{
+								client.send(message);
+							}
+							client.send(Message::Init);
+						}
+						None =>
+						{}
+					}
+				}
+
+				Message::Pulse
+				| Message::Ping
+				| Message::Pong
+				| Message::Version { .. }
+				| Message::JoinServer { .. }
+				| Message::LeaveServer { .. }
+				| Message::Chat { .. }
+				| Message::Closing
+				| Message::Quit =>
+				{
+					panic!("Message misrouted");
+				}
+			}
+		}
+
+		for x in broadcasts.drain(..)
 		{
 			match x
 			{
@@ -238,7 +337,10 @@ impl ClientCluster
 				{
 					for client in &mut self.clients
 					{
-						client.send(message.clone());
+						if client.online
+						{
+							client.send(message.clone());
+						}
 					}
 				}
 				(message, lobbyid @ Some(_)) =>
@@ -292,11 +394,8 @@ impl ClientCluster
 
 		self.clients.retain(|client| !client.dead());
 
-		for mut client in self.clients.e_drain_where(|x| !x.online)
+		for client in self.clients.e_drain_where(|x| !x.online)
 		{
-			client.send(Message::LeaveServer {
-				content: Some(client.username.clone()),
-			});
 			match self.outgoing_clients.send(client)
 			{
 				Ok(_) =>
@@ -400,34 +499,19 @@ impl ClientCluster
 			}
 		}
 	}
-}
 
-fn init_client(client: &mut ServerClient)
-{
-	// The client just finished a game; tell everyone their rating and stars.
-	if !client.hidden
+	fn find_client(&mut self, cid: Keycode) -> Option<&mut ServerClient>
 	{
-		// TODO rating and stars
+		for client in &mut self.clients
+		{
+			if client.id == cid
+			{
+				return Some(client);
+			}
+		}
+
+		None
 	}
-
-	// Let the client know which lobbies there are.
-	// TODO lobbies
-
-	// Let the client know who else is online.
-	// TODO other clients
-
-	// Let the client know the rankings.
-	// TODO rankings
-
-	// Let the client know what the current challenge is called.
-	// TODO challenge
-
-	// Let the client know how many stars they have for the
-	// current challenge.
-	// TODO recent_stars
-
-	// Let the client know we are done initializing.
-	client.send(Message::Init);
 }
 
 fn welcome_client(_client: &mut ServerClient)

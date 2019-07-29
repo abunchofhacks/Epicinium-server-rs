@@ -347,7 +347,7 @@ fn join_server(client: &mut ServerClient, account_id: String)
 		}
 		_ =>
 		{
-			client.username = client.id.clone();
+			client.username = format!("{}", client.id);
 		}
 	}
 	client.id_and_username = format!("{} '{}'", client.id, client.username);
