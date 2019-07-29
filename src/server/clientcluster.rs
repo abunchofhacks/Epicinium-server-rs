@@ -203,6 +203,10 @@ impl ClientCluster
 								);
 								client.kill();
 							}
+							Message::Request { content: _name } =>
+							{
+								// TODO
+							}
 							Message::Version { .. } =>
 							{
 								println!(
@@ -211,7 +215,11 @@ impl ClientCluster
 								);
 								client.kill();
 							}
-							Message::Closing | Message::Stamp { .. } =>
+							Message::Closing
+							| Message::Stamp { .. }
+							| Message::Download { .. }
+							| Message::RequestDenied { .. }
+							| Message::RequestFulfilled { .. } =>
 							{
 								println!(
 									"Invalid message from client: {:?}",
@@ -322,6 +330,10 @@ impl ClientCluster
 				| Message::LeaveServer { .. }
 				| Message::Chat { .. }
 				| Message::Stamp { .. }
+				| Message::Download { .. }
+				| Message::Request { .. }
+				| Message::RequestDenied { .. }
+				| Message::RequestFulfilled { .. }
 				| Message::Closing
 				| Message::Quit =>
 				{

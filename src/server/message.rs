@@ -53,6 +53,22 @@ pub enum Message
 	{
 		metadata: StampMetadata,
 	},
+	Download
+	{
+		content: String,
+	},
+	Request
+	{
+		content: String,
+	},
+	RequestDenied
+	{
+		content: String,
+	},
+	RequestFulfilled
+	{
+		content: String,
+	},
 }
 
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]
@@ -128,7 +144,7 @@ pub struct JoinMetadata
 #[serde(rename_all = "lowercase")]
 pub struct StampMetadata
 {
-	pub picture: String,
+	pub image: String,
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub tooltip: Option<String>,

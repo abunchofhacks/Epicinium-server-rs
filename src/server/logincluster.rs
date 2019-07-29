@@ -149,6 +149,10 @@ impl LoginCluster
 							{
 								self.welcome_party.handle(client, message);
 							}
+							Message::Request { content: _name } =>
+							{
+								// TODO
+							}
 							Message::Quit =>
 							{
 								println!("Client gracefully disconnected.");
@@ -222,7 +226,11 @@ impl LoginCluster
 								);
 								client.kill();
 							}
-							Message::Closing | Message::Stamp { .. } =>
+							Message::Closing
+							| Message::Stamp { .. }
+							| Message::Download { .. }
+							| Message::RequestDenied { .. }
+							| Message::RequestFulfilled { .. } =>
 							{
 								println!(
 									"Invalid message from client: {:?}",
@@ -404,6 +412,10 @@ impl WelcomeParty
 			| Message::Init
 			| Message::Chat { .. }
 			| Message::Stamp { .. }
+			| Message::Download { .. }
+			| Message::Request { .. }
+			| Message::RequestDenied { .. }
+			| Message::RequestFulfilled { .. }
 			| Message::Closing
 			| Message::Quit =>
 			{
