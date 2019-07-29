@@ -49,6 +49,10 @@ pub enum Message
 
 		target: ChatTarget,
 	},
+	Stamp
+	{
+		metadata: StampMetadata,
+	},
 }
 
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]
@@ -118,4 +122,17 @@ pub struct JoinMetadata
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub guest: bool,
+}
+
+#[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub struct StampMetadata
+{
+	pub picture: String,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub tooltip: Option<String>,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub url: Option<String>,
 }

@@ -211,7 +211,7 @@ impl ClientCluster
 								);
 								client.kill();
 							}
-							Message::Closing =>
+							Message::Closing | Message::Stamp { .. } =>
 							{
 								println!(
 									"Invalid message from client: {:?}",
@@ -321,6 +321,7 @@ impl ClientCluster
 				| Message::JoinServer { .. }
 				| Message::LeaveServer { .. }
 				| Message::Chat { .. }
+				| Message::Stamp { .. }
 				| Message::Closing
 				| Message::Quit =>
 				{

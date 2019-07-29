@@ -4,6 +4,7 @@ use common::version::*;
 use server::message::*;
 use server::serverclient::*;
 
+use std::fs;
 use std::io;
 use std::net;
 use std::sync;
@@ -221,7 +222,7 @@ impl LoginCluster
 								);
 								client.kill();
 							}
-							Message::Closing =>
+							Message::Closing | Message::Stamp { .. } =>
 							{
 								println!(
 									"Invalid message from client: {:?}",
@@ -402,6 +403,7 @@ impl WelcomeParty
 			| Message::LeaveServer { .. }
 			| Message::Init
 			| Message::Chat { .. }
+			| Message::Stamp { .. }
 			| Message::Closing
 			| Message::Quit =>
 			{
@@ -458,7 +460,15 @@ impl WelcomeParty
 			return;
 		}
 
-		// TODO load notice
+		match load_notice()
+		{
+			Some(notice) =>
+			{
+				client.send(Message::Stamp { metadata: notice });
+			}
+			None =>
+			{}
+		}
 
 		if client.version >= Version::exact(0, 31, 1, 0)
 		{
@@ -502,5 +512,26 @@ impl WelcomeParty
 		client.ping();
 
 		// TODO mention patches
+	}
+}
+
+fn load_notice() -> Option<StampMetadata>
+{
+	match fs::read_to_string("server-notice.json")
+	{
+		Ok(raw) => match serde_json::from_str::<StampMetadata>(&raw)
+		{
+			Ok(value) => Some(value),
+			Err(e) =>
+			{
+				eprintln!("Notice file could not be loaded: {:?}", e);
+				None
+			}
+		},
+		Err(e) =>
+		{
+			eprintln!("Notice file could not be loaded: {:?}", e);
+			None
+		}
 	}
 }
