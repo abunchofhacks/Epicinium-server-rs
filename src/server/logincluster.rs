@@ -1,5 +1,6 @@
 /* LoginCluster */
 
+use common::keycode::*;
 use common::version::*;
 use server::message::*;
 use server::serverclient::*;
@@ -97,6 +98,8 @@ impl LoginCluster
 
 	pub fn update(&mut self)
 	{
+		let mut requests: Vec<(Keycode, String)> = Vec::new();
+
 		for stream in self.listener.incoming()
 		{
 			match ServerClient::create(stream, self.ticker)
@@ -149,17 +152,14 @@ impl LoginCluster
 							{
 								self.welcome_party.handle(client, message);
 							}
-							Message::Request { content: _name } =>
-							{
-								// TODO
-							}
 							Message::Quit =>
 							{
 								println!("Client gracefully disconnected.");
 								client.stop_receiving();
 							}
-							Message::JoinServer { .. }
-								if client.version == Version::undefined() =>
+							Message::Request { .. }
+							| Message::JoinServer { .. }
+								if client.unversioned() =>
 							{
 								println!(
 									"Invalid message from unversioned \
@@ -167,6 +167,20 @@ impl LoginCluster
 									message
 								);
 								client.kill();
+							}
+							Message::Request { .. }
+								if client.platform == Platform::Unknown =>
+							{
+								println!(
+									"Invalid message from client without \
+									 platform: {:?}",
+									message
+								);
+								client.kill();
+							}
+							Message::Request { content: name } =>
+							{
+								requests.push((client.id, name));
 							}
 							Message::JoinServer { .. } if self.closing =>
 							{
@@ -260,6 +274,19 @@ impl LoginCluster
 			}
 		}
 
+		for (cid, name) in requests
+		{
+			match self.find_client(cid)
+			{
+				Some(ref mut client) if !client.dead() =>
+				{
+					client.fulfil_request(name);
+				}
+				Some(_) | None =>
+				{}
+			}
+		}
+
 		for client in &mut self.clients
 		{
 			while client.has_queued()
@@ -339,6 +366,19 @@ impl LoginCluster
 				}
 			}
 		}
+	}
+
+	fn find_client(&mut self, cid: Keycode) -> Option<&mut ServerClient>
+	{
+		for client in &mut self.clients
+		{
+			if client.id == cid
+			{
+				return Some(client);
+			}
+		}
+
+		None
 	}
 }
 

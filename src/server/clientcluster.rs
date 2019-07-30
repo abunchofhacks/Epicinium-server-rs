@@ -79,6 +79,7 @@ impl ClientCluster
 	pub fn update(&mut self)
 	{
 		let mut actions: Vec<(Keycode, Message)> = Vec::new();
+		let mut requests: Vec<(Keycode, String)> = Vec::new();
 		let mut broadcasts: Vec<(Message, Option<String>)> = Vec::new();
 
 		for client in &mut self.clients
@@ -203,9 +204,9 @@ impl ClientCluster
 								);
 								client.kill();
 							}
-							Message::Request { content: _name } =>
+							Message::Request { content: name } =>
 							{
-								// TODO
+								requests.push((client.id, name));
 							}
 							Message::Version { .. } =>
 							{
@@ -249,7 +250,7 @@ impl ClientCluster
 			}
 		}
 
-		for (cid, message) in actions.drain(..)
+		for (cid, message) in actions
 		{
 			match message
 			{
@@ -342,7 +343,7 @@ impl ClientCluster
 			}
 		}
 
-		for x in broadcasts.drain(..)
+		for x in broadcasts
 		{
 			match x
 			{
@@ -366,6 +367,19 @@ impl ClientCluster
 						}
 					}
 				}
+			}
+		}
+
+		for (cid, name) in requests
+		{
+			match self.find_client(cid)
+			{
+				Some(ref mut client) if !client.dead() =>
+				{
+					client.fulfil_request(name);
+				}
+				Some(_) | None =>
+				{}
 			}
 		}
 

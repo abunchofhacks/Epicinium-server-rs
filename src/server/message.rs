@@ -64,6 +64,7 @@ pub enum Message
 	RequestDenied
 	{
 		content: String,
+		metadata: DenyMetadata,
 	},
 	RequestFulfilled
 	{
@@ -151,4 +152,11 @@ pub struct StampMetadata
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub url: Option<String>,
+}
+
+#[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub struct DenyMetadata
+{
+	pub reason: String,
 }

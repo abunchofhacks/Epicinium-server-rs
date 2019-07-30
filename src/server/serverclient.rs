@@ -4,11 +4,13 @@ use common::keycode::*;
 use common::version::*;
 use server::limits::*;
 use server::message::*;
+use server::patch::*;
 
 use std::collections::VecDeque;
 use std::io;
 use std::io::{Read, Write};
 use std::net;
+use std::path;
 use std::time;
 
 pub struct ServerClient
@@ -376,5 +378,46 @@ impl ServerClient
 			None =>
 			{}
 		}
+	}
+
+	pub fn fulfil_request(&mut self, filename: String)
+	{
+		if !is_requestable(path::Path::new(&filename))
+		{
+			self.send(Message::RequestDenied {
+				content: filename,
+				metadata: DenyMetadata {
+					reason: "File not requestable.".to_string(),
+				},
+			});
+			return;
+		}
+
+		// TODO gzipped downloads
+
+		match self.send_file(&filename)
+		{
+			Ok(()) =>
+			{
+				// TODO checksum
+
+				// TODO requestfulfilled w/ metadata
+			}
+			Err(e) =>
+			{
+				// Server error, leave the request unanswered.
+				// TODO should we though?
+				eprintln!("Error while fulfilling request: {:?}", e);
+			}
+		}
+	}
+
+	fn send_file(&self, filename: &str) -> io::Result<()>
+	{
+		println!("Buffering file '{}' to client {}", filename, self.id);
+
+		// TODO send file
+
+		Ok(())
 	}
 }
