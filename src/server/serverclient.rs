@@ -6,7 +6,10 @@ use server::limits::*;
 use server::message::*;
 use server::patch::*;
 
+use std::cmp::*;
 use std::collections::VecDeque;
+use std::fs;
+use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
 use std::net;
@@ -414,9 +417,37 @@ impl ServerClient
 
 	fn send_file(&self, filename: &str) -> io::Result<()>
 	{
-		println!("Buffering file '{}' to client {}", filename, self.id);
+		println!("Buffering file '{}' to client {}...", filename, self.id);
 
-		// TODO send file
+		let metadata = fs::metadata(filename)?;
+		let filesize = metadata.len() as usize;
+
+		if filesize >= SEND_FILE_SIZE_LIMIT
+		{
+			eprintln!(
+				"Cannot send file of size {}, \
+				 which is larger than SEND_FILE_SIZE_LIMIT.",
+				filesize
+			);
+		}
+		else if filesize >= SEND_FILE_SIZE_WARNING_LIMIT
+		{
+			println!("Sending very large file of size {}...", filesize);
+		}
+
+		let mut buffer = [0u8; SEND_FILE_CHUNK_SIZE];
+		let mut file = File::open(filename)?;
+		let mut offset = 0;
+
+		while offset < filesize
+		{
+			let chunksize = min(SEND_FILE_CHUNK_SIZE, filesize - offset);
+			file.read_exact(&mut buffer);
+
+			// TODO
+
+			offset += SEND_FILE_CHUNK_SIZE;
+		}
 
 		Ok(())
 	}
