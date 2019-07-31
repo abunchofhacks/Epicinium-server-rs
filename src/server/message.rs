@@ -56,6 +56,7 @@ pub enum Message
 	Download
 	{
 		content: String,
+		metadata: DownloadMetadata,
 	},
 	Request
 	{
@@ -152,6 +153,28 @@ pub struct StampMetadata
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub url: Option<String>,
+}
+
+#[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub struct DownloadMetadata
+{
+	pub offset: usize,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub signature: Option<String>,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub compressed: bool,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub executable: bool,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub symbolic: bool,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub progressmask: Option<u16>,
 }
 
 #[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]

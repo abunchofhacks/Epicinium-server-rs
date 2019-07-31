@@ -6,7 +6,6 @@ use server::limits::*;
 use server::message::*;
 use server::patch::*;
 
-use std::cmp::*;
 use std::collections::VecDeque;
 use std::fs;
 use std::fs::File;
@@ -45,6 +44,8 @@ pub struct ServerClient
 	stopped_receiving: bool,
 	killed: bool,
 }
+
+const MAX_SENDQUEUE_SIZE: usize = 10000;
 
 impl ServerClient
 {
@@ -269,6 +270,13 @@ impl ServerClient
 
 		println!("Queueing message of length {}...", length);
 
+		if self.sendqueue.len() >= MAX_SENDQUEUE_SIZE
+		{
+			eprintln!("Send buffer overflow");
+			eprintln!("Force killing client {}", self.id);
+			self.kill();
+		}
+
 		let lengthbuffer = length.to_le_bytes();
 		self.sendqueue.push_back(lengthbuffer.to_vec());
 
@@ -415,7 +423,7 @@ impl ServerClient
 		}
 	}
 
-	fn send_file(&self, filename: &str) -> io::Result<()>
+	fn send_file(&mut self, filename: &str) -> io::Result<()>
 	{
 		println!("Buffering file '{}' to client {}...", filename, self.id);
 
@@ -435,20 +443,142 @@ impl ServerClient
 			println!("Sending very large file of size {}...", filesize);
 		}
 
-		let mut buffer = [0u8; SEND_FILE_CHUNK_SIZE];
+		// This is used clientside to generate the sourcefilename.
+		// TODO compression
+		let compressed = false;
+
+		// This is unused since 0.32.0 but needed for earlier versions.
+		// TODO implement is_file_executable?
+		let executable = false;
+
 		let mut file = File::open(filename)?;
 		let mut offset = 0;
 
-		while offset < filesize
+		while offset + SEND_FILE_CHUNK_SIZE < filesize
 		{
-			let chunksize = min(SEND_FILE_CHUNK_SIZE, filesize - offset);
-			file.read_exact(&mut buffer);
+			let mut buffer = vec![0u8; SEND_FILE_CHUNK_SIZE];
+			file.read_exact(&mut buffer)?;
 
-			// TODO
+			// This is just for aesthetics.
+			let progressmask = ((0xFFFF * offset) / filesize) as u16;
+
+			let message = Message::Download {
+				content: filename.to_string(),
+				metadata: DownloadMetadata {
+					offset: offset,
+					signature: None,
+					compressed: compressed,
+					executable: (offset == 0 && executable),
+					symbolic: false,
+					progressmask: Some(progressmask),
+				},
+			};
+			self.send_chunk(message, buffer);
 
 			offset += SEND_FILE_CHUNK_SIZE;
 		}
 
+		{
+			let mut buffer: Vec<u8> = Vec::new();
+			file.read_to_end(&mut buffer)?;
+
+			let message = Message::Download {
+				content: filename.to_string(),
+				metadata: DownloadMetadata {
+					offset: offset,
+					signature: None,
+					compressed: compressed,
+					executable: false,
+					symbolic: false,
+					progressmask: None,
+				},
+			};
+			self.send_chunk(message, buffer);
+		}
+
+		println!("Buffered file '{}' to client {}.", filename, self.id);
+
 		Ok(())
+	}
+
+	fn send_chunk(&mut self, message: Message, buffer: Vec<u8>)
+	{
+		let jsonstr = match serde_json::to_string(&message)
+		{
+			Ok(data) => data,
+			Err(e) =>
+			{
+				panic!("Invalid message: {:?}", e);
+			}
+		};
+
+		if jsonstr.len() >= MESSAGE_SIZE_LIMIT
+		{
+			panic!(
+				"Cannot send message of length {}, \
+				 which is larger than MESSAGE_SIZE_LIMIT.",
+				jsonstr.len()
+			);
+		}
+		else if jsonstr.len() >= MESSAGE_SIZE_WARNING_LIMIT
+		{
+			println!(
+				"Queueing very large message of length {}...",
+				jsonstr.len()
+			);
+		}
+		else if buffer.len() >= MESSAGE_SIZE_LIMIT
+		{
+			panic!(
+				"Cannot send chunk of size {}, \
+				 which is larger than MESSAGE_SIZE_LIMIT.",
+				buffer.len()
+			);
+		}
+		else if buffer.len() > SEND_FILE_CHUNK_SIZE
+		{
+			println!(
+				"Queueing chunk of size {} \
+				 which is larger than SEND_FILE_CHUNK_SIZE.",
+				buffer.len()
+			);
+		}
+
+		let length = jsonstr.len() as u32;
+		let size = buffer.len() as u32;
+
+		println!("Queueing message of length {}...", length);
+		println!("And queueing chunk of size {}...", size);
+
+		if self.sendqueue.len() >= MAX_SENDQUEUE_SIZE
+		{
+			eprintln!("Send buffer overflow");
+			eprintln!("Force killing client {}", self.id);
+			self.kill();
+		}
+
+		let lengthbuffer = length.to_le_bytes();
+		self.sendqueue.push_back(lengthbuffer.to_vec());
+
+		let data = jsonstr.as_bytes();
+		self.sendqueue.push_back(data.to_vec());
+
+		let sizebuffer = size.to_le_bytes();
+		self.sendqueue.push_back(sizebuffer.to_vec());
+
+		self.sendqueue.push_back(buffer);
+
+		println!("Queued message of length {}.", length);
+		println!("And queued chunk.");
+
+		if length < 200
+		{
+			println!("Queued message: {}", jsonstr);
+		}
+
+		// After a couple of seconds of silence (i.e. not sending any message)
+		// we send a pulse message so the client knows we are still breathing.
+		// We are now actively sending, thus not silent.
+		self.last_queue_time = time::Instant::now();
 	}
 }
