@@ -48,74 +48,68 @@ pub fn run_server() -> io::Result<()>
 
 	let login_dep = client_closed.clone();
 	let login_killcount = shutdown_killcount.clone();
+	let mut login_cluster =
+		LoginCluster::create(join_in, leave_out, login_dep)?;
+
 	let login_thread = thread::spawn(move || {
 		let mut last_killcount = 0;
-		let mut cluster = LoginCluster::create(join_in, leave_out, login_dep)?;
-		while !cluster.closed()
+		while !login_cluster.closed()
 		{
 			let killcount = login_killcount.load(atomic::Ordering::Relaxed);
 			if killcount > last_killcount
 			{
 				if killcount == 1
 				{
-					cluster.close();
+					login_cluster.close();
 				}
 				else if killcount == 2
 				{
-					cluster.close_and_kick();
+					login_cluster.close_and_kick();
 				}
 				else
 				{
-					cluster.close_and_terminate();
+					login_cluster.close_and_terminate();
 				}
 				last_killcount = killcount;
 			}
-			cluster.update();
+			login_cluster.update();
 		}
 		login_closed.store(true, atomic::Ordering::Relaxed);
-		Ok(())
 	});
 
 	let client_killcount = shutdown_killcount.clone();
+	let mut client_cluster = ClientCluster::create(join_out, leave_in)?;
+
 	let client_thread = thread::spawn(move || {
 		let mut last_killcount = 0;
-		let mut cluster = ClientCluster::create(join_out, leave_in)?;
-		while !cluster.closed()
+		while !client_cluster.closed()
 		{
 			let killcount = client_killcount.load(atomic::Ordering::Relaxed);
 			if killcount > last_killcount
 			{
 				if killcount == 1
 				{
-					cluster.close();
+					client_cluster.close();
 				}
 				else if killcount == 2
 				{
-					cluster.close_and_kick();
+					client_cluster.close_and_kick();
 				}
 				else
 				{
-					cluster.close_and_terminate();
+					client_cluster.close_and_terminate();
 				}
 				last_killcount = killcount;
 			}
-			cluster.update();
+			client_cluster.update();
 		}
 		client_closed.store(true, atomic::Ordering::Relaxed);
-		Ok(())
 	});
 
 	match client_thread.join()
 	{
-		Ok(x) => match x
-		{
-			Ok(()) =>
-			{}
-			Err(e) =>
-			{
-				return Err(e);
-			}
-		},
+		Ok(()) =>
+		{}
 		Err(e) =>
 		{
 			panic!("Thread panicked: {:?}", e);
@@ -124,15 +118,8 @@ pub fn run_server() -> io::Result<()>
 
 	match login_thread.join()
 	{
-		Ok(x) => match x
-		{
-			Ok(()) =>
-			{}
-			Err(e) =>
-			{
-				return Err(e);
-			}
-		},
+		Ok(()) =>
+		{}
 		Err(e) =>
 		{
 			panic!("Thread panicked: {:?}", e);

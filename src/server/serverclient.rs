@@ -24,6 +24,8 @@ pub struct ServerClient
 	already_sent_amount: usize,
 	sendqueue: VecDeque<Vec<u8>>,
 
+	privatekey: openssl::rsa::Rsa<openssl::pkey::Private>,
+
 	pub version: Version,
 	pub platform: Platform,
 	pub patchmode: Patchmode,
@@ -52,6 +54,7 @@ impl ServerClient
 {
 	pub fn create(
 		stream: io::Result<net::TcpStream>,
+		privatekey: &openssl::rsa::Rsa<openssl::pkey::Private>,
 		serial: u64,
 	) -> io::Result<ServerClient>
 	{
@@ -70,6 +73,7 @@ impl ServerClient
 			chunk_incoming: false,
 			already_sent_amount: 0,
 			sendqueue: VecDeque::new(),
+			privatekey: privatekey.clone(),
 			version: Version::undefined(),
 			platform: Platform::Unknown,
 			patchmode: Patchmode::None,
@@ -405,22 +409,10 @@ impl ServerClient
 			return;
 		}
 
-		// TODO gzipped downloads
-
-		match self.send_file(&filename)
+		match self.try_fulfil_request(filename)
 		{
-			Ok(checksum) => self.send(Message::RequestFulfilled {
-				content: filename.clone(),
-				metadata: DownloadMetadata {
-					name: Some(filename),
-					offset: None,
-					signature: Some(base32::encode(&checksum)),
-					compressed: false,
-					executable: false,
-					symbolic: false,
-					progressmask: None,
-				},
-			}),
+			Ok(()) =>
+			{}
 			Err(e) =>
 			{
 				// Server error, leave the request unanswered.
@@ -428,6 +420,36 @@ impl ServerClient
 				eprintln!("Error while fulfilling request: {:?}", e);
 			}
 		}
+	}
+
+	fn try_fulfil_request(&mut self, filename: String) -> io::Result<()>
+	{
+		// TODO gzipped downloads
+
+		let checksum = self.send_file(&filename)?;
+
+		let mut signed = vec![0u8; self.privatekey.size() as usize];
+		let n = self.privatekey.private_encrypt(
+			&checksum,
+			&mut signed,
+			openssl::rsa::Padding::PKCS1,
+		)?;
+		let signature = base32::encode(&signed[0..n]);
+
+		self.send(Message::RequestFulfilled {
+			content: filename.clone(),
+			metadata: DownloadMetadata {
+				name: Some(filename),
+				offset: None,
+				signature: Some(signature),
+				compressed: false,
+				executable: false,
+				symbolic: false,
+				progressmask: None,
+			},
+		});
+
+		Ok(())
 	}
 
 	fn send_file(&mut self, filename: &str) -> io::Result<[u8; 64]>

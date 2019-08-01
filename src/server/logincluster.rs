@@ -6,7 +6,9 @@ use server::message::*;
 use server::serverclient::*;
 
 use std::fs;
+use std::fs::File;
 use std::io;
+use std::io::Read;
 use std::net;
 use std::sync;
 use std::sync::atomic;
@@ -21,6 +23,7 @@ pub struct LoginCluster
 	close_dependency: sync::Arc<atomic::AtomicBool>,
 
 	listener: net::TcpListener,
+	privatekey: openssl::rsa::Rsa<openssl::pkey::Private>,
 
 	ticker: u64,
 	welcome_party: WelcomeParty,
@@ -38,12 +41,18 @@ impl LoginCluster
 		let listener = net::TcpListener::bind("127.0.0.1:9999")?;
 		listener.set_nonblocking(true)?;
 
+		let mut pem: Vec<u8> = Vec::new();
+		let mut file = File::open("keys/private.pem")?;
+		file.read_to_end(&mut pem)?;
+		let privatekey = openssl::rsa::Rsa::private_key_from_pem(&pem)?;
+
 		Ok(LoginCluster {
 			clients: Vec::new(),
 			outgoing_clients: outgoing,
 			incoming_clients: incoming,
 			close_dependency: close_dep,
 			listener: listener,
+			privatekey: privatekey,
 			ticker: rand::random(),
 			welcome_party: WelcomeParty { closing: false },
 			closing: false,
@@ -102,7 +111,7 @@ impl LoginCluster
 
 		for stream in self.listener.incoming()
 		{
-			match ServerClient::create(stream, self.ticker)
+			match ServerClient::create(stream, &self.privatekey, self.ticker)
 			{
 				Ok(client) =>
 				{
