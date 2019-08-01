@@ -73,6 +73,9 @@ pub fn run_server() -> io::Result<()>
 				last_killcount = killcount;
 			}
 			login_cluster.update();
+
+			// TODO remove or replace with socketsets
+			thread::sleep(time::Duration::from_millis(10));
 		}
 		login_closed.store(true, atomic::Ordering::Relaxed);
 	});
@@ -102,6 +105,9 @@ pub fn run_server() -> io::Result<()>
 				last_killcount = killcount;
 			}
 			client_cluster.update();
+
+			// TODO remove or replace with socketsets
+			thread::sleep(time::Duration::from_millis(10));
 		}
 		client_closed.store(true, atomic::Ordering::Relaxed);
 	});
