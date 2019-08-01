@@ -16,9 +16,6 @@ use std::net;
 use std::path;
 use std::time;
 
-use crypto::digest::Digest;
-use crypto::sha2;
-
 pub struct ServerClient
 {
 	stream: net::TcpStream,
@@ -433,7 +430,7 @@ impl ServerClient
 		}
 	}
 
-	fn send_file(&mut self, filename: &str) -> io::Result<Vec<u8>>
+	fn send_file(&mut self, filename: &str) -> io::Result<[u8; 64]>
 	{
 		println!("Buffering file '{}' to client {}...", filename, self.id);
 
@@ -461,7 +458,7 @@ impl ServerClient
 		// TODO implement is_file_executable?
 		let executable = false;
 
-		let mut hasher = sha2::Sha512::new();
+		let mut hasher = openssl::sha::Sha512::new();
 
 		let mut file = File::open(filename)?;
 		let mut offset = 0;
@@ -471,7 +468,7 @@ impl ServerClient
 			let mut buffer = vec![0u8; SEND_FILE_CHUNK_SIZE];
 			file.read_exact(&mut buffer)?;
 
-			hasher.input(&buffer);
+			hasher.update(&buffer);
 
 			// This is just for aesthetics.
 			let progressmask = ((0xFFFF * offset) / filesize) as u16;
@@ -497,7 +494,7 @@ impl ServerClient
 			let mut buffer: Vec<u8> = Vec::new();
 			file.read_to_end(&mut buffer)?;
 
-			hasher.input(&buffer);
+			hasher.update(&buffer);
 
 			let message = Message::Download {
 				content: filename.to_string(),
@@ -516,9 +513,7 @@ impl ServerClient
 
 		println!("Buffered file '{}' to client {}.", filename, self.id);
 
-		let mut digest = vec![0u8; hasher.output_bytes()];
-		hasher.result(&mut digest);
-		Ok(digest)
+		Ok(hasher.finish())
 	}
 
 	fn send_chunk(&mut self, message: Message, buffer: Vec<u8>)
