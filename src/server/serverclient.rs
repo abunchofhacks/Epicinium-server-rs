@@ -24,8 +24,6 @@ pub struct ServerClient
 	already_sent_amount: usize,
 	sendqueue: VecDeque<Vec<u8>>,
 
-	privatekey: openssl::rsa::Rsa<openssl::pkey::Private>,
-
 	pub version: Version,
 	pub platform: Platform,
 	pub patchmode: Patchmode,
@@ -54,7 +52,6 @@ impl ServerClient
 {
 	pub fn create(
 		stream: io::Result<net::TcpStream>,
-		privatekey: &openssl::rsa::Rsa<openssl::pkey::Private>,
 		serial: u64,
 	) -> io::Result<ServerClient>
 	{
@@ -73,7 +70,6 @@ impl ServerClient
 			chunk_incoming: false,
 			already_sent_amount: 0,
 			sendqueue: VecDeque::new(),
-			privatekey: privatekey.clone(),
 			version: Version::undefined(),
 			platform: Platform::Unknown,
 			patchmode: Patchmode::None,
@@ -396,7 +392,11 @@ impl ServerClient
 		}
 	}
 
-	pub fn fulfil_request(&mut self, filename: String)
+	pub fn fulfil_request(
+		&mut self,
+		filename: String,
+		privatekey: &openssl::rsa::Rsa<openssl::pkey::Private>,
+	)
 	{
 		if !is_requestable(path::Path::new(&filename))
 		{
@@ -409,7 +409,7 @@ impl ServerClient
 			return;
 		}
 
-		match self.try_fulfil_request(filename)
+		match self.try_fulfil_request(filename, privatekey)
 		{
 			Ok(()) =>
 			{}
@@ -422,14 +422,18 @@ impl ServerClient
 		}
 	}
 
-	fn try_fulfil_request(&mut self, filename: String) -> io::Result<()>
+	fn try_fulfil_request(
+		&mut self,
+		filename: String,
+		privatekey: &openssl::rsa::Rsa<openssl::pkey::Private>,
+	) -> io::Result<()>
 	{
 		// TODO gzipped downloads
 
 		let checksum = self.send_file(&filename)?;
 
-		let mut signed = vec![0u8; self.privatekey.size() as usize];
-		let n = self.privatekey.private_encrypt(
+		let mut signed = vec![0u8; privatekey.size() as usize];
+		let n = privatekey.private_encrypt(
 			&checksum,
 			&mut signed,
 			openssl::rsa::Padding::PKCS1,

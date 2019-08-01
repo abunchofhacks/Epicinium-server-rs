@@ -111,7 +111,7 @@ impl LoginCluster
 
 		for stream in self.listener.incoming()
 		{
-			match ServerClient::create(stream, &self.privatekey, self.ticker)
+			match ServerClient::create(stream, self.ticker)
 			{
 				Ok(client) =>
 				{
@@ -285,14 +285,13 @@ impl LoginCluster
 
 		for (cid, name) in requests
 		{
-			match self.find_client(cid)
+			for client in &mut self.clients
 			{
-				Some(ref mut client) if !client.dead() =>
+				if client.id == cid && !client.dead()
 				{
-					client.fulfil_request(name);
+					client.fulfil_request(name, &self.privatekey);
+					break;
 				}
-				Some(_) | None =>
-				{}
 			}
 		}
 
@@ -375,19 +374,6 @@ impl LoginCluster
 				}
 			}
 		}
-	}
-
-	fn find_client(&mut self, cid: Keycode) -> Option<&mut ServerClient>
-	{
-		for client in &mut self.clients
-		{
-			if client.id == cid
-			{
-				return Some(client);
-			}
-		}
-
-		None
 	}
 }
 

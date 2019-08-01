@@ -4,7 +4,9 @@ use common::keycode::*;
 use server::message::*;
 use server::serverclient::*;
 
+use std::fs::File;
 use std::io;
+use std::io::Read;
 use std::sync;
 use vec_drain_where::VecDrainWhereExt;
 
@@ -14,6 +16,8 @@ pub struct ClientCluster
 
 	outgoing_clients: sync::mpsc::Sender<ServerClient>,
 	incoming_clients: sync::mpsc::Receiver<ServerClient>,
+
+	privatekey: openssl::rsa::Rsa<openssl::pkey::Private>,
 
 	closing: bool,
 }
@@ -25,10 +29,16 @@ impl ClientCluster
 		outgoing: sync::mpsc::Sender<ServerClient>,
 	) -> io::Result<ClientCluster>
 	{
+		let mut pem: Vec<u8> = Vec::new();
+		let mut file = File::open("keys/private.pem")?;
+		file.read_to_end(&mut pem)?;
+		let privatekey = openssl::rsa::Rsa::private_key_from_pem(&pem)?;
+
 		Ok(ClientCluster {
 			clients: Vec::new(),
 			outgoing_clients: outgoing,
 			incoming_clients: incoming,
+			privatekey: privatekey,
 			closing: false,
 		})
 	}
@@ -372,14 +382,13 @@ impl ClientCluster
 
 		for (cid, name) in requests
 		{
-			match self.find_client(cid)
+			for client in &mut self.clients
 			{
-				Some(ref mut client) if !client.dead() =>
+				if client.id == cid && !client.dead()
 				{
-					client.fulfil_request(name);
+					client.fulfil_request(name, &self.privatekey);
+					break;
 				}
-				Some(_) | None =>
-				{}
 			}
 		}
 
