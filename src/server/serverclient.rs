@@ -1,5 +1,6 @@
 /* ServerClient */
 
+use common::base32;
 use common::keycode::*;
 use common::version::*;
 use server::limits::*;
@@ -14,6 +15,9 @@ use std::io::{Read, Write};
 use std::net;
 use std::path;
 use std::time;
+
+use crypto::digest::Digest;
+use crypto::sha2;
 
 pub struct ServerClient
 {
@@ -408,12 +412,18 @@ impl ServerClient
 
 		match self.send_file(&filename)
 		{
-			Ok(()) =>
-			{
-				// TODO checksum
-
-				// TODO requestfulfilled w/ metadata
-			}
+			Ok(checksum) => self.send(Message::RequestFulfilled {
+				content: filename.clone(),
+				metadata: DownloadMetadata {
+					name: Some(filename),
+					offset: None,
+					signature: Some(base32::encode(&checksum)),
+					compressed: false,
+					executable: false,
+					symbolic: false,
+					progressmask: None,
+				},
+			}),
 			Err(e) =>
 			{
 				// Server error, leave the request unanswered.
@@ -423,7 +433,7 @@ impl ServerClient
 		}
 	}
 
-	fn send_file(&mut self, filename: &str) -> io::Result<()>
+	fn send_file(&mut self, filename: &str) -> io::Result<Vec<u8>>
 	{
 		println!("Buffering file '{}' to client {}...", filename, self.id);
 
@@ -451,6 +461,8 @@ impl ServerClient
 		// TODO implement is_file_executable?
 		let executable = false;
 
+		let mut hasher = sha2::Sha512::new();
+
 		let mut file = File::open(filename)?;
 		let mut offset = 0;
 
@@ -459,13 +471,16 @@ impl ServerClient
 			let mut buffer = vec![0u8; SEND_FILE_CHUNK_SIZE];
 			file.read_exact(&mut buffer)?;
 
+			hasher.input(&buffer);
+
 			// This is just for aesthetics.
 			let progressmask = ((0xFFFF * offset) / filesize) as u16;
 
 			let message = Message::Download {
 				content: filename.to_string(),
 				metadata: DownloadMetadata {
-					offset: offset,
+					name: None,
+					offset: Some(offset),
 					signature: None,
 					compressed: compressed,
 					executable: (offset == 0 && executable),
@@ -482,10 +497,13 @@ impl ServerClient
 			let mut buffer: Vec<u8> = Vec::new();
 			file.read_to_end(&mut buffer)?;
 
+			hasher.input(&buffer);
+
 			let message = Message::Download {
 				content: filename.to_string(),
 				metadata: DownloadMetadata {
-					offset: offset,
+					name: None,
+					offset: Some(offset),
 					signature: None,
 					compressed: compressed,
 					executable: false,
@@ -498,7 +516,9 @@ impl ServerClient
 
 		println!("Buffered file '{}' to client {}.", filename, self.id);
 
-		Ok(())
+		let mut digest = vec![0u8; hasher.output_bytes()];
+		hasher.result(&mut digest);
+		Ok(digest)
 	}
 
 	fn send_chunk(&mut self, message: Message, buffer: Vec<u8>)

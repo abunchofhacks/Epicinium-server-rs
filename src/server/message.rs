@@ -70,6 +70,7 @@ pub enum Message
 	RequestFulfilled
 	{
 		content: String,
+		metadata: DownloadMetadata,
 	},
 }
 
@@ -159,7 +160,11 @@ pub struct StampMetadata
 #[serde(rename_all = "lowercase")]
 pub struct DownloadMetadata
 {
-	pub offset: usize,
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub name: Option<String>,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub offset: Option<usize>,
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub signature: Option<String>,

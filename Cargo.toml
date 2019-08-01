@@ -12,6 +12,7 @@ enum-map-derive = "*"
 signal-hook = "0.1.10"
 vec-drain-where = "*"
 rand = "0.7.0"
+rust-crypto = "*"
 
 [features]
 defaults = []

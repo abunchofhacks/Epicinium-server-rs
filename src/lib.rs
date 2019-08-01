@@ -11,6 +11,7 @@ extern crate enum_map;
 #[macro_use]
 extern crate enum_map_derive;
 
+extern crate crypto;
 extern crate rand;
 extern crate signal_hook;
 extern crate vec_drain_where;

@@ -1,5 +1,7 @@
 /* Keycode */
 
+use common::base32;
+
 use std::fmt;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -45,16 +47,6 @@ impl fmt::Display for Keycode
 {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
 	{
-		// Crockford Base32 alphabet where a = 10 and i, l, o and u are skipped.
-		const ALPHABET: [u8; 32] = [
-			'0' as u8, '1' as u8, '2' as u8, '3' as u8, '4' as u8, '5' as u8,
-			'6' as u8, '7' as u8, '8' as u8, '9' as u8, 'a' as u8, 'b' as u8,
-			'c' as u8, 'd' as u8, 'e' as u8, 'f' as u8, 'g' as u8, 'h' as u8,
-			'j' as u8, 'k' as u8, 'm' as u8, 'n' as u8, 'p' as u8, 'q' as u8,
-			'r' as u8, 's' as u8, 't' as u8, 'v' as u8, 'w' as u8, 'x' as u8,
-			'y' as u8, 'z' as u8,
-		];
-
 		let mut bits = self.0;
 		let mut word = vec![0u8; 12];
 
@@ -63,10 +55,10 @@ impl fmt::Display for Keycode
 		{
 			// Consume the 5 least-significant bits from the keycode
 			// as a 5-bit index, i.e. a number from 0 to 31 (inclusive).
-			let index = (bits & 0x1F) as usize;
+			let nickel = (bits & 0x1F) as u8;
 			bits >>= 5;
 			// Then convert the 5-bit index to Base32.
-			word[i] = ALPHABET[index];
+			word[i] = base32::char_from_nickel(nickel);
 		}
 
 		let x = String::from_utf8(word).unwrap();
