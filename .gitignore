@@ -5,6 +5,14 @@
 # output files
 *.out
 
+# local settings
+/settings.json
+/settings-*.json
+/imgui.ini
+
+# local notices
+/server-notice.json
+
 # private keys
 /keys/*private*
 !/keys/dummy_private.pem

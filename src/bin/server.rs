@@ -8,8 +8,22 @@ use std::io;
 
 fn main() -> io::Result<()>
 {
-	let logname = "rust".to_string();
+	let mut logname = "rust".to_string();
 	let currentversion = Version::current();
+
+	let mut settings = Settings::create("settings-server.json")?;
+
+	match settings.logname()
+	{
+		Some(name) =>
+		{
+			logname = name.to_string();
+		}
+		None =>
+		{
+			// TODO settings.override_logname(logname);
+		}
+	}
 
 	println!(
 		"[ Epicinium Server ] ({} v{})",
