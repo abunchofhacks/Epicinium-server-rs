@@ -23,7 +23,7 @@ pub struct LoginCluster
 	close_dependency: sync::Arc<atomic::AtomicBool>,
 
 	listener: net::TcpListener,
-	privatekey: openssl::rsa::Rsa<openssl::pkey::Private>,
+	privatekey: openssl::pkey::PKey<openssl::pkey::Private>,
 
 	ticker: u64,
 	welcome_party: WelcomeParty,
@@ -44,7 +44,7 @@ impl LoginCluster
 		let mut pem: Vec<u8> = Vec::new();
 		let mut file = File::open("keys/dummy_private.pem")?;
 		file.read_to_end(&mut pem)?;
-		let privatekey = openssl::rsa::Rsa::private_key_from_pem(&pem)?;
+		let privatekey = openssl::pkey::PKey::private_key_from_pem(&pem)?;
 
 		Ok(LoginCluster {
 			clients: Vec::new(),

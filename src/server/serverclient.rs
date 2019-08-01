@@ -395,7 +395,7 @@ impl ServerClient
 	pub fn fulfil_request(
 		&mut self,
 		filename: String,
-		privatekey: &openssl::rsa::Rsa<openssl::pkey::Private>,
+		privatekey: &openssl::pkey::PKey<openssl::pkey::Private>,
 	)
 	{
 		if !is_requestable(path::Path::new(&filename))
@@ -409,10 +409,25 @@ impl ServerClient
 			return;
 		}
 
-		match self.try_fulfil_request(filename, privatekey)
+		match self.send_file(&filename, privatekey)
 		{
-			Ok(()) =>
-			{}
+			Ok(checksum) =>
+			{
+				let signature = base32::encode(&checksum);
+
+				self.send(Message::RequestFulfilled {
+					content: filename.clone(),
+					metadata: DownloadMetadata {
+						name: Some(filename),
+						offset: None,
+						signature: Some(signature),
+						compressed: false,
+						executable: false,
+						symbolic: false,
+						progressmask: None,
+					},
+				});
+			}
 			Err(e) =>
 			{
 				// Server error, leave the request unanswered.
@@ -422,42 +437,14 @@ impl ServerClient
 		}
 	}
 
-	fn try_fulfil_request(
+	fn send_file(
 		&mut self,
-		filename: String,
-		privatekey: &openssl::rsa::Rsa<openssl::pkey::Private>,
-	) -> io::Result<()>
+		filename: &str,
+		privatekey: &openssl::pkey::PKey<openssl::pkey::Private>,
+	) -> io::Result<Vec<u8>>
 	{
 		// TODO gzipped downloads
 
-		let checksum = self.send_file(&filename)?;
-
-		let mut signed = vec![0u8; privatekey.size() as usize];
-		let n = privatekey.private_encrypt(
-			&checksum,
-			&mut signed,
-			openssl::rsa::Padding::PKCS1,
-		)?;
-		let signature = base32::encode(&signed[0..n]);
-
-		self.send(Message::RequestFulfilled {
-			content: filename.clone(),
-			metadata: DownloadMetadata {
-				name: Some(filename),
-				offset: None,
-				signature: Some(signature),
-				compressed: false,
-				executable: false,
-				symbolic: false,
-				progressmask: None,
-			},
-		});
-
-		Ok(())
-	}
-
-	fn send_file(&mut self, filename: &str) -> io::Result<[u8; 64]>
-	{
 		println!("Buffering file '{}' to client {}...", filename, self.id);
 
 		let metadata = fs::metadata(filename)?;
@@ -484,7 +471,10 @@ impl ServerClient
 		// TODO implement is_file_executable?
 		let executable = false;
 
-		let mut hasher = openssl::sha::Sha512::new();
+		let mut signer = openssl::sign::Signer::new(
+			openssl::hash::MessageDigest::sha512(),
+			privatekey,
+		)?;
 
 		let mut file = File::open(filename)?;
 		let mut offset = 0;
@@ -494,7 +484,7 @@ impl ServerClient
 			let mut buffer = vec![0u8; SEND_FILE_CHUNK_SIZE];
 			file.read_exact(&mut buffer)?;
 
-			hasher.update(&buffer);
+			signer.update(&buffer)?;
 
 			// This is just for aesthetics.
 			let progressmask = ((0xFFFF * offset) / filesize) as u16;
@@ -520,7 +510,7 @@ impl ServerClient
 			let mut buffer: Vec<u8> = Vec::new();
 			file.read_to_end(&mut buffer)?;
 
-			hasher.update(&buffer);
+			signer.update(&buffer)?;
 
 			let message = Message::Download {
 				content: filename.to_string(),
@@ -539,7 +529,8 @@ impl ServerClient
 
 		println!("Buffered file '{}' to client {}.", filename, self.id);
 
-		Ok(hasher.finish())
+		let signature = signer.sign_to_vec()?;
+		Ok(signature)
 	}
 
 	fn send_chunk(&mut self, message: Message, buffer: Vec<u8>)

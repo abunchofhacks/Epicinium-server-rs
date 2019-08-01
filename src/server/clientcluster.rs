@@ -17,7 +17,7 @@ pub struct ClientCluster
 	outgoing_clients: sync::mpsc::Sender<ServerClient>,
 	incoming_clients: sync::mpsc::Receiver<ServerClient>,
 
-	privatekey: openssl::rsa::Rsa<openssl::pkey::Private>,
+	privatekey: openssl::pkey::PKey<openssl::pkey::Private>,
 
 	closing: bool,
 }
@@ -32,7 +32,7 @@ impl ClientCluster
 		let mut pem: Vec<u8> = Vec::new();
 		let mut file = File::open("keys/dummy_private.pem")?;
 		file.read_to_end(&mut pem)?;
-		let privatekey = openssl::rsa::Rsa::private_key_from_pem(&pem)?;
+		let privatekey = openssl::pkey::PKey::private_key_from_pem(&pem)?;
 
 		Ok(ClientCluster {
 			clients: Vec::new(),
