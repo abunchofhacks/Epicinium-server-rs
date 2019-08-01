@@ -30,7 +30,7 @@ impl ClientCluster
 	) -> io::Result<ClientCluster>
 	{
 		let mut pem: Vec<u8> = Vec::new();
-		let mut file = File::open("keys/private.pem")?;
+		let mut file = File::open("keys/dummy_private.pem")?;
 		file.read_to_end(&mut pem)?;
 		let privatekey = openssl::rsa::Rsa::private_key_from_pem(&pem)?;
 
