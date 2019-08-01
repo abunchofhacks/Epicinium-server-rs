@@ -4,3 +4,7 @@
 
 # output files
 *.out
+
+# private keys
+/keys/*private*
+!/keys/dummy_private.pem
