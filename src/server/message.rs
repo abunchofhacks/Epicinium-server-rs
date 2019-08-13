@@ -188,3 +188,23 @@ pub struct DenyMetadata
 {
 	pub reason: String,
 }
+
+pub enum ResponseStatus
+{
+	Success = 0,
+	CredsInvalid = 1,
+	AccountLocked = 2,
+	UsernameTaken = 3,
+	EmailTaken = 4,
+	AccountDisabled = 5,
+	KeyTaken = 6,  // only used for key activation (for now)
+	IpBlocked = 7, // only used for key activation (for now)
+	KeyRequired = 8,
+
+	DatabaseError = 94,
+	MethodInvalid = 95,
+	RequestMalformed = 96,
+	ResponseMalformed = 97,
+	ConnectionFailed = 98,
+	UnknownError = 99,
+}

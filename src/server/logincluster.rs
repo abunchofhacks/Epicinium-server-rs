@@ -24,6 +24,7 @@ pub struct LoginCluster
 	close_dependency: sync::Arc<atomic::AtomicBool>,
 
 	listener: net::TcpListener,
+	login_server: Option<String>,
 	privatekey: openssl::pkey::PKey<openssl::pkey::Private>,
 
 	ticker: u64,
@@ -45,6 +46,12 @@ impl LoginCluster
 		let listener = net::TcpListener::bind(address)?;
 		listener.set_nonblocking(true)?;
 
+		let login_server = settings.login_server().cloned();
+		if !cfg!(debug_assertions) || cfg!(feature = "candidate")
+		{
+			login_server.as_ref().expect("No login server defined.");
+		}
+
 		let mut pem: Vec<u8> = Vec::new();
 		let mut file = File::open("keys/dummy_private.pem")?;
 		file.read_to_end(&mut pem)?;
@@ -56,6 +63,7 @@ impl LoginCluster
 			incoming_clients: incoming,
 			close_dependency: close_dep,
 			listener: listener,
+			login_server: login_server,
 			privatekey: privatekey,
 			ticker: rand::random(),
 			welcome_party: WelcomeParty { closing: false },
@@ -201,7 +209,24 @@ impl LoginCluster
 							}
 							Message::JoinServer {
 								status: None,
-								content: Some(_),
+								content: Some(ref token),
+								sender: Some(_),
+								metadata: _,
+							} if token == "%discord2018" =>
+							{
+								// This session code is now deprecated.
+								client.send(Message::JoinServer {
+									status: Some(
+										ResponseStatus::CredsInvalid as i32,
+									),
+									content: None,
+									sender: None,
+									metadata: None,
+								});
+							}
+							Message::JoinServer {
+								status: None,
+								content: Some(token),
 								sender: Some(account_id),
 								metadata: _,
 							} =>
@@ -219,9 +244,15 @@ impl LoginCluster
 										content: None,
 									})
 								}
+								else if let Some(ref url) = &self.login_server
+								{
+									joining_server(
+										client, url, token, account_id,
+									);
+								}
 								else
 								{
-									join_server(client, account_id);
+									join_dev_server(client, account_id);
 
 									client.online = true;
 
@@ -381,8 +412,20 @@ impl LoginCluster
 	}
 }
 
-fn join_server(client: &mut ServerClient, account_id: String)
+fn joining_server(
+	_client: &mut ServerClient,
+	_login_server: &String,
+	_token: String,
+	_account_id: String,
+)
 {
+	unimplemented!();
+}
+
+fn join_dev_server(client: &mut ServerClient, account_id: String)
+{
+	println!("Client is logging in with account id {}", &account_id);
+
 	match account_id.parse::<u8>()
 	{
 		Ok(x) if x > 0 && x <= 8 =>
@@ -399,6 +442,13 @@ fn join_server(client: &mut ServerClient, account_id: String)
 		}
 	}
 	client.id_and_username = format!("{} '{}'", client.id, client.username);
+
+	joined_server(client);
+}
+
+fn joined_server(_client: &mut ServerClient)
+{
+	unimplemented!();
 }
 
 pub struct WelcomeParty
