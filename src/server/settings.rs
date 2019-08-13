@@ -242,6 +242,9 @@ impl Settings
 
 	pub fn save(&self) -> io::Result<()>
 	{
-		unimplemented!();
+		let jsonstr = serde_json::to_string_pretty(&self.contents)?;
+		fs::write(&self.filename, jsonstr)?;
+
+		Ok(())
 	}
 }
