@@ -21,7 +21,7 @@ fn main() -> io::Result<()>
 		}
 		None =>
 		{
-			// TODO settings.override_logname(logname);
+			settings.override_logname(logname.clone());
 		}
 	}
 
