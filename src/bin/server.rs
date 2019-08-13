@@ -33,7 +33,7 @@ fn main() -> io::Result<()>
 	println!("");
 
 	{
-		run_server()?;
+		run_server(&settings)?;
 	}
 
 	println!("");

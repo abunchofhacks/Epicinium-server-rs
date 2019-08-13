@@ -3,6 +3,7 @@
 use server::clientcluster::*;
 use server::logincluster::*;
 use server::serverclient::*;
+use server::settings::*;
 
 use signal_hook;
 use signal_hook::{SIGHUP, SIGTERM};
@@ -12,7 +13,7 @@ use std::sync::atomic;
 use std::thread;
 use std::time;
 
-pub fn run_server() -> io::Result<()>
+pub fn run_server(settings: &Settings) -> io::Result<()>
 {
 	let shutdown = sync::Arc::new(atomic::AtomicBool::new(false));
 	let shutdown_killcount = sync::Arc::new(atomic::AtomicU8::new(0));
@@ -49,7 +50,7 @@ pub fn run_server() -> io::Result<()>
 	let login_dep = client_closed.clone();
 	let login_killcount = shutdown_killcount.clone();
 	let mut login_cluster =
-		LoginCluster::create(join_in, leave_out, login_dep)?;
+		LoginCluster::create(settings, join_in, leave_out, login_dep)?;
 
 	let login_thread = thread::spawn(move || {
 		let mut last_killcount = 0;
@@ -81,7 +82,8 @@ pub fn run_server() -> io::Result<()>
 	});
 
 	let client_killcount = shutdown_killcount.clone();
-	let mut client_cluster = ClientCluster::create(join_out, leave_in)?;
+	let mut client_cluster =
+		ClientCluster::create(settings, join_out, leave_in)?;
 
 	let client_thread = thread::spawn(move || {
 		let mut last_killcount = 0;

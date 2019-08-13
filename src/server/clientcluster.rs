@@ -3,6 +3,7 @@
 use common::keycode::*;
 use server::message::*;
 use server::serverclient::*;
+use server::settings::*;
 
 use std::fs::File;
 use std::io;
@@ -25,6 +26,7 @@ pub struct ClientCluster
 impl ClientCluster
 {
 	pub fn create(
+		_settings: &Settings,
 		incoming: sync::mpsc::Receiver<ServerClient>,
 		outgoing: sync::mpsc::Sender<ServerClient>,
 	) -> io::Result<ClientCluster>

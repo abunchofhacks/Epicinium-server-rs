@@ -4,6 +4,7 @@ use common::keycode::*;
 use common::version::*;
 use server::message::*;
 use server::serverclient::*;
+use server::settings::*;
 
 use std::fs;
 use std::fs::File;
@@ -33,12 +34,15 @@ pub struct LoginCluster
 impl LoginCluster
 {
 	pub fn create(
+		settings: &Settings,
 		outgoing: sync::mpsc::Sender<ServerClient>,
 		incoming: sync::mpsc::Receiver<ServerClient>,
 		close_dep: sync::Arc<atomic::AtomicBool>,
 	) -> io::Result<LoginCluster>
 	{
-		let listener = net::TcpListener::bind("127.0.0.1:9999")?;
+		let port = settings.port().unwrap();
+		let address = format!("127.0.0.1:{}", port);
+		let listener = net::TcpListener::bind(address)?;
 		listener.set_nonblocking(true)?;
 
 		let mut pem: Vec<u8> = Vec::new();
