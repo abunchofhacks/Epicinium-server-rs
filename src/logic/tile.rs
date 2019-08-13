@@ -3,9 +3,9 @@
 use common::header::*;
 use logic::player::Player;
 
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
-#[derive(EnumMap)]
+#[derive(
+	Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug, Enum,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum TileType
 {
@@ -35,7 +35,10 @@ pub enum TileType
 
 impl Default for TileType
 {
-	fn default() -> TileType { TileType::NONE }
+	fn default() -> TileType
+	{
+		TileType::NONE
+	}
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]

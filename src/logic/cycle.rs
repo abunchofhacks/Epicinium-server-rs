@@ -1,8 +1,8 @@
 /* Cycle */
 
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
-#[derive(EnumMap)]
+#[derive(
+	Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug, Enum,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Season
 {
@@ -12,8 +12,9 @@ pub enum Season
 	WINTER,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
-#[derive(EnumMap)]
+#[derive(
+	Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug, Enum,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Daytime
 {
@@ -21,8 +22,9 @@ pub enum Daytime
 	EARLY,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
-#[derive(EnumMap)]
+#[derive(
+	Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug, Enum,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Phase
 {

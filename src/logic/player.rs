@@ -1,8 +1,6 @@
 /* Player */
 
-
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
-#[derive(EnumMap)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Enum)]
 #[serde(rename_all = "lowercase")]
 pub enum Player
 {
@@ -26,5 +24,8 @@ pub enum Player
 
 impl Default for Player
 {
-	fn default() -> Player { Player::NONE }
+	fn default() -> Player
+	{
+		Player::NONE
+	}
 }
