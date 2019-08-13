@@ -37,6 +37,10 @@ struct SettingContents
 	slackurl: Option<String>,
 	#[serde(default, skip_serializing_if = "is_zero")]
 	discordurl: Option<String>,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	#[serde(rename = "defaults", alias = "settings")]
+	fallback: Option<String>,
 }
 
 impl Settings
@@ -94,6 +98,35 @@ impl Settings
 			.as_ref()
 			.or(self.contents.discordurl.as_ref())
 			.or(self.defaults.discordurl.as_ref())
+	}
+
+	pub fn set_logname(&mut self, value: String)
+	{
+		self.contents.logname = Some(value);
+	}
+	pub fn set_port(&mut self, value: i32)
+	{
+		self.contents.port = Some(value);
+	}
+	pub fn set_login_server(&mut self, value: String)
+	{
+		self.contents.login_server = Some(value);
+	}
+	pub fn set_allow_discord_login(&mut self, value: bool)
+	{
+		self.contents.allow_discord_login = Some(value);
+	}
+	pub fn set_slackname(&mut self, value: String)
+	{
+		self.contents.slackname = Some(value);
+	}
+	pub fn set_slackurl(&mut self, value: String)
+	{
+		self.contents.slackurl = Some(value);
+	}
+	pub fn set_discordurl(&mut self, value: String)
+	{
+		self.contents.discordurl = Some(value);
 	}
 
 	pub fn override_logname(&mut self, value: String)
@@ -165,7 +198,44 @@ impl Settings
 		let raw = fs::read_to_string(&self.filename)?;
 		self.contents = serde_json::from_str(&raw)?;
 
-		// TODO store recursive settings into defaults
+		let mut fallback = self.contents.fallback.clone();
+		while let Some(filename) = fallback
+		{
+			let raw = fs::read_to_string(filename)?;
+			let settings: SettingContents = serde_json::from_str(&raw)?;
+
+			if settings.logname.is_some()
+			{
+				self.defaults.logname = settings.logname;
+			}
+			if settings.port.is_some()
+			{
+				self.defaults.port = settings.port;
+			}
+			if settings.login_server.is_some()
+			{
+				self.defaults.login_server = settings.login_server;
+			}
+			if settings.allow_discord_login.is_some()
+			{
+				self.defaults.allow_discord_login =
+					settings.allow_discord_login;
+			}
+			if settings.slackname.is_some()
+			{
+				self.defaults.slackname = settings.slackname;
+			}
+			if settings.slackurl.is_some()
+			{
+				self.defaults.slackurl = settings.slackurl;
+			}
+			if settings.discordurl.is_some()
+			{
+				self.defaults.discordurl = settings.discordurl;
+			}
+
+			fallback = settings.fallback;
+		}
 
 		Ok(())
 	}
