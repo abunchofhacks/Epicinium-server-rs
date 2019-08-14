@@ -60,7 +60,7 @@ impl LoginCluster
 			Some(x) => (Some(http::async::Client::new()), x.clone()),
 			None =>
 			{
-				if cfg!(debug_assertions) && !cfg!(feature = "candidate")
+				if !cfg!(debug_assertions) || cfg!(feature = "candidate")
 				{
 					return Err(io::Error::new(
 						io::ErrorKind::InvalidInput,
