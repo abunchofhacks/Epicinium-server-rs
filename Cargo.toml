@@ -9,10 +9,13 @@ serde_derive = "*"
 serde_json = "*"
 enum-map = "*"
 enum-map-derive = "*"
+enum-set = "*"
 signal-hook = "0.1.10"
 vec-drain-where = "*"
 rand = "0.7.0"
 openssl = "*"
+reqwest = "*"
+futures = "*"
 
 [features]
 defaults = []

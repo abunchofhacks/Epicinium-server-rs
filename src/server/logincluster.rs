@@ -13,7 +13,14 @@ use std::io::Read;
 use std::net;
 use std::sync;
 use std::sync::atomic;
+
+use futures::prelude::*;
 use vec_drain_where::VecDrainWhereExt;
+
+use reqwest as http;
+
+type HttpFuture =
+	Future<Item = http::async::Response, Error = http::Error> + Send;
 
 pub struct LoginCluster
 {
@@ -24,7 +31,9 @@ pub struct LoginCluster
 	close_dependency: sync::Arc<atomic::AtomicBool>,
 
 	listener: net::TcpListener,
-	login_server: Option<String>,
+	login: Option<http::async::Client>,
+	login_server: String,
+	active_logins: Vec<(Keycode, Box<HttpFuture>)>,
 	privatekey: openssl::pkey::PKey<openssl::pkey::Private>,
 
 	ticker: u64,
@@ -46,11 +55,22 @@ impl LoginCluster
 		let listener = net::TcpListener::bind(address)?;
 		listener.set_nonblocking(true)?;
 
-		let login_server = settings.login_server().cloned();
-		if !cfg!(debug_assertions) || cfg!(feature = "candidate")
+		let (login, login_server) = match settings.login_server()
 		{
-			login_server.as_ref().expect("No login server defined.");
-		}
+			Some(x) => (Some(http::async::Client::new()), x.clone()),
+			None =>
+			{
+				if cfg!(debug_assertions) && !cfg!(feature = "candidate")
+				{
+					return Err(io::Error::new(
+						io::ErrorKind::InvalidInput,
+						"No login server defined.",
+					));
+				}
+
+				(None, String::new())
+			}
+		};
 
 		let mut pem: Vec<u8> = Vec::new();
 		let mut file = File::open("keys/dummy_private.pem")?;
@@ -63,7 +83,9 @@ impl LoginCluster
 			incoming_clients: incoming,
 			close_dependency: close_dep,
 			listener: listener,
+			login: login,
 			login_server: login_server,
+			active_logins: Vec::new(),
 			privatekey: privatekey,
 			ticker: rand::random(),
 			welcome_party: WelcomeParty { closing: false },
@@ -244,10 +266,15 @@ impl LoginCluster
 										content: None,
 									})
 								}
-								else if let Some(ref url) = &self.login_server
+								else if let Some(ref login) = &self.login
 								{
 									joining_server(
-										client, url, token, account_id,
+										client,
+										login,
+										&self.login_server,
+										token,
+										account_id,
+										&mut self.active_logins,
 									);
 								}
 								else
@@ -327,6 +354,14 @@ impl LoginCluster
 					client.fulfil_request(name, &self.privatekey);
 					break;
 				}
+			}
+		}
+
+		for (_cid, future) in &mut self.active_logins
+		{
+			match future.poll()
+			{
+				// TODO
 			}
 		}
 
@@ -413,13 +448,48 @@ impl LoginCluster
 }
 
 fn joining_server(
-	_client: &mut ServerClient,
-	_login_server: &String,
-	_token: String,
-	_account_id: String,
+	client: &ServerClient,
+	login: &http::async::Client,
+	login_server: &String,
+	token: String,
+	account_id: String,
+	active_logins: &mut Vec<(Keycode, Box<HttpFuture>)>,
 )
 {
-	unimplemented!();
+	println!("Client is logging in with account id {}", &account_id);
+
+	match start_login(login, login_server, token, account_id)
+	{
+		Err(e) =>
+		{
+			eprintln!("Failed to start login: {}", e);
+		}
+		Ok(x) =>
+		{
+			active_logins.push((client.id, x));
+		}
+	}
+}
+
+fn start_login(
+	login: &http::async::Client,
+	login_server: &String,
+	token: String,
+	account_id: String,
+) -> std::result::Result<Box<HttpFuture>, http::UrlError>
+{
+	let mut url = http::Url::parse(login_server)?;
+	url.set_path("validate_session.php");
+
+	let payload = json!({
+		"id": account_id,
+		"token": token,
+		// TODO "challenge_key": challenge_key,
+	});
+
+	let future = login.get(url).json(&payload).send();
+
+	Ok(Box::new(future))
 }
 
 fn join_dev_server(client: &mut ServerClient, account_id: String)

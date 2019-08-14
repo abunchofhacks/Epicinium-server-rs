@@ -3,6 +3,8 @@
 use common::header::*;
 use common::version::*;
 
+use enum_set::*;
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
@@ -75,7 +77,6 @@ pub enum Message
 }
 
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]
-#[serde(rename_all = "lowercase")]
 pub struct PlatformMetadata
 {
 	#[serde(default, skip_serializing_if = "is_zero")]
@@ -133,7 +134,6 @@ pub enum ChatTarget
 }
 
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]
-#[serde(rename_all = "lowercase")]
 pub struct JoinMetadata
 {
 	#[serde(default, skip_serializing_if = "is_zero")]
@@ -144,7 +144,6 @@ pub struct JoinMetadata
 }
 
 #[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
-#[serde(rename_all = "lowercase")]
 pub struct StampMetadata
 {
 	pub image: String,
@@ -157,7 +156,6 @@ pub struct StampMetadata
 }
 
 #[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
-#[serde(rename_all = "lowercase")]
 pub struct DownloadMetadata
 {
 	#[serde(default, skip_serializing_if = "is_zero")]
@@ -183,12 +181,12 @@ pub struct DownloadMetadata
 }
 
 #[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
-#[serde(rename_all = "lowercase")]
 pub struct DenyMetadata
 {
 	pub reason: String,
 }
 
+#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
 pub enum ResponseStatus
 {
 	Success = 0,
@@ -208,3 +206,38 @@ pub enum ResponseStatus
 	ConnectionFailed = 98,
 	UnknownError = 99,
 }
+
+#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
+pub enum Unlock
+{
+	Unknown,
+	Dev,
+	Access,
+	Guest,
+}
+
+pub fn unlock_id_from_unlock(unlock: Unlock) -> i8
+{
+	if cfg!(debug_assertions)
+	{
+		match unlock
+		{
+			Unlock::Unknown => 0,
+			Unlock::Dev => 2,
+			Unlock::Access => 9,
+			Unlock::Guest => 10,
+		}
+	}
+	else
+	{
+		match unlock
+		{
+			Unlock::Unknown => 0,
+			Unlock::Dev => 2,
+			Unlock::Access => 3,
+			Unlock::Guest => 4,
+		}
+	}
+}
+
+type Unlocks = EnumSet<Unlock>;

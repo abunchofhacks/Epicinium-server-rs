@@ -1,6 +1,8 @@
 /* Epicinium Rust Lib */
 
 extern crate serde;
+
+#[macro_use]
 extern crate serde_json;
 
 #[macro_use]
@@ -11,8 +13,11 @@ extern crate enum_map;
 #[macro_use]
 extern crate enum_map_derive;
 
+extern crate enum_set;
+extern crate futures;
 extern crate openssl;
 extern crate rand;
+extern crate reqwest;
 extern crate signal_hook;
 extern crate vec_drain_where;
 
