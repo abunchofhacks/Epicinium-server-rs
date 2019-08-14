@@ -6,6 +6,9 @@ extern crate serde;
 extern crate serde_json;
 
 #[macro_use]
+extern crate serde_repr;
+
+#[macro_use]
 extern crate serde_derive;
 
 extern crate enum_map;
@@ -13,7 +16,7 @@ extern crate enum_map;
 #[macro_use]
 extern crate enum_map_derive;
 
-extern crate enum_set;
+extern crate enumset;
 extern crate futures;
 extern crate openssl;
 extern crate rand;

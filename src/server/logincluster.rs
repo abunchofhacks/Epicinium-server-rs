@@ -19,8 +19,7 @@ use vec_drain_where::VecDrainWhereExt;
 
 use reqwest as http;
 
-type HttpFuture =
-	Future<Item = http::async::Response, Error = http::Error> + Send;
+type HttpFuture = Future<Item = LoginData, Error = ResponseStatus> + Send;
 
 pub struct LoginCluster
 {
@@ -238,9 +237,7 @@ impl LoginCluster
 							{
 								// This session code is now deprecated.
 								client.send(Message::JoinServer {
-									status: Some(
-										ResponseStatus::CredsInvalid as i32,
-									),
+									status: Some(ResponseStatus::CredsInvalid),
 									content: None,
 									sender: None,
 									metadata: None,
@@ -280,8 +277,6 @@ impl LoginCluster
 								else
 								{
 									join_dev_server(client, account_id);
-
-									client.online = true;
 
 									// Stop receiving until we move this client
 									// from our list to somewhere else.
@@ -357,11 +352,59 @@ impl LoginCluster
 			}
 		}
 
-		for (_cid, future) in &mut self.active_logins
+		for (cid, future) in &mut self.active_logins
 		{
 			match future.poll()
 			{
-				// TODO
+				Ok(futures::Async::NotReady) =>
+				{}
+				Ok(futures::Async::Ready(LoginData {
+					status: ResponseStatus::Success,
+					account_id: _,
+					response_data: data,
+				})) =>
+				{
+					for client in &mut self.clients
+					{
+						if client.id == *cid && !client.dead()
+						{
+							joined_server(client, data);
+							break;
+						}
+					}
+				}
+				Ok(futures::Async::Ready(data)) =>
+				{
+					println!("Login failed with status code {:?}", data.status);
+
+					for client in &mut self.clients
+					{
+						if client.id == *cid && !client.dead()
+						{
+							client.send(Message::JoinServer {
+								status: Some(data.status),
+								content: None,
+								sender: None,
+								metadata: None,
+							});
+						}
+					}
+				}
+				Err(status) =>
+				{
+					for client in &mut self.clients
+					{
+						if client.id == *cid && !client.dead()
+						{
+							client.send(Message::JoinServer {
+								status: Some(status),
+								content: None,
+								sender: None,
+								metadata: None,
+							});
+						}
+					}
+				}
 			}
 		}
 
@@ -448,7 +491,7 @@ impl LoginCluster
 }
 
 fn joining_server(
-	client: &ServerClient,
+	client: &mut ServerClient,
 	login: &http::async::Client,
 	login_server: &String,
 	token: String,
@@ -463,6 +506,13 @@ fn joining_server(
 		Err(e) =>
 		{
 			eprintln!("Failed to start login: {}", e);
+
+			client.send(Message::JoinServer {
+				status: Some(ResponseStatus::ConnectionFailed),
+				content: None,
+				sender: None,
+				metadata: None,
+			});
 		}
 		Ok(x) =>
 		{
@@ -487,7 +537,44 @@ fn start_login(
 		// TODO "challenge_key": challenge_key,
 	});
 
-	let future = login.get(url).json(&payload).send();
+	let future = login
+		.get(url)
+		.json(&payload)
+		.send()
+		.map_err(|e| {
+			eprintln!("Login failed: {}", e);
+
+			ResponseStatus::ConnectionFailed
+		})
+		.and_then(|mut response| {
+			if response.status().is_success()
+			{
+				response
+					.json()
+					.map_err(|e| {
+						eprintln!(
+							"Received malformed response \
+							 from login server: {}",
+							e
+						);
+						ResponseStatus::ResponseMalformed
+					})
+					.wait()
+			}
+			else
+			{
+				Err(ResponseStatus::ConnectionFailed)
+			}
+		})
+		.map(|data| {
+			println!("Got a response from login server: {:?}", data);
+
+			LoginData {
+				status: ResponseStatus::Success,
+				account_id: account_id,
+				response_data: data,
+			}
+		});
 
 	Ok(Box::new(future))
 }
@@ -496,29 +583,60 @@ fn join_dev_server(client: &mut ServerClient, account_id: String)
 {
 	println!("Client is logging in with account id {}", &account_id);
 
+	let username;
+	let unlocks;
 	match account_id.parse::<u8>()
 	{
-		Ok(x) if x > 0 && x <= 8 =>
+		Ok(1) =>
 		{
-			const NAMES: [&str; 8] = [
-				"Alice", "Bob", "Carol", "Dave", "Emma", "Frank", "Gwen",
-				"Harold",
-			];
-			client.username = NAMES[(x - 1) as usize].to_string();
+			username = "Alice".to_string();
+			unlocks = vec![unlock_id(Unlock::Access), unlock_id(Unlock::Dev)];
+		}
+		Ok(x) if x >= 2 && x <= 8 =>
+		{
+			const NAMES: [&str; 7] =
+				["Bob", "Carol", "Dave", "Emma", "Frank", "Gwen", "Harold"];
+			username = NAMES[(x - 2) as usize].to_string();
+			unlocks = vec![unlock_id(Unlock::Access)];
 		}
 		_ =>
 		{
-			client.username = format!("{}", client.id);
+			username = format!("{}", client.id);
+			unlocks = vec![unlock_id(Unlock::Access), unlock_id(Unlock::Dev)];
 		}
 	}
-	client.id_and_username = format!("{} '{}'", client.id, client.username);
 
-	joined_server(client);
+	let data = LoginResponseData {
+		username: username,
+		unlocks: unlocks,
+		rating: 0.0,
+		stars: 0,
+		recent_stars: 0,
+	};
+
+	joined_server(client, data);
 }
 
-fn joined_server(_client: &mut ServerClient)
+fn joined_server(client: &mut ServerClient, data: LoginResponseData)
 {
-	unimplemented!();
+	// TODO Unlock::ACCESS
+
+	// TODO ghostbusting
+
+	client.online = true;
+
+	client.username = data.username;
+	client.id_and_username = format!("{} '{}'", client.id, client.username);
+
+	// TODO client.unlocks
+
+	// TODO rating
+	// TODO stars
+	// TODO recent stars
+
+	println!("Client {} successfully logged in.", client.id_and_username);
+
+	// TODO slack
 }
 
 pub struct WelcomeParty

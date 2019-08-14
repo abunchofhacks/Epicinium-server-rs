@@ -3,7 +3,7 @@
 use common::header::*;
 use common::version::*;
 
-use enum_set::*;
+use enumset::*;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
@@ -23,7 +23,7 @@ pub enum Message
 	JoinServer
 	{
 		#[serde(default, skip_serializing_if = "is_zero")]
-		status: Option<i32>,
+		status: Option<ResponseStatus>,
 
 		#[serde(default, skip_serializing_if = "is_zero")]
 		content: Option<String>,
@@ -186,7 +186,10 @@ pub struct DenyMetadata
 	pub reason: String,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
+#[derive(
+	PartialEq, Eq, Copy, Clone, Serialize_repr, Deserialize_repr, Debug,
+)]
+#[repr(u8)]
 pub enum ResponseStatus
 {
 	Success = 0,
@@ -207,7 +210,7 @@ pub enum ResponseStatus
 	UnknownError = 99,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
+#[derive(EnumSetType, Debug)]
 pub enum Unlock
 {
 	Unknown,
@@ -216,7 +219,7 @@ pub enum Unlock
 	Guest,
 }
 
-pub fn unlock_id_from_unlock(unlock: Unlock) -> i8
+pub fn unlock_id(unlock: Unlock) -> u8
 {
 	if cfg!(debug_assertions)
 	{
@@ -240,4 +243,23 @@ pub fn unlock_id_from_unlock(unlock: Unlock) -> i8
 	}
 }
 
+// TODO implement deserialize but using reverse unlock_id
 type Unlocks = EnumSet<Unlock>;
+
+#[derive(Clone, Debug)]
+pub struct LoginData
+{
+	pub status: ResponseStatus,
+	pub account_id: String,
+	pub response_data: LoginResponseData,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+pub struct LoginResponseData
+{
+	pub username: String,
+	pub unlocks: Vec<u8>,
+	pub rating: f32,
+	pub stars: i32,
+	pub recent_stars: i32,
+}
