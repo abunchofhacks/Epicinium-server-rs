@@ -352,6 +352,7 @@ impl LoginCluster
 			}
 		}
 
+		let mut completed = Vec::<Keycode>::new();
 		for (cid, future) in &mut self.active_logins
 		{
 			match future.poll()
@@ -372,6 +373,7 @@ impl LoginCluster
 							break;
 						}
 					}
+					completed.push(*cid);
 				}
 				Ok(futures::Async::Ready(data)) =>
 				{
@@ -389,6 +391,7 @@ impl LoginCluster
 							});
 						}
 					}
+					completed.push(*cid);
 				}
 				Err(status) =>
 				{
@@ -404,9 +407,12 @@ impl LoginCluster
 							});
 						}
 					}
+					completed.push(*cid);
 				}
 			}
 		}
+		self.active_logins
+			.retain(|(cid, _)| completed.contains(cid));
 
 		for client in &mut self.clients
 		{
