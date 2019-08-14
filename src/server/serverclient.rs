@@ -16,6 +16,8 @@ use std::net;
 use std::path;
 use std::time;
 
+use enumset::*;
+
 pub struct ServerClient
 {
 	stream: net::TcpStream,
@@ -34,6 +36,7 @@ pub struct ServerClient
 	pub id_and_username: String,
 	pub online: bool,
 	pub hidden: bool,
+	pub unlocks: EnumSet<Unlock>,
 	pub lobby: Option<String>,
 
 	last_receive_time: time::Instant,
@@ -79,6 +82,7 @@ impl ServerClient
 			id_and_username: format!("{}", id),
 			online: false,
 			hidden: false,
+			unlocks: EnumSet::empty(),
 			lobby: None,
 			last_receive_time: time::Instant::now(),
 			last_queue_time: time::Instant::now(),
@@ -612,5 +616,26 @@ impl ServerClient
 		// we send a pulse message so the client knows we are still breathing.
 		// We are now actively sending, thus not silent.
 		self.last_queue_time = time::Instant::now();
+	}
+
+	pub fn generate_join_metadata(&self) -> Option<JoinMetadata>
+	{
+		let mut metadata: JoinMetadata = Default::default();
+		if self.unlocks.contains(Unlock::Dev)
+		{
+			metadata.dev = true;
+		}
+		if self.unlocks.contains(Unlock::Guest)
+		{
+			metadata.guest = true;
+		}
+		if metadata == Default::default()
+		{
+			None
+		}
+		else
+		{
+			Some(metadata)
+		}
 	}
 }

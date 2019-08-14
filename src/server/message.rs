@@ -243,8 +243,29 @@ pub fn unlock_id(unlock: Unlock) -> u8
 	}
 }
 
-// TODO implement deserialize but using reverse unlock_id
-type Unlocks = EnumSet<Unlock>;
+pub fn unlock_from_unlock_id(x: u8) -> Unlock
+{
+	if cfg!(debug_assertions)
+	{
+		match x
+		{
+			2 => Unlock::Dev,
+			9 => Unlock::Access,
+			10 => Unlock::Guest,
+			_ => Unlock::Unknown,
+		}
+	}
+	else
+	{
+		match x
+		{
+			2 => Unlock::Dev,
+			3 => Unlock::Access,
+			4 => Unlock::Guest,
+			_ => Unlock::Unknown,
+		}
+	}
+}
 
 #[derive(Clone, Debug)]
 pub struct LoginData
@@ -258,6 +279,7 @@ pub struct LoginData
 pub struct LoginResponseData
 {
 	pub username: String,
+	// TODO deserialize using unlock_from_unlock_id
 	pub unlocks: Vec<u8>,
 	pub rating: f32,
 	pub stars: i32,

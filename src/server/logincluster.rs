@@ -14,6 +14,7 @@ use std::net;
 use std::sync;
 use std::sync::atomic;
 
+use enumset::*;
 use futures::prelude::*;
 use vec_drain_where::VecDrainWhereExt;
 
@@ -625,7 +626,22 @@ fn join_dev_server(client: &mut ServerClient, account_id: String)
 
 fn joined_server(client: &mut ServerClient, data: LoginResponseData)
 {
-	// TODO Unlock::ACCESS
+	let mut unlocks = EnumSet::<Unlock>::empty();
+	for x in data.unlocks
+	{
+		unlocks.insert(unlock_from_unlock_id(x));
+	}
+
+	if !unlocks.contains(Unlock::Access)
+	{
+		println!("Login failed due to insufficient access");
+		client.send(Message::JoinServer {
+			status: Some(ResponseStatus::KeyRequired),
+			content: None,
+			sender: None,
+			metadata: None,
+		});
+	}
 
 	// TODO ghostbusting
 
@@ -633,8 +649,7 @@ fn joined_server(client: &mut ServerClient, data: LoginResponseData)
 
 	client.username = data.username;
 	client.id_and_username = format!("{} '{}'", client.id, client.username);
-
-	// TODO client.unlocks
+	client.unlocks = unlocks;
 
 	// TODO rating
 	// TODO stars

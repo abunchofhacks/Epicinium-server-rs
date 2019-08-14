@@ -295,13 +295,11 @@ impl ClientCluster
 					// Let the client know who else is online.
 					for other in self.clients.iter().filter(|x| !x.hidden)
 					{
-						// TODO dev?
-						// TODO guest?
 						messages.push(Message::JoinServer {
 							status: None,
 							content: Some(other.username.clone()),
 							sender: None,
-							metadata: None,
+							metadata: other.generate_join_metadata(),
 						});
 						// TODO rating
 						// TODO stars
@@ -456,7 +454,7 @@ impl ClientCluster
 						status: None,
 						content: Some(client.username.clone()),
 						sender: None,
-						metadata: None,
+						metadata: client.generate_join_metadata(),
 					});
 
 					// Tell the newcomer that they are online.
@@ -465,7 +463,7 @@ impl ClientCluster
 						status: None,
 						content: Some(client.username.clone()),
 						sender: None,
-						metadata: None,
+						metadata: client.generate_join_metadata(),
 					});
 
 					// Tell everyone who the newcomer is.
@@ -477,7 +475,7 @@ impl ClientCluster
 								status: None,
 								content: Some(client.username.clone()),
 								sender: None,
-								metadata: None,
+								metadata: otherclient.generate_join_metadata(),
 							});
 						}
 
