@@ -26,6 +26,8 @@ struct SettingContents
 	// TODO datafolder
 	// TODO seed
 	#[serde(default, skip_serializing_if = "is_zero")]
+	server: Option<String>,
+	#[serde(default, skip_serializing_if = "is_zero")]
 	port: Option<i32>,
 	#[serde(default, skip_serializing_if = "is_zero")]
 	login_server: Option<String>,
@@ -52,6 +54,14 @@ impl Settings
 			.as_ref()
 			.or(self.contents.logname.as_ref())
 			.or(self.defaults.logname.as_ref())
+	}
+	pub fn server(&self) -> Option<&String>
+	{
+		self.overrides
+			.server
+			.as_ref()
+			.or(self.contents.server.as_ref())
+			.or(self.defaults.server.as_ref())
 	}
 	pub fn port(&self) -> Option<i32>
 	{
@@ -104,6 +114,10 @@ impl Settings
 	{
 		self.contents.logname = Some(value);
 	}
+	pub fn set_server(&mut self, value: String)
+	{
+		self.contents.server = Some(value);
+	}
 	pub fn set_port(&mut self, value: i32)
 	{
 		self.contents.port = Some(value);
@@ -132,6 +146,10 @@ impl Settings
 	pub fn override_logname(&mut self, value: String)
 	{
 		self.overrides.logname = Some(value);
+	}
+	pub fn override_server(&mut self, value: String)
+	{
+		self.overrides.server = Some(value);
 	}
 	pub fn override_port(&mut self, value: i32)
 	{
@@ -207,6 +225,10 @@ impl Settings
 			if settings.logname.is_some()
 			{
 				self.defaults.logname = settings.logname;
+			}
+			if settings.server.is_some()
+			{
+				self.defaults.server = settings.server;
 			}
 			if settings.port.is_some()
 			{

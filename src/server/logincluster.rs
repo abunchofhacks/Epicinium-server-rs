@@ -50,8 +50,29 @@ impl LoginCluster
 		close_dep: sync::Arc<atomic::AtomicBool>,
 	) -> io::Result<LoginCluster>
 	{
-		let port = settings.port().unwrap();
-		let address = format!("127.0.0.1:{}", port);
+		let server = match settings.server()
+		{
+			Some(x) => x,
+			None =>
+			{
+				return Err(io::Error::new(
+					io::ErrorKind::InvalidInput,
+					"No ip mask (setting 'server') defined.",
+				));
+			}
+		};
+		let port = match settings.port()
+		{
+			Some(x) => x,
+			None =>
+			{
+				return Err(io::Error::new(
+					io::ErrorKind::InvalidInput,
+					"No port (setting 'port') defined.",
+				));
+			}
+		};
+		let address = format!("{}:{}", server, port);
 		let listener = net::TcpListener::bind(address)?;
 		listener.set_nonblocking(true)?;
 
@@ -64,7 +85,7 @@ impl LoginCluster
 				{
 					return Err(io::Error::new(
 						io::ErrorKind::InvalidInput,
-						"No login server defined.",
+						"No login server (setting 'login-server') defined.",
 					));
 				}
 
