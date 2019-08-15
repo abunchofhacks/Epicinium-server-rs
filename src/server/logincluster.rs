@@ -434,7 +434,7 @@ impl LoginCluster
 			}
 		}
 		self.active_logins
-			.retain(|(cid, _)| completed.contains(cid));
+			.retain(|(cid, _)| !completed.contains(cid));
 
 		for client in &mut self.clients
 		{
