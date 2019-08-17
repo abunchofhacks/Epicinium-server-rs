@@ -22,6 +22,8 @@ extern crate openssl;
 extern crate rand;
 extern crate reqwest;
 extern crate signal_hook;
+extern crate tokio;
+extern crate tokio_io;
 extern crate vec_drain_where;
 
 pub mod common;

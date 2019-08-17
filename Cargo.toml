@@ -17,6 +17,8 @@ rand = "0.7.0"
 openssl = "*"
 reqwest = "*"
 futures = "*"
+tokio = "0.1"
+tokio-io = "0.1"
 
 [features]
 defaults = []

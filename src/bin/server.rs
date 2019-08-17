@@ -4,9 +4,9 @@ extern crate epicinium;
 
 use epicinium::*;
 
-use std::io;
+use std::error;
 
-fn main() -> io::Result<()>
+fn main() -> Result<(), Box<dyn error::Error>>
 {
 	let mut logname = "rust".to_string();
 	let currentversion = Version::current();
