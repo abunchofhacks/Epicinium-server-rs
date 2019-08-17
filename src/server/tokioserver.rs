@@ -62,11 +62,12 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 
 fn accept_client(socket: TcpStream) -> io::Result<()>
 {
-	let task = futures::stream::unfold(socket, move |socket| {
+	let task = futures::stream::unfold(socket, |socket| {
 		let lengthbuffer = [0u8; 4];
 		let future_length = tokio_io::io::read_exact(socket, lengthbuffer)
 			.and_then(|(socket, lengthbuffer)| {
 				let length = u32::from_le_bytes(lengthbuffer);
+
 				let buffer = vec![0; length as usize];
 				let future_data = tokio_io::io::read_exact(socket, buffer)
 					.and_then(|(socket, buffer)| {
@@ -102,6 +103,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 	.for_each(|message: Message| {
 		// TODO handle
 		println!("Message: {:?}", message);
+		futures::future::ok(())
 	})
 	.map_err(move |e| eprintln!("Error in client: {}", e));
 
