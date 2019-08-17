@@ -16,7 +16,7 @@ vec-drain-where = "*"
 rand = "0.7.0"
 openssl = "*"
 reqwest = "*"
-futures = "*"
+futures = "0.1"
 tokio = "0.1"
 tokio-io = "0.1"
 

@@ -68,9 +68,24 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 			.and_then(|(socket, lengthbuffer)| {
 				let length = u32::from_le_bytes(lengthbuffer);
 
+				if length == 0
+				{
+					println!("Received pulse.");
+					let result = Ok((Message::Pulse, socket));
+					let future_data = futures::future::result(result);
+					return Ok(futures::future::Either::A(future_data));
+				}
+
+				println!("Receiving message of length {}...", length);
+
 				let buffer = vec![0; length as usize];
 				let future_data = tokio_io::io::read_exact(socket, buffer)
 					.and_then(|(socket, buffer)| {
+						println!(
+							"Received message of length {}.",
+							buffer.len()
+						);
+
 						let jsonstr = match String::from_utf8(buffer)
 						{
 							Ok(x) => x,
@@ -94,7 +109,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 						Ok((message, socket))
 					});
 
-				Ok(future_data)
+				Ok(futures::future::Either::B(future_data))
 			})
 			.flatten();
 
