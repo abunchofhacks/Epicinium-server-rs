@@ -13,6 +13,8 @@ use std::sync::atomic;
 use std::thread;
 use std::time;
 
+use futures::Future;
+
 pub fn run_server(settings: &Settings) -> io::Result<()>
 {
 	let shutdown = sync::Arc::new(atomic::AtomicBool::new(false));
@@ -28,16 +30,28 @@ pub fn run_server(settings: &Settings) -> io::Result<()>
 
 	let signal_dep = login_closed.clone();
 	let signal_killcount = shutdown_killcount.clone();
-	let signal_thread = thread::spawn(move || {
-		while !signal_dep.load(atomic::Ordering::Relaxed)
+	let signal_future = futures::future::loop_fn((), move |_| {
+		if shutdown.load(atomic::Ordering::Relaxed)
 		{
-			if shutdown.load(atomic::Ordering::Relaxed)
-			{
-				shutdown.store(false, atomic::Ordering::Relaxed);
-				signal_killcount.fetch_add(1, atomic::Ordering::Relaxed);
-			}
+			shutdown.store(false, atomic::Ordering::Relaxed);
+			signal_killcount.fetch_add(1, atomic::Ordering::Relaxed);
+		}
 
-			thread::sleep(time::Duration::from_millis(50));
+		if false
+		{
+			// Instead of declaring the type of signal_future, let the compiler
+			// infer it by pretending that this closure can return io::Error.
+			Err(io::Error::new(io::ErrorKind::Other, "dummy"))
+		}
+		else if signal_dep.load(atomic::Ordering::Relaxed)
+		{
+			Ok(futures::future::Loop::Break(()))
+		}
+		else
+		{
+			//thread::sleep(time::Duration::from_millis(50));
+
+			Ok(futures::future::Loop::Continue(()))
 		}
 	});
 
@@ -52,97 +66,82 @@ pub fn run_server(settings: &Settings) -> io::Result<()>
 	let mut login_cluster =
 		LoginCluster::create(settings, join_in, leave_out, login_dep)?;
 
-	let login_thread = thread::spawn(move || {
-		let mut last_killcount = 0;
-		while !login_cluster.closed()
+	let login_future = futures::future::loop_fn(0, move |last_killcount| {
+		let killcount = login_killcount.load(atomic::Ordering::Relaxed);
+		if killcount > last_killcount
 		{
-			let killcount = login_killcount.load(atomic::Ordering::Relaxed);
-			if killcount > last_killcount
+			if killcount == 1
 			{
-				if killcount == 1
-				{
-					login_cluster.close();
-				}
-				else if killcount == 2
-				{
-					login_cluster.close_and_kick();
-				}
-				else
-				{
-					login_cluster.close_and_terminate();
-				}
-				last_killcount = killcount;
+				login_cluster.close();
 			}
-			login_cluster.update();
-
-			// TODO remove or replace with socketsets
-			thread::sleep(time::Duration::from_millis(10));
+			else if killcount == 2
+			{
+				login_cluster.close_and_kick();
+			}
+			else
+			{
+				login_cluster.close_and_terminate();
+			}
 		}
-		login_closed.store(true, atomic::Ordering::Relaxed);
+		login_cluster.update();
+
+		if login_cluster.closed()
+		{
+			login_closed.store(true, atomic::Ordering::Relaxed);
+
+			Ok(futures::future::Loop::Break(killcount))
+		}
+		else
+		{
+			// TODO remove or replace with socketsets
+			//thread::sleep(time::Duration::from_millis(10));
+
+			Ok(futures::future::Loop::Continue(killcount))
+		}
 	});
 
 	let client_killcount = shutdown_killcount.clone();
 	let mut client_cluster =
 		ClientCluster::create(settings, join_out, leave_in)?;
 
-	let client_thread = thread::spawn(move || {
-		let mut last_killcount = 0;
-		while !client_cluster.closed()
+	let client_future = futures::future::loop_fn(0, move |last_killcount| {
+		let killcount = client_killcount.load(atomic::Ordering::Relaxed);
+		if killcount > last_killcount
 		{
-			let killcount = client_killcount.load(atomic::Ordering::Relaxed);
-			if killcount > last_killcount
+			if killcount == 1
 			{
-				if killcount == 1
-				{
-					client_cluster.close();
-				}
-				else if killcount == 2
-				{
-					client_cluster.close_and_kick();
-				}
-				else
-				{
-					client_cluster.close_and_terminate();
-				}
-				last_killcount = killcount;
+				client_cluster.close();
 			}
-			client_cluster.update();
-
-			// TODO remove or replace with socketsets
-			thread::sleep(time::Duration::from_millis(10));
+			else if killcount == 2
+			{
+				client_cluster.close_and_kick();
+			}
+			else
+			{
+				client_cluster.close_and_terminate();
+			}
 		}
-		client_closed.store(true, atomic::Ordering::Relaxed);
+		client_cluster.update();
+
+		if client_cluster.closed()
+		{
+			client_closed.store(true, atomic::Ordering::Relaxed);
+
+			Ok(futures::future::Loop::Break(killcount))
+		}
+		else
+		{
+			// TODO remove or replace with socketsets
+			//thread::sleep(time::Duration::from_millis(10));
+
+			Ok(futures::future::Loop::Continue(killcount))
+		}
 	});
 
-	match client_thread.join()
-	{
-		Ok(()) =>
-		{}
-		Err(e) =>
-		{
-			panic!("Thread panicked: {:?}", e);
-		}
-	}
-
-	match login_thread.join()
-	{
-		Ok(()) =>
-		{}
-		Err(e) =>
-		{
-			panic!("Thread panicked: {:?}", e);
-		}
-	}
-
-	match signal_thread.join()
-	{
-		Ok(()) =>
-		{}
-		Err(e) =>
-		{
-			panic!("Thread panicked: {:?}", e);
-		}
-	}
+	signal_future
+		.join3(login_future, client_future)
+		.map(|_| ())
+		.wait()?;
 
 	Ok(())
 }
