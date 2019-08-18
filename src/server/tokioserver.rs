@@ -67,6 +67,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 	let maxsendbuffersize = 10000;
 	let (mut sendbuffer_in, sendbuffer_out) =
 		tokio::sync::mpsc::channel::<Message>(maxsendbuffersize);
+	let mut pulsebuffer = sendbuffer_in.clone();
 	let versioned = sync::Arc::new(atomic::AtomicBool::new(false));
 	let (reader, writer) = socket.split();
 
@@ -245,12 +246,45 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 		})
 		.map(|_socket| ());
 
+	let pulse_task =
+		tokio::timer::Interval::new_interval(time::Duration::from_secs(4))
+			.or_else(|e| Err(PulseError::Timer { error: e }))
+			.for_each(move |_| {
+				pulsebuffer
+					.try_send(Message::Pulse)
+					.or_else(|e| Err(PulseError::Send { error: e }))
+			})
+			.or_else(|pe| match pe
+			{
+				PulseError::Timer { error: e } =>
+				{
+					eprintln!("Timer error in client pulse_task: {:?}", e);
+					Ok(())
+				}
+				PulseError::Send { error: e } =>
+				{
+					Err(io::Error::new(io::ErrorKind::ConnectionReset, e))
+				}
+			});
+
 	let task = receive_task
-		.join(send_task)
+		.join3(send_task, pulse_task)
 		.map(|_| ())
 		.map_err(move |e| eprintln!("Error in client: {:?}", e));
 
 	tokio::spawn(task);
 
 	Ok(())
+}
+
+enum PulseError
+{
+	Timer
+	{
+		error: tokio::timer::Error
+	},
+	Send
+	{
+		error: tokio::sync::mpsc::error::TrySendError<Message>,
+	},
 }
