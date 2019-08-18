@@ -7,6 +7,8 @@ use server::message::*;
 use std::error;
 use std::io;
 use std::net::SocketAddr;
+use std::sync;
+use std::sync::atomic;
 use std::time;
 
 use tokio::net::{TcpListener, TcpStream};
@@ -65,12 +67,15 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 	let maxsendbuffersize = 10000;
 	let (mut sendbuffer_in, sendbuffer_out) =
 		tokio::sync::mpsc::channel::<Message>(maxsendbuffersize);
+	let versioned = sync::Arc::new(atomic::AtomicBool::new(false));
 	let (reader, writer) = socket.split();
 
-	let receive_task = futures::stream::unfold(reader, |socket| {
+	let receive_versioned = versioned.clone();
+	let receive_task = futures::stream::unfold(reader, move |socket| {
+		let versioned: bool = receive_versioned.load(atomic::Ordering::Relaxed);
 		let lengthbuffer = [0u8; 4];
 		let future_length = tokio_io::io::read_exact(socket, lengthbuffer)
-			.and_then(|(socket, lengthbuffer)| {
+			.and_then(move |(socket, lengthbuffer)| {
 				let length = u32::from_le_bytes(lengthbuffer);
 
 				if length == 0
@@ -80,7 +85,39 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 					let future_data = futures::future::result(result);
 					return Ok(futures::future::Either::A(future_data));
 				}
-				// TODO size checks
+				else if !versioned
+					&& length as usize >= MESSAGE_SIZE_UNVERSIONED_LIMIT
+				{
+					println!(
+						"Unversioned client tried to send \
+						 very large message of length {}, \
+						 which is more than MESSAGE_SIZE_UNVERSIONED_LIMIT",
+						length
+					);
+					return Err(io::Error::new(
+						io::ErrorKind::InvalidInput,
+						"Message too large".to_string(),
+					));
+				}
+				else if length as usize >= MESSAGE_SIZE_LIMIT
+				{
+					println!(
+						"Refusing to receive very large message of length {}, \
+						 which is more than MESSAGE_SIZE_LIMIT",
+						length
+					);
+					return Err(io::Error::new(
+						io::ErrorKind::InvalidInput,
+						"Message too large".to_string(),
+					));
+				}
+				else if length as usize >= MESSAGE_SIZE_WARNING_LIMIT
+				{
+					println!(
+						"Receiving very large message of length {}",
+						length
+					);
+				}
 
 				println!("Receiving message of length {}...", length);
 
@@ -137,6 +174,13 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 						Err(io::Error::new(io::ErrorKind::ConnectionReset, e))
 					}
 				}
+			}
+			Message::Version { .. } =>
+			{
+				// TODO handle
+				versioned.store(true, atomic::Ordering::Relaxed);
+
+				Ok(())
 			}
 			_ => Ok(()),
 		}
