@@ -50,7 +50,7 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 			accept_client(socket)
 		})
 		.map_err(|e| {
-			eprintln!("Incoming connection failed: {}", e);
+			eprintln!("Incoming connection failed: {:?}", e);
 		});
 
 	// TODO
@@ -62,7 +62,12 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 
 fn accept_client(socket: TcpStream) -> io::Result<()>
 {
-	let task = futures::stream::unfold(socket, |socket| {
+	let maxsendbuffersize = 10000;
+	let (mut sendbuffer_in, sendbuffer_out) =
+		tokio::sync::mpsc::channel::<Message>(maxsendbuffersize);
+	let (reader, writer) = socket.split();
+
+	let receive_task = futures::stream::unfold(reader, |socket| {
 		let lengthbuffer = [0u8; 4];
 		let future_length = tokio_io::io::read_exact(socket, lengthbuffer)
 			.and_then(|(socket, lengthbuffer)| {
@@ -75,6 +80,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 					let future_data = futures::future::result(result);
 					return Ok(futures::future::Either::A(future_data));
 				}
+				// TODO size checks
 
 				println!("Receiving message of length {}...", length);
 
@@ -115,12 +121,90 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 
 		Some(future_length)
 	})
-	.for_each(|message: Message| {
-		// TODO handle
+	.for_each(move |message: Message| {
 		println!("Message: {:?}", message);
-		futures::future::ok(())
-	})
-	.map_err(move |e| eprintln!("Error in client: {}", e));
+
+		match message
+		{
+			Message::Ping =>
+			{
+				// Pings must always be responded with pongs.
+				match sendbuffer_in.try_send(Message::Pong)
+				{
+					Ok(()) => Ok(()),
+					Err(e) =>
+					{
+						Err(io::Error::new(io::ErrorKind::ConnectionReset, e))
+					}
+				}
+			}
+			_ => Ok(()),
+		}
+	});
+
+	let send_task = sendbuffer_out
+		.map_err(|e| io::Error::new(io::ErrorKind::ConnectionReset, e))
+		.fold(writer, |socket, message| {
+			if let Message::Pulse = message
+			{
+				println!("Sending pulse...");
+
+				let zeroes = [0u8; 4];
+				let buffer = zeroes.to_vec();
+
+				let future = tokio_io::io::write_all(socket, buffer).map(
+					|(socket, _)| {
+						println!("Sent pulse.");
+						socket
+					},
+				);
+				return futures::future::Either::A(future);
+			}
+
+			let jsonstr = match serde_json::to_string(&message)
+			{
+				Ok(data) => data,
+				Err(e) =>
+				{
+					panic!("Invalid message: {:?}", e);
+				}
+			};
+
+			if jsonstr.len() >= MESSAGE_SIZE_LIMIT
+			{
+				panic!(
+					"Cannot send message of length {}, \
+					 which is larger than MESSAGE_SIZE_LIMIT.",
+					jsonstr.len()
+				);
+			}
+
+			let length = jsonstr.len() as u32;
+
+			if length as usize >= MESSAGE_SIZE_WARNING_LIMIT
+			{
+				println!("Sending very large message of length {}", length);
+			}
+
+			println!("Sending message of length {}...", length);
+
+			let mut buffer = length.to_le_bytes().to_vec();
+			buffer.append(&mut jsonstr.into_bytes());
+
+			let future = tokio_io::io::write_all(socket, buffer).map(
+				move |(socket, _)| {
+					println!("Sent message of length {}.", length);
+					socket
+				},
+			);
+			return futures::future::Either::B(future);
+		})
+		.map(|_socket| ());
+
+	let task = receive_task
+		.join(send_task)
+		.map(|_| ())
+		.map_err(move |e| eprintln!("Error in client: {:?}", e));
 
 	tokio::spawn(task);
 
