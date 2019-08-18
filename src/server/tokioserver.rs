@@ -6,14 +6,20 @@ use server::message::*;
 
 use std::error;
 use std::io;
+use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync;
 use std::sync::atomic;
-use std::time;
+use std::time::Duration;
 
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
+use tokio::sync::mpsc;
+use tokio::timer::Interval;
 
+use futures::future;
+use futures::future::Either;
+use futures::stream;
 use futures::{Future, Stream};
 
 pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
@@ -46,13 +52,13 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 {
 	let maxsendbuffersize = 10000;
 	let (mut sendbuffer_in, sendbuffer_out) =
-		tokio::sync::mpsc::channel::<Message>(maxsendbuffersize);
+		mpsc::channel::<Message>(maxsendbuffersize);
 	let mut pulsebuffer = sendbuffer_in.clone();
 	let versioned = sync::Arc::new(atomic::AtomicBool::new(false));
 	let (reader, writer) = socket.split();
 
 	let receive_versioned = versioned.clone();
-	let receive_task = futures::stream::unfold(reader, move |socket| {
+	let receive_task = stream::unfold(reader, move |socket| {
 		let versioned: bool = receive_versioned.load(atomic::Ordering::Relaxed);
 		let lengthbuffer = [0u8; 4];
 		let future_length = tokio_io::io::read_exact(socket, lengthbuffer)
@@ -62,9 +68,11 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 				if length == 0
 				{
 					println!("Received pulse.");
+
+					// Unfold expects the value first and the state second.
 					let result = Ok((Message::Pulse, socket));
-					let future_data = futures::future::result(result);
-					return Ok(futures::future::Either::A(future_data));
+					let future_data = future::result(result);
+					return Ok(Either::A(future_data));
 				}
 				else if !versioned
 					&& length as usize >= MESSAGE_SIZE_UNVERSIONED_LIMIT
@@ -76,7 +84,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 						length
 					);
 					return Err(io::Error::new(
-						io::ErrorKind::InvalidInput,
+						ErrorKind::InvalidInput,
 						"Message too large".to_string(),
 					));
 				}
@@ -88,7 +96,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 						length
 					);
 					return Err(io::Error::new(
-						io::ErrorKind::InvalidInput,
+						ErrorKind::InvalidInput,
 						"Message too large".to_string(),
 					));
 				}
@@ -116,7 +124,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 							Err(e) =>
 							{
 								return Err(io::Error::new(
-									io::ErrorKind::InvalidData,
+									ErrorKind::InvalidData,
 									e,
 								));
 							}
@@ -129,11 +137,11 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 
 						let message: Message = serde_json::from_str(&jsonstr)?;
 
-						// Unfold excepts the value first and the state second.
+						// Unfold expects the value first and the state second.
 						Ok((message, socket))
 					});
 
-				Ok(futures::future::Either::B(future_data))
+				Ok(Either::B(future_data))
 			})
 			.flatten();
 
@@ -152,7 +160,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 					Ok(()) => Ok(()),
 					Err(e) =>
 					{
-						Err(io::Error::new(io::ErrorKind::ConnectionReset, e))
+						Err(io::Error::new(ErrorKind::ConnectionReset, e))
 					}
 				}
 			}
@@ -168,7 +176,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 	});
 
 	let send_task = sendbuffer_out
-		.map_err(|e| io::Error::new(io::ErrorKind::ConnectionReset, e))
+		.map_err(|e| io::Error::new(ErrorKind::ConnectionReset, e))
 		.fold(writer, |socket, message| {
 			if let Message::Pulse = message
 			{
@@ -183,7 +191,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 						socket
 					},
 				);
-				return futures::future::Either::A(future);
+				return Either::A(future);
 			}
 
 			let jsonstr = match serde_json::to_string(&message)
@@ -222,42 +230,41 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 					socket
 				},
 			);
-			return futures::future::Either::B(future);
+			return Either::B(future);
 		})
 		.map(|_socket| ());
 
-	let pulse_task =
-		tokio::timer::Interval::new_interval(time::Duration::from_secs(4))
-			.or_else(|e| Err(PulseError::Timer { error: e }))
-			.for_each(move |_| {
-				pulsebuffer
-					.try_send(Message::Pulse)
-					.or_else(|e| Err(PulseError::Send { error: e }))
-			})
-			.or_else(|pe| match pe
+	let pulse_task = Interval::new_interval(Duration::from_secs(4))
+		.or_else(|error| Err(PulseTaskError::Timer { error }))
+		.for_each(move |_| {
+			pulsebuffer
+				.try_send(Message::Pulse)
+				.or_else(|error| Err(PulseTaskError::Send { error }))
+		})
+		.or_else(|pe| match pe
+		{
+			PulseTaskError::Timer { error } =>
 			{
-				PulseError::Timer { error: e } =>
-				{
-					eprintln!("Timer error in client pulse_task: {:?}", e);
-					Ok(())
-				}
-				PulseError::Send { error: e } =>
-				{
-					Err(io::Error::new(io::ErrorKind::ConnectionReset, e))
-				}
-			});
+				eprintln!("Timer error in client pulse_task: {:?}", error);
+				Ok(())
+			}
+			PulseTaskError::Send { error } =>
+			{
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+		});
 
 	let task = receive_task
 		.join3(send_task, pulse_task)
 		.map(|_| ())
-		.map_err(move |e| eprintln!("Error in client: {:?}", e));
+		.map_err(|e| eprintln!("Error in client: {:?}", e));
 
 	tokio::spawn(task);
 
 	Ok(())
 }
 
-enum PulseError
+enum PulseTaskError
 {
 	Timer
 	{
@@ -265,6 +272,6 @@ enum PulseError
 	},
 	Send
 	{
-		error: tokio::sync::mpsc::error::TrySendError<Message>,
+		error: mpsc::error::TrySendError<Message>,
 	},
 }
