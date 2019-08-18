@@ -10,11 +10,12 @@ use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync;
 use std::sync::atomic;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 use tokio::timer::Interval;
 
 use futures::future;
@@ -50,10 +51,11 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 
 fn accept_client(socket: TcpStream) -> io::Result<()>
 {
-	let maxsendbuffersize = 10000;
-	let (mut sendbuffer_in, sendbuffer_out) =
-		mpsc::channel::<Message>(maxsendbuffersize);
+	let (mut sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
+	let mut pingbuffer = sendbuffer_in.clone();
 	let mut pulsebuffer = sendbuffer_in.clone();
+	let (mut timebuffer_in, timebuffer_out) = watch::channel(());
+	let (mut pongbuffer_in, pongbuffer_out) = watch::channel(());
 	let versioned = sync::Arc::new(atomic::AtomicBool::new(false));
 	let (reader, writer) = socket.split();
 
@@ -148,31 +150,14 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 		Some(future_length)
 	})
 	.for_each(move |message: Message| {
-		println!("Message: {:?}", message);
-
-		match message
-		{
-			Message::Ping =>
-			{
-				// Pings must always be responded with pongs.
-				match sendbuffer_in.try_send(Message::Pong)
-				{
-					Ok(()) => Ok(()),
-					Err(e) =>
-					{
-						Err(io::Error::new(ErrorKind::ConnectionReset, e))
-					}
-				}
-			}
-			Message::Version { .. } =>
-			{
-				// TODO handle
-				versioned.store(true, atomic::Ordering::Relaxed);
-
-				Ok(())
-			}
-			_ => Ok(()),
-		}
+		handle_message(
+			message,
+			&mut sendbuffer_in,
+			&mut timebuffer_in,
+			&mut pongbuffer_in,
+			&versioned,
+		)
+		.map_err(|e| io::Error::new(ErrorKind::ConnectionReset, e))
 	});
 
 	let send_task = sendbuffer_out
@@ -234,6 +219,89 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 		})
 		.map(|_socket| ());
 
+	// TODO variable ping_tolerance
+	let ping_tolerance = Duration::from_secs(120);
+	let ping_task = timebuffer_out
+		.timeout(Duration::from_secs(5))
+		.filter(|_| false)
+		.or_else(|e| {
+			if e.is_elapsed()
+			{
+				Ok(())
+			}
+			else if e.is_timer()
+			{
+				Err(PingTaskError::Timer {
+					error: e.into_timer().unwrap(),
+				})
+			}
+			else
+			{
+				Err(PingTaskError::Recv {
+					error: e.into_inner().unwrap(),
+				})
+			}
+		})
+		.and_then(move |()| {
+			let pingtime = Instant::now();
+			pingbuffer
+				.try_send(Message::Ping)
+				.map(move |()| pingtime)
+				.map_err(|error| PingTaskError::Send { error })
+		})
+		.and_then(move |pingtime| {
+			// TODO this is ugly
+			let pongbuffer = pongbuffer_out.clone();
+			pongbuffer
+				.into_future()
+				.map_err(|(error, _)| PingTaskError::Recv { error })
+				.and_then(move |(x, _)| x.ok_or(PingTaskError::NoPong))
+				.map(move |()| pingtime)
+		})
+		.timeout(ping_tolerance)
+		.and_then(move |pingtime| {
+			println!("Client has {}ms ping.", pingtime.elapsed().as_millis());
+			Ok(())
+		})
+		.or_else(|e| {
+			if e.is_elapsed()
+			{
+				Err(PingTaskError::NoPong)
+			}
+			else if e.is_timer()
+			{
+				Err(PingTaskError::Timer {
+					error: e.into_timer().unwrap(),
+				})
+			}
+			else
+			{
+				Err(e.into_inner().unwrap())
+			}
+		})
+		.or_else(|pe| match pe
+		{
+			PingTaskError::Timer { error } =>
+			{
+				eprintln!("Timer error in client pulse_task: {:?}", error);
+				Ok(())
+			}
+			PingTaskError::Send { error } =>
+			{
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+			PingTaskError::Recv { error } =>
+			{
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+			PingTaskError::NoPong =>
+			{
+				Err(io::Error::new(ErrorKind::ConnectionReset, "no pong"))
+			}
+		})
+		.for_each(|()| Ok(()));
+
+	// TODO use a oneshot channel to confirm supports_empty_pulses
 	let pulse_task = Interval::new_interval(Duration::from_secs(4))
 		.or_else(|error| Err(PulseTaskError::Timer { error }))
 		.for_each(move |_| {
@@ -255,13 +323,37 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 		});
 
 	let task = receive_task
-		.join3(send_task, pulse_task)
+		.join(send_task)
 		.map(|_| ())
+		.select(ping_task)
+		.map(|_| ())
+		.map_err(|(e, _)| e)
+		.select(pulse_task)
+		.map(|_| ())
+		.map_err(|(e, _)| e)
 		.map_err(|e| eprintln!("Error in client: {:?}", e));
 
 	tokio::spawn(task);
 
 	Ok(())
+}
+
+#[derive(Debug)]
+enum PingTaskError
+{
+	Timer
+	{
+		error: tokio::timer::Error,
+	},
+	Send
+	{
+		error: mpsc::error::TrySendError<Message>,
+	},
+	Recv
+	{
+		error: watch::error::RecvError,
+	},
+	NoPong,
 }
 
 enum PulseTaskError
@@ -274,4 +366,48 @@ enum PulseTaskError
 	{
 		error: mpsc::error::TrySendError<Message>,
 	},
+}
+
+fn handle_message(
+	message: Message,
+	sendbuffer: &mut mpsc::Sender<Message>,
+	last_receive_time: &mut watch::Sender<()>,
+	pong_receive_time: &mut watch::Sender<()>,
+	is_versioned: &sync::Arc<atomic::AtomicBool>,
+) -> Result<(), mpsc::error::TrySendError<Message>>
+{
+	// There might be a Future tracking when we last received a message,
+	// or there might not be.
+	let _ = last_receive_time.broadcast(());
+
+	match message
+	{
+		Message::Pulse =>
+		{
+			// The client just let us know that it is still breathing.
+		}
+		Message::Ping =>
+		{
+			// Pings must always be responded with pongs.
+			sendbuffer.try_send(Message::Pong)?;
+		}
+		Message::Pong =>
+		{
+			// There might be a Future waiting for this pong message,
+			// or there might not be.
+			let _ = pong_receive_time.broadcast(());
+		}
+		Message::Version { .. } =>
+		{
+			// TODO handle
+			is_versioned.store(true, atomic::Ordering::Relaxed);
+		}
+		_ =>
+		{
+			// TODO handle
+			println!("Unhandled message: {:?}", message);
+		}
+	}
+
+	Ok(())
 }
