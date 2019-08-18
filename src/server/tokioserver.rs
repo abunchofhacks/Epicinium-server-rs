@@ -18,28 +18,8 @@ use futures::{Future, Stream};
 
 pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 {
-	let server = match settings.server()
-	{
-		Some(x) => x,
-		None =>
-		{
-			return Err(Box::new(io::Error::new(
-				io::ErrorKind::InvalidInput,
-				"No ip mask (setting 'server') defined.",
-			)));
-		}
-	};
-	let port = match settings.port()
-	{
-		Some(x) => x,
-		None =>
-		{
-			return Err(Box::new(io::Error::new(
-				io::ErrorKind::InvalidInput,
-				"No port (setting 'port') defined.",
-			)));
-		}
-	};
+	let server = settings.get_server()?;
+	let port = settings.get_port()?;
 	let address: SocketAddr = format!("{}:{}", server, port).parse()?;
 	let listener = TcpListener::bind(&address)?;
 

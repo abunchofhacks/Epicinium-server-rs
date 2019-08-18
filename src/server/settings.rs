@@ -2,8 +2,12 @@
 
 use common::header::*;
 
+use std::error;
+use std::fmt;
 use std::fs;
 use std::io;
+
+use backtrace::Backtrace;
 
 pub struct Settings
 {
@@ -108,6 +112,39 @@ impl Settings
 			.as_ref()
 			.or(self.contents.discordurl.as_ref())
 			.or(self.defaults.discordurl.as_ref())
+	}
+
+	pub fn get_logname(&self) -> Result<&String, Error>
+	{
+		self.logname().ok_or(Error::new())
+	}
+	pub fn get_server(&self) -> Result<&String, Error>
+	{
+		self.server().ok_or(Error::new())
+	}
+	pub fn get_port(&self) -> Result<i32, Error>
+	{
+		self.port().ok_or(Error::new())
+	}
+	pub fn get_login_server(&self) -> Result<&String, Error>
+	{
+		self.login_server().ok_or(Error::new())
+	}
+	pub fn get_allow_discord_login(&self) -> Result<bool, Error>
+	{
+		self.allow_discord_login().ok_or(Error::new())
+	}
+	pub fn get_slackname(&self) -> Result<&String, Error>
+	{
+		self.slackname().ok_or(Error::new())
+	}
+	pub fn get_slackurl(&self) -> Result<&String, Error>
+	{
+		self.slackurl().ok_or(Error::new())
+	}
+	pub fn get_discordurl(&self) -> Result<&String, Error>
+	{
+		self.discordurl().ok_or(Error::new())
 	}
 
 	pub fn set_logname(&mut self, value: String)
@@ -268,5 +305,39 @@ impl Settings
 		fs::write(&self.filename, jsonstr)?;
 
 		Ok(())
+	}
+}
+
+#[derive(Clone, Debug)]
+pub struct Error
+{
+	backtrace: Backtrace,
+}
+
+impl Error
+{
+	fn new() -> Self
+	{
+		Error {
+			backtrace: Backtrace::new(),
+		}
+	}
+}
+
+impl fmt::Display for Error
+{
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
+	{
+		let symbol = self.backtrace.frames()[1].symbols()[0].name().unwrap();
+
+		write!(f, "setting undefined in {:#?}", symbol)
+	}
+}
+
+impl error::Error for Error
+{
+	fn source(&self) -> Option<&(dyn error::Error + 'static)>
+	{
+		None
 	}
 }

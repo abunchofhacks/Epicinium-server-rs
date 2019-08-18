@@ -299,6 +299,7 @@ dependencies = [
 name = "epicinium"
 version = "0.1.0"
 dependencies = [
+ "backtrace 0.3.34 (registry+https://github.com/rust-lang/crates.io-index)",
  "enum-map 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "enum-map-derive 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "enumset 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
