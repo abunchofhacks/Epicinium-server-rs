@@ -236,72 +236,73 @@ fn start_recieve_task(
 
 fn start_send_task(
 	sendbuffer: mpsc::Receiver<Message>,
-	writer: tokio::io::WriteHalf<TcpStream>,
+	socket: tokio::io::WriteHalf<TcpStream>,
 ) -> impl Future<Item = (), Error = io::Error>
 {
 	sendbuffer
 		.map_err(|e| io::Error::new(ErrorKind::ConnectionReset, e))
-		.fold(writer, |socket, message| {
-			if let Message::Pulse = message
-			{
-				println!("Sending pulse...");
-
-				let zeroes = [0u8; 4];
-				let buffer = zeroes.to_vec();
-
-				let future = tokio_io::io::write_all(socket, buffer).map(
-					|(socket, _)| {
-						println!("Sent pulse.");
-						socket
-					},
-				);
-				return Either::A(future);
-			}
-
-			let jsonstr = match serde_json::to_string(&message)
-			{
-				Ok(data) => data,
-				Err(e) =>
-				{
-					panic!("Invalid message: {:?}", e);
-				}
-			};
-
-			if jsonstr.len() >= MESSAGE_SIZE_LIMIT
-			{
-				panic!(
-					"Cannot send message of length {}, \
-					 which is larger than MESSAGE_SIZE_LIMIT.",
-					jsonstr.len()
-				);
-			}
-
-			let length = jsonstr.len() as u32;
-
-			if length as usize >= MESSAGE_SIZE_WARNING_LIMIT
-			{
-				println!("Sending very large message of length {}", length);
-			}
-
-			println!("Sending message of length {}...", length);
-
-			let mut buffer = length.to_le_bytes().to_vec();
-			buffer.append(&mut jsonstr.into_bytes());
-
-			let future = tokio_io::io::write_all(socket, buffer).map(
-				move |(socket, _)| {
-					println!("Sent message of length {}.", length);
-					socket
-				},
-			);
-			return Either::B(future);
-		})
-		.map(|_socket| ())
+		.fold(socket, send_message)
 		.map_err(|error| {
 			println!("Error in send_task: {:?}", error);
 			error
 		})
-		.map(|()| println!("Stopped sending."))
+		.map(|_socket| println!("Stopped sending."))
+}
+
+fn send_message(
+	socket: tokio::io::WriteHalf<TcpStream>,
+	message: Message,
+) -> impl Future<Item = tokio::io::WriteHalf<TcpStream>, Error = io::Error>
+{
+	let buffer = prepare_message(message);
+
+	tokio_io::io::write_all(socket, buffer).map(move |(socket, buffer)| {
+		println!("Sent {} bytes.", buffer.len());
+		socket
+	})
+}
+
+fn prepare_message(message: Message) -> Vec<u8>
+{
+	if let Message::Pulse = message
+	{
+		println!("Sending pulse...");
+
+		let zeroes = [0u8; 4];
+		return zeroes.to_vec();
+	}
+
+	let jsonstr = match serde_json::to_string(&message)
+	{
+		Ok(data) => data,
+		Err(e) =>
+		{
+			panic!("Invalid message: {:?}", e);
+		}
+	};
+
+	if jsonstr.len() >= MESSAGE_SIZE_LIMIT
+	{
+		panic!(
+			"Cannot send message of length {}, \
+			 which is larger than MESSAGE_SIZE_LIMIT.",
+			jsonstr.len()
+		);
+	}
+
+	let length = jsonstr.len() as u32;
+
+	if length as usize >= MESSAGE_SIZE_WARNING_LIMIT
+	{
+		println!("Sending very large message of length {}", length);
+	}
+
+	println!("Sending message of length {}...", length);
+
+	let mut buffer = length.to_le_bytes().to_vec();
+	buffer.append(&mut jsonstr.into_bytes());
+
+	buffer
 }
 
 fn start_ping_task(
