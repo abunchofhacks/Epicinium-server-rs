@@ -151,6 +151,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 
 		Some(future_length)
 	})
+	.map_err(|error| ReceiveTaskError::Recv { error })
 	.for_each(move |message: Message| {
 		handle_message(
 			message,
@@ -161,7 +162,20 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 			&mut supports_empty_in,
 			&mut quitbuffer_in,
 		)
-		.map_err(|e| io::Error::new(ErrorKind::ConnectionReset, e))
+	})
+	.or_else(|re| match re
+	{
+		ReceiveTaskError::Quit => Ok(()),
+		ReceiveTaskError::Send { error } =>
+		{
+			println!("Send error in receive_task: {:?}", error);
+			Err(io::Error::new(ErrorKind::ConnectionReset, error))
+		}
+		ReceiveTaskError::Recv { error } =>
+		{
+			println!("Recv error in receive_task: {:?}", error);
+			Err(error)
+		}
 	});
 
 	let send_task = sendbuffer_out
@@ -221,7 +235,11 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 			);
 			return Either::B(future);
 		})
-		.map(|_socket| ());
+		.map(|_socket| ())
+		.map_err(|error| {
+			println!("Error in send_task: {:?}", error);
+			error
+		});
 
 	// TODO variable ping_tolerance
 	let ping_tolerance = Duration::from_secs(120);
@@ -287,19 +305,22 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 		{
 			PingTaskError::Timer { error } =>
 			{
-				eprintln!("Timer error in client pulse_task: {:?}", error);
+				eprintln!("Timer error in client ping_task: {:?}", error);
 				Ok(())
 			}
 			PingTaskError::Send { error } =>
 			{
+				println!("Send error in ping_task: {:?}", error);
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
 			PingTaskError::Recv { error } =>
 			{
+				println!("Recv error in ping_task: {:?}", error);
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
 			PingTaskError::NoPong =>
 			{
+				println!("Client failed to respond to ping.");
 				Err(io::Error::new(ErrorKind::ConnectionReset, "no pong"))
 			}
 		})
@@ -340,10 +361,12 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 			}
 			PulseTaskError::Send { error } =>
 			{
+				println!("Send error in pulse_task: {:?}", error);
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
 			PulseTaskError::Recv { error } =>
 			{
+				println!("Recv error in pulse_task: {:?}", error);
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
 		});
@@ -353,6 +376,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 		.into_future()
 		.map(|(_, _)| ())
 		.map_err(|(error, _)| {
+			println!("Error in quit_task: {:?}", error);
 			io::Error::new(ErrorKind::ConnectionReset, error)
 		});
 
@@ -371,7 +395,27 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 	Ok(())
 }
 
-#[derive(Debug)]
+enum ReceiveTaskError
+{
+	Quit,
+	Send
+	{
+		error: mpsc::error::TrySendError<Message>,
+	},
+	Recv
+	{
+		error: io::Error,
+	},
+}
+
+impl From<mpsc::error::TrySendError<Message>> for ReceiveTaskError
+{
+	fn from(error: mpsc::error::TrySendError<Message>) -> Self
+	{
+		ReceiveTaskError::Send { error }
+	}
+}
+
 enum PingTaskError
 {
 	Timer
@@ -415,7 +459,7 @@ fn handle_message(
 	is_versioned: &sync::Arc<atomic::AtomicBool>,
 	supports_empty_pulses: &mut mpsc::Sender<bool>,
 	quitbuffer: &mut watch::Sender<()>,
-) -> Result<(), mpsc::error::TrySendError<Message>>
+) -> Result<(), ReceiveTaskError>
 {
 	// There might be a Future tracking when we last received a message,
 	// or there might not be.
@@ -451,6 +495,10 @@ fn handle_message(
 		{
 			// There might be a Future waiting for this, or there might not be.
 			let _ = quitbuffer.broadcast(());
+
+			// This is not an actual error but we treat it as one so that this
+			// future is closed immediately.
+			return Err(ReceiveTaskError::Quit);
 		}
 		_ =>
 		{
