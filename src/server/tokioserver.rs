@@ -1,3 +1,5 @@
+/* TokioServer */
+
 use server::settings::*;
 
 use common::version::*;
@@ -42,28 +44,88 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 			eprintln!("Incoming connection failed: {:?}", e);
 		});
 
-	// TODO
+	// TODO signal handling
 
 	tokio::run(server);
 
 	Ok(())
 }
 
+struct Client
+{
+	sendbuffer: mpsc::Sender<Message>,
+	pingbuffer: watch::Sender<()>,
+	last_receive_time: watch::Sender<()>,
+	pong_receive_time: watch::Sender<()>,
+	is_versioned: sync::Arc<atomic::AtomicBool>,
+	supports_empty_pulses: mpsc::Sender<bool>,
+	quitbuffer: watch::Sender<()>,
+
+	pub version: Version,
+	pub platform: Platform,
+	pub patchmode: Patchmode,
+}
+
 fn accept_client(socket: TcpStream) -> io::Result<()>
 {
-	let (mut sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
-	let mut sendbuffer_ping = sendbuffer_in.clone();
-	let mut sendbuffer_pulse = sendbuffer_in.clone();
-	let (mut pingbuffer_in, pingbuffer_out) = watch::channel(());
-	let (mut timebuffer_in, timebuffer_out) = watch::channel(());
-	let (mut pongbuffer_in, pongbuffer_out) = watch::channel(());
-	let (mut quitbuffer_in, quitbuffer_out) = watch::channel(());
-	let (mut supports_empty_in, supports_empty_out) = mpsc::channel::<bool>(1);
-	let versioned = sync::Arc::new(atomic::AtomicBool::new(false));
+	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
+	let sendbuffer_ping = sendbuffer_in.clone();
+	let sendbuffer_pulse = sendbuffer_in.clone();
+	let (pingbuffer_in, pingbuffer_out) = watch::channel(());
+	let (timebuffer_in, timebuffer_out) = watch::channel(());
+	let (pongbuffer_in, pongbuffer_out) = watch::channel(());
+	let (quitbuffer_in, quitbuffer_out) = watch::channel(());
+	let (supports_empty_in, supports_empty_out) = mpsc::channel::<bool>(1);
 	let (reader, writer) = socket.split();
 
-	let receive_versioned = versioned.clone();
-	let receive_task = stream::unfold(reader, move |socket| {
+	let client = Client {
+		sendbuffer: sendbuffer_in,
+		pingbuffer: pingbuffer_in,
+		last_receive_time: timebuffer_in,
+		pong_receive_time: pongbuffer_in,
+		is_versioned: sync::Arc::new(atomic::AtomicBool::new(false)),
+		supports_empty_pulses: supports_empty_in,
+		quitbuffer: quitbuffer_in,
+
+		version: Version::undefined(),
+		platform: Platform::Unknown,
+		patchmode: Patchmode::None,
+	};
+
+	let receive_task = start_recieve_task(client, reader);
+	let send_task = start_send_task(sendbuffer_out, writer);
+	let ping_task = start_ping_task(
+		sendbuffer_ping,
+		timebuffer_out,
+		pingbuffer_out,
+		pongbuffer_out,
+	);
+	let pulse_task = start_pulse_task(sendbuffer_pulse, supports_empty_out);
+	let quit_task = start_quit_task(quitbuffer_out);
+
+	let task = receive_task
+		.join3(ping_task, pulse_task)
+		.map(|((), (), ())| ())
+		.select(quit_task)
+		.map(|((), _)| ())
+		.map_err(|(e, _)| e)
+		.join(send_task)
+		.map(|((), ())| ())
+		.map_err(|e| eprintln!("Error in client: {:?}", e));
+
+	tokio::spawn(task);
+
+	Ok(())
+}
+
+fn start_recieve_task(
+	mut client: Client,
+	reader: tokio::io::ReadHalf<TcpStream>,
+) -> impl Future<Item = (), Error = io::Error>
+{
+	let receive_versioned = client.is_versioned.clone();
+
+	stream::unfold(reader, move |socket| {
 		let versioned: bool = receive_versioned.load(atomic::Ordering::Relaxed);
 		let lengthbuffer = [0u8; 4];
 		let future_length = tokio_io::io::read_exact(socket, lengthbuffer)
@@ -153,18 +215,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 		Some(future_length)
 	})
 	.map_err(|error| ReceiveTaskError::Recv { error })
-	.for_each(move |message: Message| {
-		handle_message(
-			message,
-			&mut sendbuffer_in,
-			&mut pingbuffer_in,
-			&mut timebuffer_in,
-			&mut pongbuffer_in,
-			&versioned,
-			&mut supports_empty_in,
-			&mut quitbuffer_in,
-		)
-	})
+	.for_each(move |message: Message| handle_message(&mut client, message))
 	.or_else(|re| match re
 	{
 		ReceiveTaskError::Quit => Ok(()),
@@ -180,9 +231,15 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 			Err(error)
 		}
 	})
-	.map(|()| println!("Stopped receiving."));
+	.map(|()| println!("Stopped receiving."))
+}
 
-	let send_task = sendbuffer_out
+fn start_send_task(
+	sendbuffer: mpsc::Receiver<Message>,
+	writer: tokio::io::WriteHalf<TcpStream>,
+) -> impl Future<Item = (), Error = io::Error>
+{
+	sendbuffer
 		.map_err(|e| io::Error::new(ErrorKind::ConnectionReset, e))
 		.fold(writer, |socket, message| {
 			if let Message::Pulse = message
@@ -244,11 +301,20 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 			println!("Error in send_task: {:?}", error);
 			error
 		})
-		.map(|()| println!("Stopped sending."));
+		.map(|()| println!("Stopped sending."))
+}
 
+fn start_ping_task(
+	mut sendbuffer: mpsc::Sender<Message>,
+	timebuffer: watch::Receiver<()>,
+	pingbuffer: watch::Receiver<()>,
+	pongbuffer: watch::Receiver<()>,
+) -> impl Future<Item = (), Error = io::Error>
+{
 	// TODO variable ping_tolerance
 	let ping_tolerance = Duration::from_secs(120);
-	let ping_task = timebuffer_out
+
+	timebuffer
 		.timeout(Duration::from_secs(5))
 		.filter(|_| false)
 		.or_else(|e| {
@@ -270,20 +336,20 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 			}
 		})
 		.select(
-			pingbuffer_out
+			pingbuffer
 				.skip(1)
 				.map_err(|error| PingTaskError::Recv { error }),
 		)
 		.and_then(move |()| {
 			let pingtime = Instant::now();
-			sendbuffer_ping
+			sendbuffer
 				.try_send(Message::Ping)
 				.map(move |()| pingtime)
 				.map_err(|error| PingTaskError::Send { error })
 		})
 		.and_then(move |pingtime| {
-			let pongbuffer = pongbuffer_out.clone();
 			pongbuffer
+				.clone()
 				.skip(1)
 				.into_future()
 				.map_err(|(error, _)| PingTaskError::Recv { error })
@@ -334,9 +400,15 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 				Err(io::Error::new(ErrorKind::ConnectionReset, "no pong"))
 			}
 		})
-		.for_each(|()| Ok(()));
+		.for_each(|()| Ok(()))
+}
 
-	let pulse_task = supports_empty_out
+fn start_pulse_task(
+	mut sendbuffer: mpsc::Sender<Message>,
+	supported: mpsc::Receiver<bool>,
+) -> impl Future<Item = (), Error = io::Error>
+{
+	supported
 		.into_future()
 		.map_err(|(error, _)| PulseTaskError::Recv { error })
 		.and_then(move |(supported, _)| match supported
@@ -352,7 +424,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 		})
 		.flatten()
 		.for_each(move |_| {
-			sendbuffer_pulse
+			sendbuffer
 				.try_send(Message::Pulse)
 				.map_err(|error| PulseTaskError::Send { error })
 		})
@@ -375,30 +447,21 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 				println!("Recv error in pulse_task: {:?}", error);
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
-		});
+		})
+}
 
-	let quit_task = quitbuffer_out
+fn start_quit_task(
+	quitbuffer: watch::Receiver<()>,
+) -> impl Future<Item = (), Error = io::Error>
+{
+	quitbuffer
 		.skip(1)
 		.into_future()
 		.map(|(_, _)| println!("Client gracefully disconnected."))
 		.map_err(|(error, _)| {
 			println!("Error in quit_task: {:?}", error);
 			io::Error::new(ErrorKind::ConnectionReset, error)
-		});
-
-	let task = receive_task
-		.join3(ping_task, pulse_task)
-		.map(|((), (), ())| ())
-		.select(quit_task)
-		.map(|((), _)| ())
-		.map_err(|(e, _)| e)
-		.join(send_task)
-		.map(|((), ())| ())
-		.map_err(|e| eprintln!("Error in client: {:?}", e));
-
-	tokio::spawn(task);
-
-	Ok(())
+		})
 }
 
 enum ReceiveTaskError
@@ -459,19 +522,13 @@ enum PulseTaskError
 }
 
 fn handle_message(
+	client: &mut Client,
 	message: Message,
-	sendbuffer: &mut mpsc::Sender<Message>,
-	pingbuffer: &mut watch::Sender<()>,
-	last_receive_time: &mut watch::Sender<()>,
-	pong_receive_time: &mut watch::Sender<()>,
-	is_versioned: &sync::Arc<atomic::AtomicBool>,
-	supports_empty_pulses: &mut mpsc::Sender<bool>,
-	quitbuffer: &mut watch::Sender<()>,
 ) -> Result<(), ReceiveTaskError>
 {
 	// There might be a Future tracking when we last received a message,
 	// or there might not be.
-	let _ = last_receive_time.broadcast(());
+	let _ = client.last_receive_time.broadcast(());
 
 	match message
 	{
@@ -482,28 +539,21 @@ fn handle_message(
 		Message::Ping =>
 		{
 			// Pings must always be responded with pongs.
-			sendbuffer.try_send(Message::Pong)?;
+			client.sendbuffer.try_send(Message::Pong)?;
 		}
 		Message::Pong =>
 		{
 			// There might be a Future waiting for this, or there might not be.
-			let _ = pong_receive_time.broadcast(());
+			let _ = client.pong_receive_time.broadcast(());
 		}
 		Message::Version { version, metadata } =>
 		{
-			greet_client(
-				sendbuffer,
-				pingbuffer,
-				is_versioned,
-				supports_empty_pulses,
-				version,
-				metadata,
-			)?;
+			greet_client(client, version, metadata)?;
 		}
 		Message::Quit =>
 		{
 			// There might be a Future waiting for this, or there might not be.
-			let _ = quitbuffer.broadcast(());
+			let _ = client.quitbuffer.broadcast(());
 
 			return Err(ReceiveTaskError::Quit);
 		}
@@ -518,44 +568,39 @@ fn handle_message(
 }
 
 fn greet_client(
-	sendbuffer: &mut mpsc::Sender<Message>,
-	pingbuffer: &mut watch::Sender<()>,
-	is_versioned: &sync::Arc<atomic::AtomicBool>,
-	supports_empty_pulses: &mut mpsc::Sender<bool>,
+	client: &mut Client,
 	version: Version,
 	metadata: Option<PlatformMetadata>,
 ) -> Result<(), ReceiveTaskError>
 {
-	is_versioned.store(true, atomic::Ordering::Relaxed);
+	client.version = version;
+	client.is_versioned.store(true, atomic::Ordering::Relaxed);
 	println!("Client has version {}", version.to_string());
 
-	let (platform, patchmode) = match metadata
+	if let Some(PlatformMetadata {
+		platform,
+		patchmode,
+	}) = metadata
 	{
-		Some(PlatformMetadata {
-			platform,
-			patchmode,
-		}) =>
-		{
-			println!("Client has platform {:?}", platform);
-			println!("Client has patchmode {:?}", patchmode);
-			(platform, patchmode)
-		}
-		None => (Platform::Unknown, Patchmode::None),
-	};
+		client.platform = platform;
+		println!("Client has platform {:?}", platform);
+		client.patchmode = patchmode;
+		println!("Client has patchmode {:?}", patchmode);
+	}
 
 	let myversion = Version::current();
 	let response = Message::Version {
 		version: myversion,
 		metadata: None,
 	};
-	sendbuffer.try_send(response)?;
+	client.sendbuffer.try_send(response)?;
 
 	if version.major != myversion.major || version == Version::undefined()
 	{
 		return Err(ReceiveTaskError::Goodbye);
 	}
-	else if (patchmode == Patchmode::Itchio
-		|| patchmode == Patchmode::Gamejolt)
+	else if (client.patchmode == Patchmode::Itchio
+		|| client.patchmode == Patchmode::Gamejolt)
 		&& version < Version::exact(0, 29, 0, 0)
 	{
 		// Version 0.29.0 was the first closed beta
@@ -576,26 +621,26 @@ fn greet_client(
 			sender: Some("server".to_string()),
 			target: ChatTarget::General,
 		};
-		sendbuffer.try_send(message)?;
+		client.sendbuffer.try_send(message)?;
 
 		return Err(ReceiveTaskError::Goodbye);
 	}
 	// TODO is_closing
 	else if false
 	{
-		sendbuffer.try_send(Message::Closing)?;
+		client.sendbuffer.try_send(Message::Closing)?;
 		return Err(ReceiveTaskError::Goodbye);
 	}
 
 	let epsupport = version >= Version::exact(0, 31, 1, 0);
 	{
 		// There might be a Future waiting for this, or there might not be.
-		let _ = supports_empty_pulses.try_send(epsupport);
+		let _ = client.supports_empty_pulses.try_send(epsupport);
 	}
 
 	if version >= Version::exact(0, 31, 1, 0)
 	{
-		match platform
+		match client.platform
 		{
 			Platform::Unknown | Platform::Windows32 | Platform::Windows64 =>
 			{}
@@ -621,9 +666,11 @@ fn greet_client(
 
 	// Send a ping message, just to get an estimated ping.
 	// There might be a Future waiting for this, or there might not be.
-	let _ = pingbuffer.broadcast(());
+	let _ = client.pingbuffer.broadcast(());
 
 	// TODO async load_notice
+
+	// TODO mention patches
 
 	Ok(())
 }
