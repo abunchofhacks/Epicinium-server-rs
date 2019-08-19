@@ -250,9 +250,9 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 				.map_err(|error| PingTaskError::Send { error })
 		})
 		.and_then(move |pingtime| {
-			// TODO this is ugly
 			let pongbuffer = pongbuffer_out.clone();
 			pongbuffer
+				.skip(1)
 				.into_future()
 				.map_err(|(error, _)| PingTaskError::Recv { error })
 				.and_then(move |(x, _)| x.ok_or(PingTaskError::NoPong))
