@@ -185,24 +185,7 @@ fn start_recieve_task(
 							buffer.len()
 						);
 
-						let jsonstr = match String::from_utf8(buffer)
-						{
-							Ok(x) => x,
-							Err(e) =>
-							{
-								return Err(io::Error::new(
-									ErrorKind::InvalidData,
-									e,
-								));
-							}
-						};
-
-						if jsonstr.len() < 200
-						{
-							println!("Received message: {}", jsonstr);
-						}
-
-						let message: Message = serde_json::from_str(&jsonstr)?;
+						let message = parse_message(buffer)?;
 
 						// Unfold expects the value first and the state second.
 						Ok((message, socket))
@@ -232,6 +215,27 @@ fn start_recieve_task(
 		}
 	})
 	.map(|()| println!("Stopped receiving."))
+}
+
+fn parse_message(buffer: Vec<u8>) -> io::Result<Message>
+{
+	let jsonstr = match String::from_utf8(buffer)
+	{
+		Ok(x) => x,
+		Err(e) =>
+		{
+			return Err(io::Error::new(ErrorKind::InvalidData, e));
+		}
+	};
+
+	if jsonstr.len() < 200
+	{
+		println!("Received message: {}", jsonstr);
+	}
+
+	let message: Message = serde_json::from_str(&jsonstr)?;
+
+	Ok(message)
 }
 
 fn start_send_task(
