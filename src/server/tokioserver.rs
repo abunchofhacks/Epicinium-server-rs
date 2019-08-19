@@ -56,6 +56,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 	let mut pulsebuffer = sendbuffer_in.clone();
 	let (mut timebuffer_in, timebuffer_out) = watch::channel(());
 	let (mut pongbuffer_in, pongbuffer_out) = watch::channel(());
+	let (mut quitbuffer_in, quitbuffer_out) = watch::channel(());
 	let (mut supports_empty_in, supports_empty_out) = mpsc::channel::<bool>(1);
 	let versioned = sync::Arc::new(atomic::AtomicBool::new(false));
 	let (reader, writer) = socket.split();
@@ -158,6 +159,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 			&mut pongbuffer_in,
 			&versioned,
 			&mut supports_empty_in,
+			&mut quitbuffer_in,
 		)
 		.map_err(|e| io::Error::new(ErrorKind::ConnectionReset, e))
 	});
@@ -346,15 +348,22 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 			}
 		});
 
+	let quit_task = quitbuffer_out
+		.skip(1)
+		.into_future()
+		.map(|(_, _)| ())
+		.map_err(|(error, _)| {
+			io::Error::new(ErrorKind::ConnectionReset, error)
+		});
+
 	let task = receive_task
+		.join3(ping_task, pulse_task)
+		.map(|((), (), ())| ())
+		.select(quit_task)
+		.map(|((), _)| ())
+		.map_err(|(e, _)| e)
 		.join(send_task)
-		.map(|_| ())
-		.select(ping_task)
-		.map(|_| ())
-		.map_err(|(e, _)| e)
-		.select(pulse_task)
-		.map(|_| ())
-		.map_err(|(e, _)| e)
+		.map(|((), ())| ())
 		.map_err(|e| eprintln!("Error in client: {:?}", e));
 
 	tokio::spawn(task);
@@ -405,6 +414,7 @@ fn handle_message(
 	pong_receive_time: &mut watch::Sender<()>,
 	is_versioned: &sync::Arc<atomic::AtomicBool>,
 	supports_empty_pulses: &mut mpsc::Sender<bool>,
+	quitbuffer: &mut watch::Sender<()>,
 ) -> Result<(), mpsc::error::TrySendError<Message>>
 {
 	// There might be a Future tracking when we last received a message,
@@ -424,8 +434,7 @@ fn handle_message(
 		}
 		Message::Pong =>
 		{
-			// There might be a Future waiting for this pong message,
-			// or there might not be.
+			// There might be a Future waiting for this, or there might not be.
 			let _ = pong_receive_time.broadcast(());
 		}
 		Message::Version { version, metadata } =>
@@ -437,6 +446,11 @@ fn handle_message(
 				version,
 				metadata,
 			)?;
+		}
+		Message::Quit =>
+		{
+			// There might be a Future waiting for this, or there might not be.
+			let _ = quitbuffer.broadcast(());
 		}
 		_ =>
 		{
