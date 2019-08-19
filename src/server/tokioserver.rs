@@ -306,21 +306,18 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 	let pulse_task = supports_empty_out
 		.into_future()
 		.map_err(|(error, _)| PulseTaskError::Recv { error })
-		.and_then(move |(supported, _)| {
-			if supported == Some(true)
-			{
-				Ok(Instant::now())
-			}
-			else
-			{
-				Err(PulseTaskError::Unsupported)
-			}
+		.and_then(move |(supported, _)| match supported
+		{
+			Some(true) => Ok(Instant::now()),
+			Some(false) => Err(PulseTaskError::Unsupported),
+			None => Err(PulseTaskError::Dropped),
 		})
 		.into_stream()
-		.chain(
-			Interval::new_interval(Duration::from_secs(4))
-				.map_err(|error| PulseTaskError::Timer { error }),
-		)
+		.map(|starttime| {
+			Interval::new(starttime, Duration::from_secs(4))
+				.map_err(|error| PulseTaskError::Timer { error })
+		})
+		.flatten()
 		.for_each(move |_| {
 			pulsebuffer
 				.try_send(Message::Pulse)
@@ -329,6 +326,11 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 		.or_else(|pe| match pe
 		{
 			PulseTaskError::Unsupported => Ok(()),
+			PulseTaskError::Dropped =>
+			{
+				eprintln!("Support sender dropped");
+				Ok(())
+			}
 			PulseTaskError::Timer { error } =>
 			{
 				eprintln!("Timer error in client pulse_task: {:?}", error);
@@ -381,6 +383,7 @@ enum PingTaskError
 enum PulseTaskError
 {
 	Unsupported,
+	Dropped,
 	Timer
 	{
 		error: tokio::timer::Error,
