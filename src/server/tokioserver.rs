@@ -56,7 +56,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 	let mut pulsebuffer = sendbuffer_in.clone();
 	let (mut timebuffer_in, timebuffer_out) = watch::channel(());
 	let (mut pongbuffer_in, pongbuffer_out) = watch::channel(());
-	let (mut supports_empty_in, supports_empty_out) = watch::channel(false);
+	let (mut supports_empty_in, supports_empty_out) = mpsc::channel::<bool>(1);
 	let versioned = sync::Arc::new(atomic::AtomicBool::new(false));
 	let (reader, writer) = socket.split();
 
@@ -265,20 +265,20 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 			println!("Client has {}ms ping.", pingtime.elapsed().as_millis());
 			Ok(())
 		})
-		.or_else(|e| {
+		.map_err(|e| {
 			if e.is_elapsed()
 			{
-				Err(PingTaskError::NoPong)
+				PingTaskError::NoPong
 			}
 			else if e.is_timer()
 			{
-				Err(PingTaskError::Timer {
+				PingTaskError::Timer {
 					error: e.into_timer().unwrap(),
-				})
+				}
 			}
 			else
 			{
-				Err(e.into_inner().unwrap())
+				e.into_inner().unwrap()
 			}
 		})
 		.or_else(|pe| match pe
@@ -303,23 +303,42 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 		})
 		.for_each(|()| Ok(()));
 
-	// TODO use a oneshot channel to confirm supports_empty_pulses
-	let _ = supports_empty_out;
-	let pulse_task = Interval::new_interval(Duration::from_secs(4))
-		.or_else(|error| Err(PulseTaskError::Timer { error }))
+	let pulse_task = supports_empty_out
+		.into_future()
+		.map_err(|(error, _)| PulseTaskError::Recv { error })
+		.and_then(move |(supported, _)| {
+			if supported == Some(true)
+			{
+				Ok(Instant::now())
+			}
+			else
+			{
+				Err(PulseTaskError::Unsupported)
+			}
+		})
+		.into_stream()
+		.chain(
+			Interval::new_interval(Duration::from_secs(4))
+				.map_err(|error| PulseTaskError::Timer { error }),
+		)
 		.for_each(move |_| {
 			pulsebuffer
 				.try_send(Message::Pulse)
-				.or_else(|error| Err(PulseTaskError::Send { error }))
+				.map_err(|error| PulseTaskError::Send { error })
 		})
 		.or_else(|pe| match pe
 		{
+			PulseTaskError::Unsupported => Ok(()),
 			PulseTaskError::Timer { error } =>
 			{
 				eprintln!("Timer error in client pulse_task: {:?}", error);
 				Ok(())
 			}
 			PulseTaskError::Send { error } =>
+			{
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+			PulseTaskError::Recv { error } =>
 			{
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
@@ -361,13 +380,18 @@ enum PingTaskError
 
 enum PulseTaskError
 {
+	Unsupported,
 	Timer
 	{
-		error: tokio::timer::Error
+		error: tokio::timer::Error,
 	},
 	Send
 	{
 		error: mpsc::error::TrySendError<Message>,
+	},
+	Recv
+	{
+		error: mpsc::error::RecvError,
 	},
 }
 
@@ -377,7 +401,7 @@ fn handle_message(
 	last_receive_time: &mut watch::Sender<()>,
 	pong_receive_time: &mut watch::Sender<()>,
 	is_versioned: &sync::Arc<atomic::AtomicBool>,
-	supports_empty_pulses: &mut watch::Sender<bool>,
+	supports_empty_pulses: &mut mpsc::Sender<bool>,
 ) -> Result<(), mpsc::error::TrySendError<Message>>
 {
 	// There might be a Future tracking when we last received a message,
@@ -424,7 +448,7 @@ fn handle_message(
 fn greet_client(
 	sendbuffer: &mut mpsc::Sender<Message>,
 	is_versioned: &sync::Arc<atomic::AtomicBool>,
-	supports_empty_pulses: &mut watch::Sender<bool>,
+	supports_empty_pulses: &mut mpsc::Sender<bool>,
 	version: Version,
 	metadata: Option<PlatformMetadata>,
 ) -> Result<(), mpsc::error::TrySendError<Message>>
@@ -448,10 +472,10 @@ fn greet_client(
 	};
 	sendbuffer.try_send(response)?;
 
-	if version >= Version::exact(0, 31, 1, 0)
+	let epsupport = version >= Version::exact(0, 31, 1, 0);
 	{
 		// There might be a Future waiting for this, or there might not be.
-		let _ = supports_empty_pulses.broadcast(true);
+		let _ = supports_empty_pulses.try_send(epsupport);
 	}
 
 	// TODO
