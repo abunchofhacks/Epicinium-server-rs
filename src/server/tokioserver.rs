@@ -56,6 +56,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 	let mut pulsebuffer = sendbuffer_in.clone();
 	let (mut timebuffer_in, timebuffer_out) = watch::channel(());
 	let (mut pongbuffer_in, pongbuffer_out) = watch::channel(());
+	let (mut supports_empty_in, supports_empty_out) = watch::channel(false);
 	let versioned = sync::Arc::new(atomic::AtomicBool::new(false));
 	let (reader, writer) = socket.split();
 
@@ -156,6 +157,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 			&mut timebuffer_in,
 			&mut pongbuffer_in,
 			&versioned,
+			&mut supports_empty_in,
 		)
 		.map_err(|e| io::Error::new(ErrorKind::ConnectionReset, e))
 	});
@@ -302,6 +304,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 		.for_each(|()| Ok(()));
 
 	// TODO use a oneshot channel to confirm supports_empty_pulses
+	let _ = supports_empty_out;
 	let pulse_task = Interval::new_interval(Duration::from_secs(4))
 		.or_else(|error| Err(PulseTaskError::Timer { error }))
 		.for_each(move |_| {
@@ -374,6 +377,7 @@ fn handle_message(
 	last_receive_time: &mut watch::Sender<()>,
 	pong_receive_time: &mut watch::Sender<()>,
 	is_versioned: &sync::Arc<atomic::AtomicBool>,
+	supports_empty_pulses: &mut watch::Sender<bool>,
 ) -> Result<(), mpsc::error::TrySendError<Message>>
 {
 	// There might be a Future tracking when we last received a message,
@@ -397,10 +401,15 @@ fn handle_message(
 			// or there might not be.
 			let _ = pong_receive_time.broadcast(());
 		}
-		Message::Version { .. } =>
+		Message::Version { version, metadata } =>
 		{
-			// TODO handle
-			is_versioned.store(true, atomic::Ordering::Relaxed);
+			greet_client(
+				sendbuffer,
+				is_versioned,
+				supports_empty_pulses,
+				version,
+				metadata,
+			)?;
 		}
 		_ =>
 		{
@@ -408,6 +417,44 @@ fn handle_message(
 			println!("Unhandled message: {:?}", message);
 		}
 	}
+
+	Ok(())
+}
+
+fn greet_client(
+	sendbuffer: &mut mpsc::Sender<Message>,
+	is_versioned: &sync::Arc<atomic::AtomicBool>,
+	supports_empty_pulses: &mut watch::Sender<bool>,
+	version: Version,
+	metadata: Option<PlatformMetadata>,
+) -> Result<(), mpsc::error::TrySendError<Message>>
+{
+	is_versioned.store(true, atomic::Ordering::Relaxed);
+	println!("Client has version {}", version.to_string());
+
+	if let Some(PlatformMetadata {
+		platform,
+		patchmode,
+	}) = metadata
+	{
+		println!("Client has platform {:?}", platform);
+		println!("Client has patchmode {:?}", patchmode);
+	}
+
+	let myversion = Version::current();
+	let response = Message::Version {
+		version: myversion,
+		metadata: None,
+	};
+	sendbuffer.try_send(response)?;
+
+	if version >= Version::exact(0, 31, 1, 0)
+	{
+		// There might be a Future waiting for this, or there might not be.
+		let _ = supports_empty_pulses.broadcast(true);
+	}
+
+	// TODO
 
 	Ok(())
 }
