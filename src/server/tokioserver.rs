@@ -52,8 +52,9 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 fn accept_client(socket: TcpStream) -> io::Result<()>
 {
 	let (mut sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
-	let mut pingbuffer = sendbuffer_in.clone();
-	let mut pulsebuffer = sendbuffer_in.clone();
+	let mut sendbuffer_ping = sendbuffer_in.clone();
+	let mut sendbuffer_pulse = sendbuffer_in.clone();
+	let (mut pingbuffer_in, pingbuffer_out) = watch::channel(());
 	let (mut timebuffer_in, timebuffer_out) = watch::channel(());
 	let (mut pongbuffer_in, pongbuffer_out) = watch::channel(());
 	let (mut quitbuffer_in, quitbuffer_out) = watch::channel(());
@@ -156,6 +157,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 		handle_message(
 			message,
 			&mut sendbuffer_in,
+			&mut pingbuffer_in,
 			&mut timebuffer_in,
 			&mut pongbuffer_in,
 			&versioned,
@@ -166,6 +168,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 	.or_else(|re| match re
 	{
 		ReceiveTaskError::Quit => Ok(()),
+		ReceiveTaskError::Goodbye => Ok(()),
 		ReceiveTaskError::Send { error } =>
 		{
 			println!("Send error in receive_task: {:?}", error);
@@ -176,7 +179,8 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 			println!("Recv error in receive_task: {:?}", error);
 			Err(error)
 		}
-	});
+	})
+	.map(|()| println!("Stopped receiving."));
 
 	let send_task = sendbuffer_out
 		.map_err(|e| io::Error::new(ErrorKind::ConnectionReset, e))
@@ -239,7 +243,8 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 		.map_err(|error| {
 			println!("Error in send_task: {:?}", error);
 			error
-		});
+		})
+		.map(|()| println!("Stopped sending."));
 
 	// TODO variable ping_tolerance
 	let ping_tolerance = Duration::from_secs(120);
@@ -264,9 +269,14 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 				})
 			}
 		})
+		.select(
+			pingbuffer_out
+				.skip(1)
+				.map_err(|error| PingTaskError::Recv { error }),
+		)
 		.and_then(move |()| {
 			let pingtime = Instant::now();
-			pingbuffer
+			sendbuffer_ping
 				.try_send(Message::Ping)
 				.map(move |()| pingtime)
 				.map_err(|error| PingTaskError::Send { error })
@@ -342,18 +352,14 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 		})
 		.flatten()
 		.for_each(move |_| {
-			pulsebuffer
+			sendbuffer_pulse
 				.try_send(Message::Pulse)
 				.map_err(|error| PulseTaskError::Send { error })
 		})
 		.or_else(|pe| match pe
 		{
 			PulseTaskError::Unsupported => Ok(()),
-			PulseTaskError::Dropped =>
-			{
-				eprintln!("Support sender dropped");
-				Ok(())
-			}
+			PulseTaskError::Dropped => Ok(()),
 			PulseTaskError::Timer { error } =>
 			{
 				eprintln!("Timer error in client pulse_task: {:?}", error);
@@ -374,7 +380,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 	let quit_task = quitbuffer_out
 		.skip(1)
 		.into_future()
-		.map(|(_, _)| ())
+		.map(|(_, _)| println!("Client gracefully disconnected."))
 		.map_err(|(error, _)| {
 			println!("Error in quit_task: {:?}", error);
 			io::Error::new(ErrorKind::ConnectionReset, error)
@@ -398,6 +404,7 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 enum ReceiveTaskError
 {
 	Quit,
+	Goodbye,
 	Send
 	{
 		error: mpsc::error::TrySendError<Message>,
@@ -454,6 +461,7 @@ enum PulseTaskError
 fn handle_message(
 	message: Message,
 	sendbuffer: &mut mpsc::Sender<Message>,
+	pingbuffer: &mut watch::Sender<()>,
 	last_receive_time: &mut watch::Sender<()>,
 	pong_receive_time: &mut watch::Sender<()>,
 	is_versioned: &sync::Arc<atomic::AtomicBool>,
@@ -485,6 +493,7 @@ fn handle_message(
 		{
 			greet_client(
 				sendbuffer,
+				pingbuffer,
 				is_versioned,
 				supports_empty_pulses,
 				version,
@@ -496,8 +505,6 @@ fn handle_message(
 			// There might be a Future waiting for this, or there might not be.
 			let _ = quitbuffer.broadcast(());
 
-			// This is not an actual error but we treat it as one so that this
-			// future is closed immediately.
 			return Err(ReceiveTaskError::Quit);
 		}
 		_ =>
@@ -512,23 +519,29 @@ fn handle_message(
 
 fn greet_client(
 	sendbuffer: &mut mpsc::Sender<Message>,
+	pingbuffer: &mut watch::Sender<()>,
 	is_versioned: &sync::Arc<atomic::AtomicBool>,
 	supports_empty_pulses: &mut mpsc::Sender<bool>,
 	version: Version,
 	metadata: Option<PlatformMetadata>,
-) -> Result<(), mpsc::error::TrySendError<Message>>
+) -> Result<(), ReceiveTaskError>
 {
 	is_versioned.store(true, atomic::Ordering::Relaxed);
 	println!("Client has version {}", version.to_string());
 
-	if let Some(PlatformMetadata {
-		platform,
-		patchmode,
-	}) = metadata
+	let (platform, patchmode) = match metadata
 	{
-		println!("Client has platform {:?}", platform);
-		println!("Client has patchmode {:?}", patchmode);
-	}
+		Some(PlatformMetadata {
+			platform,
+			patchmode,
+		}) =>
+		{
+			println!("Client has platform {:?}", platform);
+			println!("Client has patchmode {:?}", patchmode);
+			(platform, patchmode)
+		}
+		None => (Platform::Unknown, Patchmode::None),
+	};
 
 	let myversion = Version::current();
 	let response = Message::Version {
@@ -537,13 +550,80 @@ fn greet_client(
 	};
 	sendbuffer.try_send(response)?;
 
+	if version.major != myversion.major || version == Version::undefined()
+	{
+		return Err(ReceiveTaskError::Goodbye);
+	}
+	else if (patchmode == Patchmode::Itchio
+		|| patchmode == Patchmode::Gamejolt)
+		&& version < Version::exact(0, 29, 0, 0)
+	{
+		// Version 0.29.0 was the first closed beta
+		// version, which means clients with non-server
+		// patchmodes (itch or gamejolt) cannot patch.
+		// It is also the first version with keys.
+		// Older versions do not properly display the
+		// warning that joining failed because of
+		// ResponseStatus::KEY_REQUIRED. Instead, we
+		// overwrite the 'Version mismatch' message.
+		let message = Message::Chat {
+			content: "The Open Beta has ended. \
+			          Join our Discord community at \
+			          www.epicinium.nl/discord \
+			          to qualify for access to the \
+			          Closed Beta."
+				.to_string(),
+			sender: Some("server".to_string()),
+			target: ChatTarget::General,
+		};
+		sendbuffer.try_send(message)?;
+
+		return Err(ReceiveTaskError::Goodbye);
+	}
+	// TODO is_closing
+	else if false
+	{
+		sendbuffer.try_send(Message::Closing)?;
+		return Err(ReceiveTaskError::Goodbye);
+	}
+
 	let epsupport = version >= Version::exact(0, 31, 1, 0);
 	{
 		// There might be a Future waiting for this, or there might not be.
 		let _ = supports_empty_pulses.try_send(epsupport);
 	}
 
-	// TODO
+	if version >= Version::exact(0, 31, 1, 0)
+	{
+		match platform
+		{
+			Platform::Unknown | Platform::Windows32 | Platform::Windows64 =>
+			{}
+			Platform::Osx32
+			| Platform::Osx64
+			| Platform::Debian32
+			| Platform::Debian64 =>
+			{
+				// TODO supports_constructed_symlinks = true;
+			}
+		}
+	}
+
+	if version >= Version::exact(0, 31, 1, 0)
+	{
+		// TODO supports_gzipped_downloads = true;
+	}
+
+	if version >= Version::exact(0, 31, 1, 0)
+	{
+		// TODO supports_manifest_files = true;
+	}
+
+	// Send a ping message, just to get an estimated ping.
+	// There might be a Future waiting for this, or there might not be.
+	let _ = pingbuffer.broadcast(());
+
+	// TODO async load_notice
 
 	Ok(())
 }
