@@ -14,6 +14,7 @@ use std::sync;
 use std::sync::atomic;
 use std::time::{Duration, Instant};
 
+use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
 use tokio::sync::mpsc;
@@ -120,101 +121,87 @@ fn accept_client(socket: TcpStream) -> io::Result<()>
 
 fn start_recieve_task(
 	mut client: Client,
-	reader: tokio::io::ReadHalf<TcpStream>,
+	socket: ReadHalf<TcpStream>,
 ) -> impl Future<Item = (), Error = io::Error>
 {
 	let receive_versioned = client.is_versioned.clone();
 
-	stream::unfold(reader, move |socket| {
+	stream::unfold(socket, move |socket| {
 		let versioned: bool = receive_versioned.load(atomic::Ordering::Relaxed);
 		let lengthbuffer = [0u8; 4];
 		let future_length = tokio_io::io::read_exact(socket, lengthbuffer)
 			.and_then(move |(socket, lengthbuffer)| {
 				let length = u32::from_le_bytes(lengthbuffer);
-
-				if length == 0
-				{
-					println!("Received pulse.");
-
-					// Unfold expects the value first and the state second.
-					let result = Ok((Message::Pulse, socket));
-					let future_data = future::result(result);
-					return Ok(Either::A(future_data));
-				}
-				else if !versioned
-					&& length as usize >= MESSAGE_SIZE_UNVERSIONED_LIMIT
-				{
-					println!(
-						"Unversioned client tried to send \
-						 very large message of length {}, \
-						 which is more than MESSAGE_SIZE_UNVERSIONED_LIMIT",
-						length
-					);
-					return Err(io::Error::new(
-						ErrorKind::InvalidInput,
-						"Message too large".to_string(),
-					));
-				}
-				else if length as usize >= MESSAGE_SIZE_LIMIT
-				{
-					println!(
-						"Refusing to receive very large message of length {}, \
-						 which is more than MESSAGE_SIZE_LIMIT",
-						length
-					);
-					return Err(io::Error::new(
-						ErrorKind::InvalidInput,
-						"Message too large".to_string(),
-					));
-				}
-				else if length as usize >= MESSAGE_SIZE_WARNING_LIMIT
-				{
-					println!(
-						"Receiving very large message of length {}",
-						length
-					);
-				}
-
-				println!("Receiving message of length {}...", length);
-
-				let buffer = vec![0; length as usize];
-				let future_data = tokio_io::io::read_exact(socket, buffer)
-					.and_then(|(socket, buffer)| {
-						println!(
-							"Received message of length {}.",
-							buffer.len()
-						);
-
-						let message = parse_message(buffer)?;
-
-						// Unfold expects the value first and the state second.
-						Ok((message, socket))
-					});
-
-				Ok(Either::B(future_data))
-			})
-			.flatten();
+				receive_message(socket, length, versioned)
+			});
 
 		Some(future_length)
 	})
 	.map_err(|error| ReceiveTaskError::Recv { error })
 	.for_each(move |message: Message| handle_message(&mut client, message))
-	.or_else(|re| match re
-	{
-		ReceiveTaskError::Quit => Ok(()),
-		ReceiveTaskError::Goodbye => Ok(()),
-		ReceiveTaskError::Send { error } =>
-		{
-			println!("Send error in receive_task: {:?}", error);
-			Err(io::Error::new(ErrorKind::ConnectionReset, error))
-		}
-		ReceiveTaskError::Recv { error } =>
-		{
-			println!("Recv error in receive_task: {:?}", error);
-			Err(error)
-		}
-	})
+	.or_else(|error| -> io::Result<()> { error.into() })
 	.map(|()| println!("Stopped receiving."))
+}
+
+fn receive_message(
+	socket: ReadHalf<TcpStream>,
+	length: u32,
+	versioned: bool,
+) -> impl Future<Item = (Message, ReadHalf<TcpStream>), Error = io::Error>
+{
+	if length == 0
+	{
+		println!("Received pulse.");
+
+		// Unfold expects the value first and the state second.
+		let result = Ok((Message::Pulse, socket));
+		let future_data = future::result(result);
+		return Either::A(future_data);
+	}
+	else if !versioned && length as usize >= MESSAGE_SIZE_UNVERSIONED_LIMIT
+	{
+		println!(
+			"Unversioned client tried to send \
+			 very large message of length {}, \
+			 which is more than MESSAGE_SIZE_UNVERSIONED_LIMIT",
+			length
+		);
+		return Either::A(future::err(io::Error::new(
+			ErrorKind::InvalidInput,
+			"Message too large".to_string(),
+		)));
+	}
+	else if length as usize >= MESSAGE_SIZE_LIMIT
+	{
+		println!(
+			"Refusing to receive very large message of length {}, \
+			 which is more than MESSAGE_SIZE_LIMIT",
+			length
+		);
+		return Either::A(future::err(io::Error::new(
+			ErrorKind::InvalidInput,
+			"Message too large".to_string(),
+		)));
+	}
+	else if length as usize >= MESSAGE_SIZE_WARNING_LIMIT
+	{
+		println!("Receiving very large message of length {}", length);
+	}
+
+	println!("Receiving message of length {}...", length);
+
+	let buffer = vec![0; length as usize];
+	let future_data = tokio_io::io::read_exact(socket, buffer).and_then(
+		|(socket, buffer)| {
+			println!("Received message of length {}.", buffer.len());
+			let message = parse_message(buffer)?;
+
+			// Unfold expects the value first and the state second.
+			Ok((message, socket))
+		},
+	);
+
+	Either::B(future_data)
 }
 
 fn parse_message(buffer: Vec<u8>) -> io::Result<Message>
@@ -240,23 +227,23 @@ fn parse_message(buffer: Vec<u8>) -> io::Result<Message>
 
 fn start_send_task(
 	sendbuffer: mpsc::Receiver<Message>,
-	socket: tokio::io::WriteHalf<TcpStream>,
+	socket: WriteHalf<TcpStream>,
 ) -> impl Future<Item = (), Error = io::Error>
 {
 	sendbuffer
 		.map_err(|e| io::Error::new(ErrorKind::ConnectionReset, e))
 		.fold(socket, send_message)
 		.map_err(|error| {
-			println!("Error in send_task: {:?}", error);
+			eprintln!("Error in send_task: {:?}", error);
 			error
 		})
 		.map(|_socket| println!("Stopped sending."))
 }
 
 fn send_message(
-	socket: tokio::io::WriteHalf<TcpStream>,
+	socket: WriteHalf<TcpStream>,
 	message: Message,
-) -> impl Future<Item = tokio::io::WriteHalf<TcpStream>, Error = io::Error>
+) -> impl Future<Item = WriteHalf<TcpStream>, Error = io::Error>
 {
 	let buffer = prepare_message(message);
 
@@ -382,29 +369,7 @@ fn start_ping_task(
 				e.into_inner().unwrap()
 			}
 		})
-		.or_else(|pe| match pe
-		{
-			PingTaskError::Timer { error } =>
-			{
-				eprintln!("Timer error in client ping_task: {:?}", error);
-				Ok(())
-			}
-			PingTaskError::Send { error } =>
-			{
-				println!("Send error in ping_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-			PingTaskError::Recv { error } =>
-			{
-				println!("Recv error in ping_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-			PingTaskError::NoPong =>
-			{
-				println!("Client failed to respond to ping.");
-				Err(io::Error::new(ErrorKind::ConnectionReset, "no pong"))
-			}
-		})
+		.or_else(|error| -> io::Result<()> { error.into() })
 		.for_each(|()| Ok(()))
 }
 
@@ -433,26 +398,7 @@ fn start_pulse_task(
 				.try_send(Message::Pulse)
 				.map_err(|error| PulseTaskError::Send { error })
 		})
-		.or_else(|pe| match pe
-		{
-			PulseTaskError::Unsupported => Ok(()),
-			PulseTaskError::Dropped => Ok(()),
-			PulseTaskError::Timer { error } =>
-			{
-				eprintln!("Timer error in client pulse_task: {:?}", error);
-				Ok(())
-			}
-			PulseTaskError::Send { error } =>
-			{
-				println!("Send error in pulse_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-			PulseTaskError::Recv { error } =>
-			{
-				println!("Recv error in pulse_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-		})
+		.or_else(|error| -> io::Result<()> { error.into() })
 }
 
 fn start_quit_task(
@@ -464,7 +410,7 @@ fn start_quit_task(
 		.into_future()
 		.map(|(_, _)| println!("Client gracefully disconnected."))
 		.map_err(|(error, _)| {
-			println!("Error in quit_task: {:?}", error);
+			eprintln!("Error in quit_task: {:?}", error);
 			io::Error::new(ErrorKind::ConnectionReset, error)
 		})
 }
@@ -491,6 +437,28 @@ impl From<mpsc::error::TrySendError<Message>> for ReceiveTaskError
 	}
 }
 
+impl Into<io::Result<()>> for ReceiveTaskError
+{
+	fn into(self) -> io::Result<()>
+	{
+		match self
+		{
+			ReceiveTaskError::Quit => Ok(()),
+			ReceiveTaskError::Goodbye => Ok(()),
+			ReceiveTaskError::Send { error } =>
+			{
+				eprintln!("Send error in receive_task: {:?}", error);
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+			ReceiveTaskError::Recv { error } =>
+			{
+				eprintln!("Recv error in receive_task: {:?}", error);
+				Err(error)
+			}
+		}
+	}
+}
+
 enum PingTaskError
 {
 	Timer
@@ -506,6 +474,36 @@ enum PingTaskError
 		error: watch::error::RecvError,
 	},
 	NoPong,
+}
+
+impl Into<io::Result<()>> for PingTaskError
+{
+	fn into(self) -> io::Result<()>
+	{
+		match self
+		{
+			PingTaskError::Timer { error } =>
+			{
+				eprintln!("Timer error in client ping_task: {:?}", error);
+				Ok(())
+			}
+			PingTaskError::Send { error } =>
+			{
+				eprintln!("Send error in ping_task: {:?}", error);
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+			PingTaskError::Recv { error } =>
+			{
+				eprintln!("Recv error in ping_task: {:?}", error);
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+			PingTaskError::NoPong =>
+			{
+				println!("Client failed to respond to ping.");
+				Err(io::Error::new(ErrorKind::ConnectionReset, "no pong"))
+			}
+		}
+	}
 }
 
 enum PulseTaskError
@@ -524,6 +522,33 @@ enum PulseTaskError
 	{
 		error: mpsc::error::RecvError,
 	},
+}
+
+impl Into<io::Result<()>> for PulseTaskError
+{
+	fn into(self) -> io::Result<()>
+	{
+		match self
+		{
+			PulseTaskError::Unsupported => Ok(()),
+			PulseTaskError::Dropped => Ok(()),
+			PulseTaskError::Timer { error } =>
+			{
+				eprintln!("Timer error in client pulse_task: {:?}", error);
+				Ok(())
+			}
+			PulseTaskError::Send { error } =>
+			{
+				eprintln!("Send error in pulse_task: {:?}", error);
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+			PulseTaskError::Recv { error } =>
+			{
+				eprintln!("Recv error in pulse_task: {:?}", error);
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+		}
+	}
 }
 
 fn handle_message(
