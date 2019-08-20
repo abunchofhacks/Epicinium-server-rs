@@ -402,7 +402,7 @@ impl ServerClient
 		privatekey: &openssl::pkey::PKey<openssl::pkey::Private>,
 	)
 	{
-		if !is_requestable(path::Path::new(&filename))
+		if !is_requestable()
 		{
 			self.send(Message::RequestDenied {
 				content: filename,

@@ -7,69 +7,56 @@ use std::io;
 use tokio::prelude::*;
 use tokio::sync::mpsc;
 
-pub type NoticeService = mpsc::Sender<mpsc::Sender<Message>>;
-
-pub fn run_notice_service() -> io::Result<NoticeService>
-{
-	let (handle, requests) = mpsc::channel::<mpsc::Sender<Message>>(1000);
-	let notice_task = requests
-		.map_err(|e| {
-			eprintln!("Error in notice task: {:?}", e);
-		})
-		.for_each(send_notice);
-
-	tokio::spawn(notice_task);
-
-	Ok(handle)
-}
-
-fn send_notice(
+pub fn send_notice(
 	mut socket: mpsc::Sender<Message>,
-) -> impl Future<Item = (), Error = ()>
+) -> impl Future<Item = (), Error = io::Error>
 {
 	load_notice()
 		.and_then(move |notice| {
 			socket
 				.try_send(Message::Stamp { metadata: notice })
-				.or_else(|e| {
-					eprintln!("Failed to send stamp: {:?}", e);
-					Ok(())
-				})
+				.map_err(|error| NoticeError::Send { error })
 		})
-		.or_else(|e| {
-			match e
+		.or_else(|e| match e
+		{
+			NoticeError::Read { error } =>
 			{
-				LoadError::Read { error } =>
-				{
-					eprintln!("Failed to load stamp: {:?}", error)
-				}
-				LoadError::Utf8 { error } =>
-				{
-					eprintln!("Failed to interpret stamp as utf8: {:?}", error)
-				}
-				LoadError::Parse { error } =>
-				{
-					eprintln!("Failed to parse stamp: {:?}", error)
-				}
+				eprintln!("Failed to load stamp: {:?}", error);
+				Ok(())
 			}
-			Ok(())
+			NoticeError::Utf8 { error } =>
+			{
+				eprintln!("Failed to interpret stamp as utf8: {:?}", error);
+				Ok(())
+			}
+			NoticeError::Parse { error } =>
+			{
+				eprintln!("Failed to parse stamp: {:?}", error);
+				Ok(())
+			}
+			NoticeError::Send { error } =>
+			{
+				eprintln!("Failed to send stamp: {:?}", error);
+				Err(io::Error::new(io::ErrorKind::ConnectionReset, error))
+			}
 		})
 }
 
-fn load_notice() -> impl Future<Item = StampMetadata, Error = LoadError>
+fn load_notice() -> impl Future<Item = StampMetadata, Error = NoticeError>
 {
 	tokio::fs::read("server-notice.json")
-		.map_err(|error| LoadError::Read { error })
+		.map_err(|error| NoticeError::Read { error })
 		.and_then(|buffer| {
-			String::from_utf8(buffer).map_err(|error| LoadError::Utf8 { error })
+			String::from_utf8(buffer)
+				.map_err(|error| NoticeError::Utf8 { error })
 		})
 		.and_then(|raw| {
 			serde_json::from_str::<StampMetadata>(&raw)
-				.map_err(|error| LoadError::Parse { error })
+				.map_err(|error| NoticeError::Parse { error })
 		})
 }
 
-enum LoadError
+enum NoticeError
 {
 	Read
 	{
@@ -82,5 +69,9 @@ enum LoadError
 	Parse
 	{
 		error: serde_json::Error
+	},
+	Send
+	{
+		error: mpsc::error::TrySendError<Message>,
 	},
 }

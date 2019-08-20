@@ -3,10 +3,12 @@
 use common::version::*;
 use server::limits::*;
 use server::message::*;
-use server::notice::NoticeService;
+use server::notice::*;
+use server::patch::*;
 
 use std::io;
 use std::io::ErrorKind;
+use std::path;
 use std::sync;
 use std::sync::atomic;
 use std::time::{Duration, Instant};
@@ -29,30 +31,36 @@ struct Client
 	pingbuffer: watch::Sender<()>,
 	last_receive_time: watch::Sender<()>,
 	pong_receive_time: watch::Sender<()>,
+	slowbuffer: mpsc::Sender<SlowOp>,
 	is_versioned: sync::Arc<atomic::AtomicBool>,
 	supports_empty_pulses: mpsc::Sender<bool>,
 	quitbuffer: watch::Sender<()>,
-
-	notice_service: NoticeService,
 
 	pub version: Version,
 	pub platform: Platform,
 	pub patchmode: Patchmode,
 }
 
-pub fn accept_client(
-	socket: TcpStream,
-	notice_service: NoticeService,
-) -> io::Result<()>
+impl Client
+{
+	fn is_unversioned(&self) -> bool
+	{
+		self.version == Version::undefined()
+	}
+}
+
+pub fn accept_client(socket: TcpStream) -> io::Result<()>
 {
 	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
 	let sendbuffer_ping = sendbuffer_in.clone();
 	let sendbuffer_pulse = sendbuffer_in.clone();
+	let sendbuffer_slow = sendbuffer_in.clone();
 	let (pingbuffer_in, pingbuffer_out) = watch::channel(());
 	let (timebuffer_in, timebuffer_out) = watch::channel(());
 	let (pongbuffer_in, pongbuffer_out) = watch::channel(());
 	let (quitbuffer_in, quitbuffer_out) = watch::channel(());
 	let (supports_empty_in, supports_empty_out) = mpsc::channel::<bool>(1);
+	let (slowbuffer_in, slowbuffer_out) = mpsc::channel::<SlowOp>(10);
 	let (reader, writer) = socket.split();
 
 	let client = Client {
@@ -60,11 +68,10 @@ pub fn accept_client(
 		pingbuffer: pingbuffer_in,
 		last_receive_time: timebuffer_in,
 		pong_receive_time: pongbuffer_in,
+		slowbuffer: slowbuffer_in,
 		is_versioned: sync::Arc::new(atomic::AtomicBool::new(false)),
 		supports_empty_pulses: supports_empty_in,
 		quitbuffer: quitbuffer_in,
-
-		notice_service: notice_service,
 
 		version: Version::undefined(),
 		platform: Platform::Unknown,
@@ -80,6 +87,7 @@ pub fn accept_client(
 		pongbuffer_out,
 	);
 	let pulse_task = start_pulse_task(sendbuffer_pulse, supports_empty_out);
+	let slow_task = start_slow_task(sendbuffer_slow, slowbuffer_out);
 	let quit_task = start_quit_task(quitbuffer_out);
 
 	let task = receive_task
@@ -379,6 +387,26 @@ fn start_pulse_task(
 		.or_else(|error| -> io::Result<()> { error.into() })
 }
 
+fn start_slow_task(
+	sendbuffer: mpsc::Sender<Message>,
+	opbuffer: mpsc::Receiver<SlowOp>,
+) -> impl Future<Item = (), Error = io::Error>
+{
+	opbuffer
+		.map_err(|error| {
+			eprintln!("Recv error in slow_task: {:?}", error);
+			io::Error::new(ErrorKind::ConnectionReset, error)
+		})
+		.for_each(move |op| match op
+		{
+			SlowOp::Notice => Either::A(send_notice(sendbuffer.clone())),
+			SlowOp::Request { name } =>
+			{
+				Either::B(fulfil_request(sendbuffer.clone(), name))
+			}
+		})
+}
+
 fn start_quit_task(
 	quitbuffer: watch::Receiver<()>,
 ) -> impl Future<Item = (), Error = io::Error>
@@ -397,6 +425,7 @@ enum ReceiveTaskError
 {
 	Quit,
 	Goodbye,
+	Illegal,
 	Send
 	{
 		error: mpsc::error::TrySendError<Message>,
@@ -423,6 +452,10 @@ impl Into<io::Result<()>> for ReceiveTaskError
 		{
 			ReceiveTaskError::Quit => Ok(()),
 			ReceiveTaskError::Goodbye => Ok(()),
+			ReceiveTaskError::Illegal => Err(io::Error::new(
+				ErrorKind::ConnectionReset,
+				"Illegal message received",
+			)),
 			ReceiveTaskError::Send { error } =>
 			{
 				eprintln!("Send error in receive_task: {:?}", error);
@@ -565,6 +598,21 @@ fn handle_message(
 
 			return Err(ReceiveTaskError::Quit);
 		}
+		Message::Request { .. } | Message::JoinServer { .. }
+			if client.is_unversioned() =>
+		{
+			eprintln!("Illegal message without version: {:?}", message);
+			return Err(ReceiveTaskError::Illegal);
+		}
+		Message::Request { .. } if client.platform == Platform::Unknown =>
+		{
+			eprintln!("Illegal message without platform: {:?}", message);
+			return Err(ReceiveTaskError::Illegal);
+		}
+		Message::Request { content: name } =>
+		{
+			handle_request(client, name);
+		}
 		_ =>
 		{
 			// TODO handle
@@ -676,7 +724,7 @@ fn greet_client(
 	// There might be a Future waiting for this, or there might not be.
 	let _ = client.pingbuffer.broadcast(());
 
-	match client.notice_service.try_send(client.sendbuffer.clone())
+	match client.slowbuffer.try_send(SlowOp::Notice)
 	{
 		Ok(()) => (),
 		Err(e) => eprintln!("Failed to enqueue for notice: {:?}", e),
@@ -685,4 +733,23 @@ fn greet_client(
 	// TODO mention patches
 
 	Ok(())
+}
+
+fn handle_request(client: &mut Client, name: String)
+{
+	match client.slowbuffer.try_send(SlowOp::Request { name })
+	{
+		Ok(()) => (),
+		Err(e) => eprintln!("Failed to enqueue for request: {:?}", e),
+	}
+}
+
+#[derive(Debug)]
+enum SlowOp
+{
+	Notice,
+	Request
+	{
+		name: String,
+	},
 }
