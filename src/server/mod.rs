@@ -1,5 +1,6 @@
 /* Server */
 
+mod client;
 mod limits;
 mod message;
 mod patch;
