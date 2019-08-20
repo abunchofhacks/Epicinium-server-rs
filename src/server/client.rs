@@ -3,6 +3,7 @@
 use common::version::*;
 use server::limits::*;
 use server::message::*;
+use server::notice::NoticeService;
 
 use std::io;
 use std::io::ErrorKind;
@@ -32,12 +33,17 @@ struct Client
 	supports_empty_pulses: mpsc::Sender<bool>,
 	quitbuffer: watch::Sender<()>,
 
+	notice_service: NoticeService,
+
 	pub version: Version,
 	pub platform: Platform,
 	pub patchmode: Patchmode,
 }
 
-pub fn accept_client(socket: TcpStream) -> io::Result<()>
+pub fn accept_client(
+	socket: TcpStream,
+	notice_service: NoticeService,
+) -> io::Result<()>
 {
 	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
 	let sendbuffer_ping = sendbuffer_in.clone();
@@ -57,6 +63,8 @@ pub fn accept_client(socket: TcpStream) -> io::Result<()>
 		is_versioned: sync::Arc::new(atomic::AtomicBool::new(false)),
 		supports_empty_pulses: supports_empty_in,
 		quitbuffer: quitbuffer_in,
+
+		notice_service: notice_service,
 
 		version: Version::undefined(),
 		platform: Platform::Unknown,
@@ -668,7 +676,11 @@ fn greet_client(
 	// There might be a Future waiting for this, or there might not be.
 	let _ = client.pingbuffer.broadcast(());
 
-	// TODO async load_notice
+	match client.notice_service.try_send(client.sendbuffer.clone())
+	{
+		Ok(()) => (),
+		Err(e) => eprintln!("Failed to enqueue for notice: {:?}", e),
+	}
 
 	// TODO mention patches
 

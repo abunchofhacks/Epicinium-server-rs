@@ -3,6 +3,7 @@
 mod client;
 mod limits;
 mod message;
+mod notice;
 mod patch;
 
 pub mod settings;
