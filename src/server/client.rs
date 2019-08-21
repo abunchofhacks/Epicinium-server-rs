@@ -475,16 +475,16 @@ fn start_notice_task(
 				.try_send(Message::Stamp { metadata: notice })
 				.map_err(|error| {
 					eprintln!("Send error in notice_task: {:?}", error);
-					io::Error::new(io::ErrorKind::ConnectionReset, error)
+					io::Error::new(ErrorKind::ConnectionReset, error)
 				})
 		})
 }
 
 fn start_request_task(
 	mut sendbuffer: mpsc::Sender<Message>,
-	_downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
+	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
 	requestbuffer: mpsc::Receiver<String>,
-	_privatekey: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+	privatekey: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
 ) -> impl Future<Item = (), Error = io::Error>
 {
 	requestbuffer
@@ -503,16 +503,107 @@ fn start_request_task(
 				Err(error) =>
 				{
 					eprintln!("Send error in request_task: {:?}", error);
-					Err(io::Error::new(io::ErrorKind::ConnectionReset, error))
+					Err(io::Error::new(ErrorKind::ConnectionReset, error))
 				}
 			},
 		})
 		.filter_map(|x| x)
-		.map(|filename| {
-			println!("Buffering file '{}'...", filename.display());
-			filename
+		.and_then(|filename| {
+			tokio::fs::File::open(filename).map(|file| (file, filename))
 		})
-		.and_then(|filename| tokio::fs::File::open(filename))
+		.and_then(|(file, filename)| {
+			file.metadata()
+				.map(|(file, metadata)| (file, filename, metadata))
+		})
+		.and_then(move |(file, filename, metadata)| {
+			println!("Buffering file '{}'...", filename.display());
+
+			let filesize = metadata.len() as usize;
+			if filesize >= SEND_FILE_SIZE_LIMIT
+			{
+				panic!(
+					"Cannot send file of size {}, \
+					 which is larger than SEND_FILE_SIZE_LIMIT.",
+					filesize
+				);
+			}
+			else if filesize >= SEND_FILE_SIZE_WARNING_LIMIT
+			{
+				println!("Sending very large file of size {}...", filesize);
+			}
+
+			// TODO compression
+			let compressed = false;
+
+			// TODO implement is_file_executable?
+			let executable = false;
+
+			let signer = match openssl::sign::Signer::new(
+				openssl::hash::MessageDigest::sha512(),
+				&privatekey,
+			)
+			{
+				Ok(signer) => signer,
+				Err(error) =>
+				{
+					return Either::A(future::err(io::Error::new(
+						ErrorKind::ConnectionReset,
+						error,
+					)));
+				}
+			};
+
+			let chunks = stream::unfold((file, 0), |(file, offset)| {
+				if offset >= filesize
+				{
+					return None;
+				}
+
+				let chunksize = if offset + SEND_FILE_CHUNK_SIZE < filesize
+				{
+					SEND_FILE_CHUNK_SIZE
+				}
+				else
+				{
+					filesize - offset
+				};
+
+				let buffer = vec![0u8; chunksize];
+				let future = tokio_io::io::read_exact(file, buffer).map(
+					|(file, _buffer)| {
+						// TODO handle error
+						let _ = signer.update(&buffer);
+						let progressmask =
+							((0xFFFF * offset) / filesize) as u16;
+						let message = Message::Download {
+							content: format!("{}", filename.display()),
+							metadata: DownloadMetadata {
+								name: None,
+								offset: Some(offset),
+								signature: None,
+								compressed: compressed,
+								executable: (offset == 0 && executable),
+								symbolic: false,
+								progressmask: Some(progressmask),
+							},
+						};
+						let chunk = (message, buffer);
+						let nextstate = (file, offset + SEND_FILE_CHUNK_SIZE);
+						(chunk, nextstate)
+					},
+				);
+				Some(future)
+			});
+
+			Either::B(
+				downloadbuffer
+					.sink_map_err(|error| {
+						eprintln!("Error while buffering chunk: {:?}", error);
+						io::Error::new(ErrorKind::ConnectionReset, error)
+					})
+					.send_all(chunks),
+			)
+		})
 		.for_each(|_file| {
 			// TODO
 			future::ok(())
@@ -677,6 +768,46 @@ impl Into<io::Result<()>> for PulseTaskError
 			PulseTaskError::Recv { error } =>
 			{
 				eprintln!("Recv error in pulse_task: {:?}", error);
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+		}
+	}
+}
+
+enum RequestTaskError
+{
+	Chunk
+	{
+		error: io::Error
+	},
+	Send
+	{
+		error: mpsc::error::TrySendError<(Message, Vec<u8>)>,
+	},
+}
+
+impl From<mpsc::error::TrySendError<(Message, Vec<u8>)>> for RequestTaskError
+{
+	fn from(error: mpsc::error::TrySendError<(Message, Vec<u8>)>) -> Self
+	{
+		RequestTaskError::Send { error }
+	}
+}
+
+impl Into<io::Result<()>> for RequestTaskError
+{
+	fn into(self) -> io::Result<()>
+	{
+		match self
+		{
+			RequestTaskError::Chunk { error } =>
+			{
+				eprintln!("Error in request_task: {:?}", error);
+				Err(error)
+			}
+			RequestTaskError::Send { error } =>
+			{
+				eprintln!("Send error in request_task: {:?}", error);
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
 		}
