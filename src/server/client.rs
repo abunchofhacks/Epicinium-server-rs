@@ -26,6 +26,9 @@ use futures::future::Either;
 use futures::stream;
 use futures::{Future, Stream};
 
+use ring::digest;
+use ring::signature::RsaKeyPair;
+
 struct Client
 {
 	sendbuffer: mpsc::Sender<Message>,
@@ -53,7 +56,7 @@ impl Client
 
 pub fn accept_client(
 	socket: TcpStream,
-	privatekey: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+	privatekey: sync::Arc<RsaKeyPair>,
 ) -> io::Result<()>
 {
 	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
@@ -491,7 +494,7 @@ fn start_request_task(
 	mut sendbuffer: mpsc::Sender<Message>,
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
 	requestbuffer: mpsc::Receiver<String>,
-	privatekey: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+	privatekey: sync::Arc<RsaKeyPair>,
 ) -> impl Future<Item = (), Error = io::Error>
 {
 	requestbuffer
@@ -882,9 +885,9 @@ fn handle_request(
 }
 
 fn fulfil_request(
-	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
+	buffer: mpsc::Sender<(Message, Vec<u8>)>,
 	name: String,
-	_key: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+	key: sync::Arc<RsaKeyPair>,
 ) -> impl Future<Item = Message, Error = io::Error>
 {
 	let path = PathBuf::from(&name);
@@ -900,8 +903,7 @@ fn fulfil_request(
 		return Either::A(future::ok(message));
 	}
 
-	let future = send_file(downloadbuffer, name, path).map(|sentfile| {
-		// TODO
+	let future = send_file(buffer, name, path, key).map(move |sentfile| {
 		let signature = base32::encode(&sentfile.signature);
 
 		Message::RequestFulfilled {
@@ -925,6 +927,7 @@ fn send_file(
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
 	name: String,
 	filepath: PathBuf,
+	key: sync::Arc<RsaKeyPair>,
 ) -> impl Future<Item = SentFile, Error = io::Error>
 {
 	tokio::fs::File::open(filepath)
@@ -960,21 +963,14 @@ fn send_file(
 				executable,
 			);
 
-			// TODO ring::digest::Context
-			let digest = Digest {};
-
-			send_chunks(downloadbuffer, digest, chunks).map(move |digest| {
-				// TODO finish digest
-				let _ = digest;
-				let signature = vec![0u8];
-
-				SentFile {
+			send_chunks(downloadbuffer, chunks)
+				.and_then(|digest| sign_digest(digest, key))
+				.map(move |signature| SentFile {
 					name: name,
 					compressed: compressed,
 					executable: executable,
 					signature: signature,
-				}
-			})
+				})
 		})
 }
 
@@ -1031,14 +1027,16 @@ fn chunk_file(
 
 fn send_chunks(
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
-	digest: Digest,
 	chunks: impl Stream<Item = (Message, Vec<u8>), Error = io::Error>,
-) -> impl Future<Item = Digest, Error = io::Error>
+) -> impl Future<Item = digest::Digest, Error = io::Error>
 {
+	let digest = digest::Context::new(&digest::SHA512);
+
 	chunks
 		.fold((digest, downloadbuffer), |state, (message, buffer)| {
-			let (digest, downloadbuffer) = state;
-			// TODO digest buffer
+			let (mut digest, downloadbuffer) = state;
+			digest.update(&buffer);
+
 			downloadbuffer
 				.send((message, buffer))
 				.map_err(|error| {
@@ -1047,10 +1045,30 @@ fn send_chunks(
 				})
 				.map(|downloadbuffer| (digest, downloadbuffer))
 		})
-		.map(|(digest, _downloadbuffer)| digest)
+		.map(|(digest, _downloadbuffer)| digest.finish())
 }
 
-struct Digest {}
+fn sign_digest(
+	digest: digest::Digest,
+	key: sync::Arc<RsaKeyPair>,
+) -> io::Result<Vec<u8>>
+{
+	let rng = ring::rand::SystemRandom::new();
+	let mut signature = vec![0u8; key.public_modulus_len()];
+	key.sign(
+		&ring::signature::RSA_PKCS1_SHA512,
+		&rng,
+		digest.as_ref(),
+		&mut signature,
+	)
+	.map_err(|_unspecified| {
+		io::Error::new(
+			ErrorKind::Other,
+			"unspecified error while signing digest",
+		)
+	})
+	.map(|()| signature)
+}
 
 struct SentFile
 {

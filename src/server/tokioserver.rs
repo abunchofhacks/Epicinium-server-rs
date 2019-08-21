@@ -4,11 +4,13 @@ use server::client::*;
 use server::settings::*;
 
 use std::error;
-use std::io::Read;
+use std::io;
+use std::io::{ErrorKind, Read};
 use std::net::SocketAddr;
 use std::sync;
 
 use futures::{Future, Stream};
+use ring::signature::RsaKeyPair;
 use tokio::net::TcpListener;
 
 pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
@@ -20,10 +22,15 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 
 	println!("Listening on {}:{}", server, port);
 
-	let mut pem: Vec<u8> = Vec::new();
+	let mut buffer: Vec<u8> = Vec::new();
 	let mut file = std::fs::File::open("keys/dummy_private.pem")?;
-	file.read_to_end(&mut pem)?;
-	let pkey = openssl::pkey::PKey::private_key_from_pem(&pem)?;
+	file.read_to_end(&mut buffer)?;
+	let pem = pem::parse(buffer).map_err(|e| {
+		io::Error::new(ErrorKind::InvalidData, format!("pem::{}", e))
+	})?;
+	let pkey = RsaKeyPair::from_der(&pem.contents).map_err(|e| {
+		io::Error::new(ErrorKind::InvalidData, format!("ring::{}", e))
+	})?;
 	let privatekey = sync::Arc::new(pkey);
 
 	let server = start_acceptance_task(listener, privatekey);
@@ -37,7 +44,7 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 
 fn start_acceptance_task(
 	listener: TcpListener,
-	privatekey: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+	privatekey: sync::Arc<RsaKeyPair>,
 ) -> impl Future<Item = (), Error = ()>
 {
 	listener
