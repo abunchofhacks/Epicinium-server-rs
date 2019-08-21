@@ -1,5 +1,6 @@
 /* Server::Client */
 
+use common::base32;
 use common::version::*;
 use server::limits::*;
 use server::message::*;
@@ -8,6 +9,7 @@ use server::patch::*;
 
 use std::io;
 use std::io::ErrorKind;
+use std::path::PathBuf;
 use std::sync;
 use std::sync::atomic;
 use std::time::{Duration, Instant};
@@ -492,121 +494,17 @@ fn start_request_task(
 			eprintln!("Recv error in request_task: {:?}", error);
 			io::Error::new(ErrorKind::ConnectionReset, error)
 		})
-		.map(|name| fulfil_request(name))
-		.flatten()
-		.and_then(move |result| match result
+		.and_then(move |name| {
+			fulfil_request(downloadbuffer.clone(), name, privatekey.clone())
+		})
+		.for_each(move |response| match sendbuffer.try_send(response)
 		{
-			Ok(filename) => Ok(Some(filename)),
-			Err(message) => match sendbuffer.try_send(message)
+			Ok(()) => Ok(()),
+			Err(error) =>
 			{
-				Ok(()) => Ok(None),
-				Err(error) =>
-				{
-					eprintln!("Send error in request_task: {:?}", error);
-					Err(io::Error::new(ErrorKind::ConnectionReset, error))
-				}
-			},
-		})
-		.filter_map(|x| x)
-		.and_then(|filename| {
-			tokio::fs::File::open(filename).map(|file| (file, filename))
-		})
-		.and_then(|(file, filename)| {
-			file.metadata()
-				.map(|(file, metadata)| (file, filename, metadata))
-		})
-		.and_then(move |(file, filename, metadata)| {
-			println!("Buffering file '{}'...", filename.display());
-
-			let filesize = metadata.len() as usize;
-			if filesize >= SEND_FILE_SIZE_LIMIT
-			{
-				panic!(
-					"Cannot send file of size {}, \
-					 which is larger than SEND_FILE_SIZE_LIMIT.",
-					filesize
-				);
+				eprintln!("Send error in request_task: {:?}", error);
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
-			else if filesize >= SEND_FILE_SIZE_WARNING_LIMIT
-			{
-				println!("Sending very large file of size {}...", filesize);
-			}
-
-			// TODO compression
-			let compressed = false;
-
-			// TODO implement is_file_executable?
-			let executable = false;
-
-			let signer = match openssl::sign::Signer::new(
-				openssl::hash::MessageDigest::sha512(),
-				&privatekey,
-			)
-			{
-				Ok(signer) => signer,
-				Err(error) =>
-				{
-					return Either::A(future::err(io::Error::new(
-						ErrorKind::ConnectionReset,
-						error,
-					)));
-				}
-			};
-
-			let chunks = stream::unfold((file, 0), |(file, offset)| {
-				if offset >= filesize
-				{
-					return None;
-				}
-
-				let chunksize = if offset + SEND_FILE_CHUNK_SIZE < filesize
-				{
-					SEND_FILE_CHUNK_SIZE
-				}
-				else
-				{
-					filesize - offset
-				};
-
-				let buffer = vec![0u8; chunksize];
-				let future = tokio_io::io::read_exact(file, buffer).map(
-					|(file, _buffer)| {
-						// TODO handle error
-						let _ = signer.update(&buffer);
-						let progressmask =
-							((0xFFFF * offset) / filesize) as u16;
-						let message = Message::Download {
-							content: format!("{}", filename.display()),
-							metadata: DownloadMetadata {
-								name: None,
-								offset: Some(offset),
-								signature: None,
-								compressed: compressed,
-								executable: (offset == 0 && executable),
-								symbolic: false,
-								progressmask: Some(progressmask),
-							},
-						};
-						let chunk = (message, buffer);
-						let nextstate = (file, offset + SEND_FILE_CHUNK_SIZE);
-						(chunk, nextstate)
-					},
-				);
-				Some(future)
-			});
-
-			Either::B(
-				downloadbuffer
-					.sink_map_err(|error| {
-						eprintln!("Error while buffering chunk: {:?}", error);
-						io::Error::new(ErrorKind::ConnectionReset, error)
-					})
-					.send_all(chunks),
-			)
-		})
-		.for_each(|_file| {
-			// TODO
-			future::ok(())
 		})
 }
 
@@ -768,46 +666,6 @@ impl Into<io::Result<()>> for PulseTaskError
 			PulseTaskError::Recv { error } =>
 			{
 				eprintln!("Recv error in pulse_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-		}
-	}
-}
-
-enum RequestTaskError
-{
-	Chunk
-	{
-		error: io::Error
-	},
-	Send
-	{
-		error: mpsc::error::TrySendError<(Message, Vec<u8>)>,
-	},
-}
-
-impl From<mpsc::error::TrySendError<(Message, Vec<u8>)>> for RequestTaskError
-{
-	fn from(error: mpsc::error::TrySendError<(Message, Vec<u8>)>) -> Self
-	{
-		RequestTaskError::Send { error }
-	}
-}
-
-impl Into<io::Result<()>> for RequestTaskError
-{
-	fn into(self) -> io::Result<()>
-	{
-		match self
-		{
-			RequestTaskError::Chunk { error } =>
-			{
-				eprintln!("Error in request_task: {:?}", error);
-				Err(error)
-			}
-			RequestTaskError::Send { error } =>
-			{
-				eprintln!("Send error in request_task: {:?}", error);
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
 		}
@@ -1016,4 +874,177 @@ fn handle_request(
 			}
 		}
 	}
+}
+
+fn fulfil_request(
+	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
+	name: String,
+	_key: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+) -> impl Future<Item = Message, Error = io::Error>
+{
+	let path = PathBuf::from(&name);
+	if !is_requestable(&path)
+	{
+		let message = Message::RequestDenied {
+			content: name,
+			metadata: DenyMetadata {
+				reason: "File not requestable.".to_string(),
+			},
+		};
+
+		return Either::A(future::ok(message));
+	}
+
+	let future = send_file(downloadbuffer, name, path).map(|sentfile| {
+		// TODO
+		let signature = base32::encode(&sentfile.signature);
+
+		Message::RequestFulfilled {
+			content: sentfile.name.clone(),
+			metadata: DownloadMetadata {
+				name: Some(sentfile.name),
+				offset: None,
+				signature: Some(signature),
+				compressed: sentfile.compressed,
+				executable: sentfile.executable,
+				symbolic: false,
+				progressmask: None,
+			},
+		}
+	});
+
+	Either::B(future)
+}
+
+fn send_file(
+	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
+	name: String,
+	filepath: PathBuf,
+) -> impl Future<Item = SentFile, Error = io::Error>
+{
+	tokio::fs::File::open(filepath)
+		.and_then(|file| file.metadata())
+		.and_then(|(file, metadata)| {
+			let filesize = metadata.len() as usize;
+			if filesize >= SEND_FILE_SIZE_LIMIT
+			{
+				panic!(
+					"Cannot send file of size {}, \
+					 which is larger than SEND_FILE_SIZE_LIMIT.",
+					filesize
+				);
+			}
+			else if filesize >= SEND_FILE_SIZE_WARNING_LIMIT
+			{
+				println!("Sending very large file of size {}...", filesize);
+			}
+
+			// This is used clientside to generate the sourcefilename.
+			// TODO compression
+			let compressed = false;
+
+			// This is unused since 0.32.0 but needed for earlier versions.
+			// TODO implement is_file_executable?
+			let executable = false;
+
+			let chunks = chunk_file(
+				file,
+				name.clone(),
+				filesize,
+				compressed,
+				executable,
+			);
+
+			// TODO ring::digest::Context
+			let digest = Digest {};
+
+			chunks
+				.fold(
+					(digest, downloadbuffer),
+					|(digest, downloadbuffer), (message, buffer)| {
+						// TODO digest buffer
+						downloadbuffer
+							.send((message, buffer))
+							.map_err(|error| {
+								eprintln!(
+									"Send error while buffering chunks: {:?}",
+									error
+								);
+								io::Error::new(
+									ErrorKind::ConnectionReset,
+									error,
+								)
+							})
+							.map(|downloadbuffer| (digest, downloadbuffer))
+					},
+				)
+				.map(move |(digest, _downloadbuffer)| {
+					// TODO finish digest
+					let _ = digest;
+					let signature = vec![0u8];
+
+					SentFile {
+						name: name,
+						compressed: compressed,
+						executable: executable,
+						signature: signature,
+					}
+				})
+		})
+}
+
+fn chunk_file(
+	file: tokio::fs::File,
+	name: String,
+	filesize: usize,
+	compressed: bool,
+	executable: bool,
+) -> impl Stream<Item = (Message, Vec<u8>), Error = io::Error>
+{
+	stream::unfold((file, 0), move |(file, offset)| {
+		if offset >= filesize
+		{
+			return None;
+		}
+		let chunksize = if offset + SEND_FILE_CHUNK_SIZE <= filesize
+		{
+			SEND_FILE_CHUNK_SIZE
+		}
+		else
+		{
+			filesize - offset
+		};
+
+		// This is just for aesthetics.
+		let progressmask = ((0xFFFF * offset) / filesize) as u16;
+
+		let message = Message::Download {
+			content: name.clone(),
+			metadata: DownloadMetadata {
+				name: None,
+				offset: Some(offset),
+				signature: None,
+				compressed: compressed,
+				executable: (offset == 0 && executable),
+				symbolic: false,
+				progressmask: Some(progressmask),
+			},
+		};
+
+		let buffer = vec![0u8; chunksize];
+		let future = tokio_io::io::read_exact(file, buffer)
+			.map(move |(file, buffer)| ((message, buffer), (file, offset)));
+
+		Some(future)
+	})
+}
+
+struct Digest {}
+
+struct SentFile
+{
+	name: String,
+	compressed: bool,
+	executable: bool,
+	signature: Vec<u8>,
 }
