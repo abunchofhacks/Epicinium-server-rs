@@ -325,6 +325,11 @@ fn prepare_message_data(message: Message) -> (String, u32)
 
 	println!("Sending message of length {}...", length);
 
+	if length < 200
+	{
+		println!("Sending message: {}", jsonstr);
+	}
+
 	(jsonstr, length)
 }
 
@@ -958,38 +963,18 @@ fn send_file(
 			// TODO ring::digest::Context
 			let digest = Digest {};
 
-			chunks
-				.fold(
-					(digest, downloadbuffer),
-					|(digest, downloadbuffer), (message, buffer)| {
-						// TODO digest buffer
-						downloadbuffer
-							.send((message, buffer))
-							.map_err(|error| {
-								eprintln!(
-									"Send error while buffering chunks: {:?}",
-									error
-								);
-								io::Error::new(
-									ErrorKind::ConnectionReset,
-									error,
-								)
-							})
-							.map(|downloadbuffer| (digest, downloadbuffer))
-					},
-				)
-				.map(move |(digest, _downloadbuffer)| {
-					// TODO finish digest
-					let _ = digest;
-					let signature = vec![0u8];
+			send_chunks(downloadbuffer, digest, chunks).map(move |digest| {
+				// TODO finish digest
+				let _ = digest;
+				let signature = vec![0u8];
 
-					SentFile {
-						name: name,
-						compressed: compressed,
-						executable: executable,
-						signature: signature,
-					}
-				})
+				SentFile {
+					name: name,
+					compressed: compressed,
+					executable: executable,
+					signature: signature,
+				}
+			})
 		})
 }
 
@@ -1006,6 +991,7 @@ fn chunk_file(
 		{
 			return None;
 		}
+
 		let chunksize = if offset + SEND_FILE_CHUNK_SIZE <= filesize
 		{
 			SEND_FILE_CHUNK_SIZE
@@ -1032,11 +1018,36 @@ fn chunk_file(
 		};
 
 		let buffer = vec![0u8; chunksize];
-		let future = tokio_io::io::read_exact(file, buffer)
-			.map(move |(file, buffer)| ((message, buffer), (file, offset)));
 
-		Some(future)
+		Some(tokio_io::io::read_exact(file, buffer).map(
+			move |(file, buffer)| {
+				let chunk = (message, buffer);
+				let nextstate = (file, offset + SEND_FILE_CHUNK_SIZE);
+				(chunk, nextstate)
+			},
+		))
 	})
+}
+
+fn send_chunks(
+	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
+	digest: Digest,
+	chunks: impl Stream<Item = (Message, Vec<u8>), Error = io::Error>,
+) -> impl Future<Item = Digest, Error = io::Error>
+{
+	chunks
+		.fold((digest, downloadbuffer), |state, (message, buffer)| {
+			let (digest, downloadbuffer) = state;
+			// TODO digest buffer
+			downloadbuffer
+				.send((message, buffer))
+				.map_err(|error| {
+					eprintln!("Send error while sending chunks: {:?}", error);
+					io::Error::new(ErrorKind::ConnectionReset, error)
+				})
+				.map(|downloadbuffer| (digest, downloadbuffer))
+		})
+		.map(|(digest, _downloadbuffer)| digest)
 }
 
 struct Digest {}
