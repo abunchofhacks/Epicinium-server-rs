@@ -3,12 +3,11 @@
 use common::version::*;
 use server::limits::*;
 use server::message::*;
-use server::notice::*;
+use server::notice;
 use server::patch::*;
 
 use std::io;
 use std::io::ErrorKind;
-use std::path;
 use std::sync;
 use std::sync::atomic;
 use std::time::{Duration, Instant};
@@ -31,7 +30,8 @@ struct Client
 	pingbuffer: watch::Sender<()>,
 	last_receive_time: watch::Sender<()>,
 	pong_receive_time: watch::Sender<()>,
-	slowbuffer: mpsc::Sender<SlowOp>,
+	trigger_notice: mpsc::Sender<()>,
+	requests: mpsc::Sender<String>,
 	is_versioned: sync::Arc<atomic::AtomicBool>,
 	supports_empty_pulses: mpsc::Sender<bool>,
 	quitbuffer: watch::Sender<()>,
@@ -49,18 +49,24 @@ impl Client
 	}
 }
 
-pub fn accept_client(socket: TcpStream) -> io::Result<()>
+pub fn accept_client(
+	socket: TcpStream,
+	privatekey: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+) -> io::Result<()>
 {
 	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
 	let sendbuffer_ping = sendbuffer_in.clone();
 	let sendbuffer_pulse = sendbuffer_in.clone();
-	let sendbuffer_slow = sendbuffer_in.clone();
+	let sendbuffer_notice = sendbuffer_in.clone();
+	let sendbuffer_request = sendbuffer_in.clone();
+	let (dlbuffer_in, dlbuffer_out) = mpsc::channel::<(Message, Vec<u8>)>(1);
 	let (pingbuffer_in, pingbuffer_out) = watch::channel(());
 	let (timebuffer_in, timebuffer_out) = watch::channel(());
 	let (pongbuffer_in, pongbuffer_out) = watch::channel(());
 	let (quitbuffer_in, quitbuffer_out) = watch::channel(());
 	let (supports_empty_in, supports_empty_out) = mpsc::channel::<bool>(1);
-	let (slowbuffer_in, slowbuffer_out) = mpsc::channel::<SlowOp>(10);
+	let (noticebuffer_in, noticebuffer_out) = mpsc::channel::<()>(1);
+	let (requestbuffer_in, requestbuffer_out) = mpsc::channel::<String>(10);
 	let (reader, writer) = socket.split();
 
 	let client = Client {
@@ -68,7 +74,8 @@ pub fn accept_client(socket: TcpStream) -> io::Result<()>
 		pingbuffer: pingbuffer_in,
 		last_receive_time: timebuffer_in,
 		pong_receive_time: pongbuffer_in,
-		slowbuffer: slowbuffer_in,
+		trigger_notice: noticebuffer_in,
+		requests: requestbuffer_in,
 		is_versioned: sync::Arc::new(atomic::AtomicBool::new(false)),
 		supports_empty_pulses: supports_empty_in,
 		quitbuffer: quitbuffer_in,
@@ -79,7 +86,7 @@ pub fn accept_client(socket: TcpStream) -> io::Result<()>
 	};
 
 	let receive_task = start_recieve_task(client, reader);
-	let send_task = start_send_task(sendbuffer_out, writer);
+	let send_task = start_send_task(sendbuffer_out, dlbuffer_out, writer);
 	let ping_task = start_ping_task(
 		sendbuffer_ping,
 		timebuffer_out,
@@ -87,12 +94,18 @@ pub fn accept_client(socket: TcpStream) -> io::Result<()>
 		pongbuffer_out,
 	);
 	let pulse_task = start_pulse_task(sendbuffer_pulse, supports_empty_out);
-	let slow_task = start_slow_task(sendbuffer_slow, slowbuffer_out);
+	let notice_task = start_notice_task(sendbuffer_notice, noticebuffer_out);
+	let request_task = start_request_task(
+		sendbuffer_request,
+		dlbuffer_in,
+		requestbuffer_out,
+		privatekey,
+	);
 	let quit_task = start_quit_task(quitbuffer_out);
 
 	let task = receive_task
-		.join3(ping_task, pulse_task)
-		.map(|((), (), ())| ())
+		.join5(ping_task, pulse_task, notice_task, request_task)
+		.map(|((), (), (), (), ())| ())
 		.select(quit_task)
 		.map(|((), _)| ())
 		.map_err(|(e, _)| e)
@@ -213,12 +226,21 @@ fn parse_message(buffer: Vec<u8>) -> io::Result<Message>
 
 fn start_send_task(
 	sendbuffer: mpsc::Receiver<Message>,
+	downloadbuffer: mpsc::Receiver<(Message, Vec<u8>)>,
 	socket: WriteHalf<TcpStream>,
 ) -> impl Future<Item = (), Error = io::Error>
 {
-	sendbuffer
+	let messages = sendbuffer
 		.map_err(|e| io::Error::new(ErrorKind::ConnectionReset, e))
-		.fold(socket, send_message)
+		.map(prepare_message);
+
+	let downloads = downloadbuffer
+		.map_err(|e| io::Error::new(ErrorKind::ConnectionReset, e))
+		.map(|(message, data)| prepare_download(message, data));
+
+	messages
+		.select(downloads)
+		.fold(socket, send_bytes)
 		.map_err(|error| {
 			eprintln!("Error in send_task: {:?}", error);
 			error
@@ -226,13 +248,11 @@ fn start_send_task(
 		.map(|_socket| println!("Stopped sending."))
 }
 
-fn send_message(
+fn send_bytes(
 	socket: WriteHalf<TcpStream>,
-	message: Message,
+	buffer: Vec<u8>,
 ) -> impl Future<Item = WriteHalf<TcpStream>, Error = io::Error>
 {
-	let buffer = prepare_message(message);
-
 	tokio_io::io::write_all(socket, buffer).map(move |(socket, buffer)| {
 		println!("Sent {} bytes.", buffer.len());
 		socket
@@ -249,6 +269,33 @@ fn prepare_message(message: Message) -> Vec<u8>
 		return zeroes.to_vec();
 	}
 
+	let (jsonstr, length) = prepare_message_data(message);
+
+	let mut buffer = length.to_le_bytes().to_vec();
+	buffer.append(&mut jsonstr.into_bytes());
+
+	buffer
+}
+
+fn prepare_download(message: Message, mut buffer: Vec<u8>) -> Vec<u8>
+{
+	let (jsonstr, length) = prepare_message_data(message);
+	let size = prepare_buffer_size(&buffer);
+
+	buffer.append(&mut length.to_le_bytes().to_vec());
+	buffer.append(&mut jsonstr.into_bytes());
+	buffer.append(&mut size.to_le_bytes().to_vec());
+
+	// The buffer contained `size` bytes, and we have appended 4 bytes of
+	// `length`, `length` bytes of `jsonstr` and 4 bytes of `size`.  We need
+	// to rotate the `size` original bytes to the end of the buffer.
+	buffer.rotate_left(size as usize);
+
+	buffer
+}
+
+fn prepare_message_data(message: Message) -> (String, u32)
+{
 	let jsonstr = match serde_json::to_string(&message)
 	{
 		Ok(data) => data,
@@ -276,10 +323,34 @@ fn prepare_message(message: Message) -> Vec<u8>
 
 	println!("Sending message of length {}...", length);
 
-	let mut buffer = length.to_le_bytes().to_vec();
-	buffer.append(&mut jsonstr.into_bytes());
+	(jsonstr, length)
+}
 
-	buffer
+fn prepare_buffer_size(buffer: &Vec<u8>) -> u32
+{
+	if buffer.len() >= MESSAGE_SIZE_LIMIT
+	{
+		panic!(
+			"Cannot send chunk of size {}, \
+			 which is larger than MESSAGE_SIZE_LIMIT.",
+			buffer.len()
+		);
+	}
+
+	let size = buffer.len() as u32;
+
+	if size as usize > SEND_FILE_CHUNK_SIZE
+	{
+		println!(
+			"Queueing chunk of size {} \
+			 which is larger than SEND_FILE_CHUNK_SIZE.",
+			size
+		);
+	}
+
+	println!("And sending chunk of size {}...", size);
+
+	size
 }
 
 fn start_ping_task(
@@ -387,23 +458,64 @@ fn start_pulse_task(
 		.or_else(|error| -> io::Result<()> { error.into() })
 }
 
-fn start_slow_task(
-	sendbuffer: mpsc::Sender<Message>,
-	opbuffer: mpsc::Receiver<SlowOp>,
+fn start_notice_task(
+	mut sendbuffer: mpsc::Sender<Message>,
+	noticebuffer: mpsc::Receiver<()>,
 ) -> impl Future<Item = (), Error = io::Error>
 {
-	opbuffer
+	noticebuffer
 		.map_err(|error| {
-			eprintln!("Recv error in slow_task: {:?}", error);
+			eprintln!("Recv error in notice_task: {:?}", error);
 			io::Error::new(ErrorKind::ConnectionReset, error)
 		})
-		.for_each(move |op| match op
+		.and_then(|()| notice::load().map(|x| Some(x)).or_else(|_| Ok(None)))
+		.filter_map(|x| x)
+		.for_each(move |notice| {
+			sendbuffer
+				.try_send(Message::Stamp { metadata: notice })
+				.map_err(|error| {
+					eprintln!("Send error in notice_task: {:?}", error);
+					io::Error::new(io::ErrorKind::ConnectionReset, error)
+				})
+		})
+}
+
+fn start_request_task(
+	mut sendbuffer: mpsc::Sender<Message>,
+	_downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
+	requestbuffer: mpsc::Receiver<String>,
+	_privatekey: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+) -> impl Future<Item = (), Error = io::Error>
+{
+	requestbuffer
+		.map_err(|error| {
+			eprintln!("Recv error in request_task: {:?}", error);
+			io::Error::new(ErrorKind::ConnectionReset, error)
+		})
+		.map(|name| fulfil_request(name))
+		.flatten()
+		.and_then(move |result| match result
 		{
-			SlowOp::Notice => Either::A(send_notice(sendbuffer.clone())),
-			SlowOp::Request { name } =>
+			Ok(filename) => Ok(Some(filename)),
+			Err(message) => match sendbuffer.try_send(message)
 			{
-				Either::B(fulfil_request(sendbuffer.clone(), name))
-			}
+				Ok(()) => Ok(None),
+				Err(error) =>
+				{
+					eprintln!("Send error in request_task: {:?}", error);
+					Err(io::Error::new(io::ErrorKind::ConnectionReset, error))
+				}
+			},
+		})
+		.filter_map(|x| x)
+		.map(|filename| {
+			println!("Buffering file '{}'...", filename.display());
+			filename
+		})
+		.and_then(|filename| tokio::fs::File::open(filename))
+		.for_each(|_file| {
+			// TODO
+			future::ok(())
 		})
 }
 
@@ -429,6 +541,10 @@ enum ReceiveTaskError
 	Send
 	{
 		error: mpsc::error::TrySendError<Message>,
+	},
+	Notice
+	{
+		error: mpsc::error::TrySendError<String>,
 	},
 	Recv
 	{
@@ -459,6 +575,11 @@ impl Into<io::Result<()>> for ReceiveTaskError
 			ReceiveTaskError::Send { error } =>
 			{
 				eprintln!("Send error in receive_task: {:?}", error);
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+			ReceiveTaskError::Notice { error } =>
+			{
+				eprintln!("Notice error in receive_task: {:?}", error);
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
 			ReceiveTaskError::Recv { error } =>
@@ -611,7 +732,7 @@ fn handle_message(
 		}
 		Message::Request { content: name } =>
 		{
-			handle_request(client, name);
+			handle_request(client, name)?;
 		}
 		_ =>
 		{
@@ -724,7 +845,7 @@ fn greet_client(
 	// There might be a Future waiting for this, or there might not be.
 	let _ = client.pingbuffer.broadcast(());
 
-	match client.slowbuffer.try_send(SlowOp::Notice)
+	match client.trigger_notice.try_send(())
 	{
 		Ok(()) => (),
 		Err(e) => eprintln!("Failed to enqueue for notice: {:?}", e),
@@ -735,21 +856,33 @@ fn greet_client(
 	Ok(())
 }
 
-fn handle_request(client: &mut Client, name: String)
+fn handle_request(
+	client: &mut Client,
+	name: String,
+) -> Result<(), ReceiveTaskError>
 {
-	match client.slowbuffer.try_send(SlowOp::Request { name })
+	match client.requests.try_send(name.clone())
 	{
-		Ok(()) => (),
-		Err(e) => eprintln!("Failed to enqueue for request: {:?}", e),
-	}
-}
+		Ok(()) => Ok(()),
+		Err(error) =>
+		{
+			eprintln!("Failed to enqueue for request: {:?}", error);
 
-#[derive(Debug)]
-enum SlowOp
-{
-	Notice,
-	Request
-	{
-		name: String,
-	},
+			if error.is_full()
+			{
+				let message = Message::RequestDenied {
+					content: name,
+					metadata: DenyMetadata {
+						reason: "Too many requests.".to_string(),
+					},
+				};
+				client.sendbuffer.try_send(message)?;
+				Ok(())
+			}
+			else
+			{
+				Err(ReceiveTaskError::Notice { error })
+			}
+		}
+	}
 }

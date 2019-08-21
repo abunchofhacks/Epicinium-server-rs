@@ -6,50 +6,29 @@ use std::io;
 use std::path::*;
 
 use tokio::prelude::*;
-use tokio::sync::mpsc;
 
 pub fn fulfil_request(
-	sendbuffer: mpsc::Sender<Message>,
 	name: String,
-) -> impl Future<Item = (), Error = io::Error>
+) -> impl Stream<Item = Result<PathBuf, Message>, Error = io::Error>
 {
 	future::ok(PathBuf::from(name.clone()))
-		.and_then(|filename| {
+		.into_stream()
+		.map(move |filename| {
 			if is_requestable(&filename)
 			{
 				Ok(filename)
 			}
 			else
 			{
-				Err(RequestError::IsNotRequestable)
-			}
-		})
-		.and_then(move |filename| send_file(sendbuffer, &filename))
-		.and_then(|_checksum| {
-			// TODO implement
-			Ok(())
-		})
-		.or_else(move |error| match error
-		{
-			RequestError::IsNotRequestable =>
-			{
 				let message = Message::RequestDenied {
-					content: name,
+					content: name.clone(),
 					metadata: DenyMetadata {
 						reason: "File not requestable.".to_string(),
 					},
 				};
-				// TODO sendbuffer.try_send(message)
-				let _ = message;
-				Ok(())
+				Err(message)
 			}
 		})
-}
-
-enum RequestError
-{
-	IsNotRequestable,
-	//DoesNotExist,
 }
 
 fn is_requestable(filepath: &Path) -> bool
@@ -86,13 +65,4 @@ fn is_fzmodel(filepath: &Path) -> bool
 			Some(x) => x == "fzm",
 			None => false,
 		}
-}
-
-fn send_file(
-	sendbuffer: mpsc::Sender<Message>,
-	filename: &Path,
-) -> impl Future<Item = Vec<u8>, Error = RequestError>
-{
-	// TODO implement
-	future::ok([0u8; 100].to_vec())
 }

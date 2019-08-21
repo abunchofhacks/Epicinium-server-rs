@@ -5,58 +5,40 @@ use server::message::*;
 use std::io;
 
 use tokio::prelude::*;
-use tokio::sync::mpsc;
 
-pub fn send_notice(
-	mut socket: mpsc::Sender<Message>,
-) -> impl Future<Item = (), Error = io::Error>
+pub fn load() -> impl Future<Item = StampMetadata, Error = ()>
 {
-	load_notice()
-		.and_then(move |notice| {
-			socket
-				.try_send(Message::Stamp { metadata: notice })
-				.map_err(|error| NoticeError::Send { error })
-		})
-		.or_else(|e| match e
+	load_from_file().map_err(|e| match e
+	{
+		LoadError::Read { error } =>
 		{
-			NoticeError::Read { error } =>
-			{
-				eprintln!("Failed to load stamp: {:?}", error);
-				Ok(())
-			}
-			NoticeError::Utf8 { error } =>
-			{
-				eprintln!("Failed to interpret stamp as utf8: {:?}", error);
-				Ok(())
-			}
-			NoticeError::Parse { error } =>
-			{
-				eprintln!("Failed to parse stamp: {:?}", error);
-				Ok(())
-			}
-			NoticeError::Send { error } =>
-			{
-				eprintln!("Failed to send stamp: {:?}", error);
-				Err(io::Error::new(io::ErrorKind::ConnectionReset, error))
-			}
-		})
+			eprintln!("Failed to load stamp: {:?}", error);
+		}
+		LoadError::Utf8 { error } =>
+		{
+			eprintln!("Failed to interpret stamp as utf8: {:?}", error);
+		}
+		LoadError::Parse { error } =>
+		{
+			eprintln!("Failed to parse stamp: {:?}", error);
+		}
+	})
 }
 
-fn load_notice() -> impl Future<Item = StampMetadata, Error = NoticeError>
+fn load_from_file() -> impl Future<Item = StampMetadata, Error = LoadError>
 {
 	tokio::fs::read("server-notice.json")
-		.map_err(|error| NoticeError::Read { error })
+		.map_err(|error| LoadError::Read { error })
 		.and_then(|buffer| {
-			String::from_utf8(buffer)
-				.map_err(|error| NoticeError::Utf8 { error })
+			String::from_utf8(buffer).map_err(|error| LoadError::Utf8 { error })
 		})
 		.and_then(|raw| {
 			serde_json::from_str::<StampMetadata>(&raw)
-				.map_err(|error| NoticeError::Parse { error })
+				.map_err(|error| LoadError::Parse { error })
 		})
 }
 
-enum NoticeError
+enum LoadError
 {
 	Read
 	{
@@ -69,9 +51,5 @@ enum NoticeError
 	Parse
 	{
 		error: serde_json::Error
-	},
-	Send
-	{
-		error: mpsc::error::TrySendError<Message>,
 	},
 }
