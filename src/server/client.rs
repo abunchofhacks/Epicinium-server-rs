@@ -884,7 +884,7 @@ fn handle_request(
 fn fulfil_request(
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
 	name: String,
-	_key: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+	key: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
 ) -> impl Future<Item = Message, Error = io::Error>
 {
 	let path = PathBuf::from(&name);
@@ -900,7 +900,7 @@ fn fulfil_request(
 		return Either::A(future::ok(message));
 	}
 
-	let future = send_file(downloadbuffer, name, path).map(|sentfile| {
+	let future = send_file(downloadbuffer, name, path, key).map(|sentfile| {
 		// TODO
 		let signature = base32::encode(&sentfile.signature);
 
@@ -925,6 +925,7 @@ fn send_file(
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
 	name: String,
 	filepath: PathBuf,
+	key: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
 ) -> impl Future<Item = SentFile, Error = io::Error>
 {
 	tokio::fs::File::open(filepath)
@@ -960,14 +961,7 @@ fn send_file(
 				executable,
 			);
 
-			// TODO ring::digest::Context
-			let digest = Digest {};
-
-			send_chunks(downloadbuffer, digest, chunks).map(move |digest| {
-				// TODO finish digest
-				let _ = digest;
-				let signature = vec![0u8];
-
+			send_chunks(downloadbuffer, key, chunks).map(move |signature| {
 				SentFile {
 					name: name,
 					compressed: compressed,
@@ -1031,26 +1025,54 @@ fn chunk_file(
 
 fn send_chunks(
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
-	digest: Digest,
+	privatekey: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
 	chunks: impl Stream<Item = (Message, Vec<u8>), Error = io::Error>,
-) -> impl Future<Item = Digest, Error = io::Error>
+) -> impl Future<Item = Vec<u8>, Error = io::Error>
+{
+	get_signer(&privatekey)
+		.and_then(|signer| {
+			send_chunks_with_signer(downloadbuffer, signer, chunks)
+		})
+		.and_then(|signer| {
+			signer
+				.sign_to_vec()
+				.map_err(|error| io::Error::new(ErrorKind::Other, error))
+		})
+}
+
+fn get_signer<'a>(
+	privatekey: &'a openssl::pkey::PKey<openssl::pkey::Private>,
+) -> impl Future<Item = Box<openssl::sign::Signer<'a>>, Error = io::Error>
+{
+	openssl::sign::Signer::new(
+		openssl::hash::MessageDigest::sha512(),
+		privatekey,
+	)
+	.map_err(|error| io::Error::new(ErrorKind::Other, error))
+	.map(|signer| Box::new(signer))
+	.into_future()
+}
+
+fn send_chunks_with_signer(
+	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
+	signer: Box<openssl::sign::Signer>,
+	chunks: impl Stream<Item = (Message, Vec<u8>), Error = io::Error>,
+) -> impl Future<Item = Box<openssl::sign::Signer>, Error = io::Error>
 {
 	chunks
-		.fold((digest, downloadbuffer), |state, (message, buffer)| {
-			let (digest, downloadbuffer) = state;
-			// TODO digest buffer
+		.fold((signer, downloadbuffer), |state, (message, buffer)| {
+			let (mut signer, downloadbuffer) = state;
+			signer.update(&buffer);
 			downloadbuffer
 				.send((message, buffer))
 				.map_err(|error| {
 					eprintln!("Send error while sending chunks: {:?}", error);
 					io::Error::new(ErrorKind::ConnectionReset, error)
 				})
-				.map(|downloadbuffer| (digest, downloadbuffer))
+				.map(|downloadbuffer| (signer, downloadbuffer))
 		})
-		.map(|(digest, _downloadbuffer)| digest)
+		.map(|(signer, _downloadbuffer)| signer)
 }
-
-struct Digest {}
 
 struct SentFile
 {
