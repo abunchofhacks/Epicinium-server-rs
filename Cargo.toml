@@ -20,6 +20,7 @@ futures = "0.1"
 tokio = "0.1"
 tokio-io = "0.1"
 backtrace = "*"
+owning_ref = "*"
 
 [features]
 defaults = []

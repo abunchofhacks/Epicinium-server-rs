@@ -1029,7 +1029,8 @@ fn send_chunks(
 	chunks: impl Stream<Item = (Message, Vec<u8>), Error = io::Error>,
 ) -> impl Future<Item = Vec<u8>, Error = io::Error>
 {
-	get_signer(&privatekey)
+	get_signer(privatekey)
+		.into_future()
 		.and_then(|signer| {
 			send_chunks_with_signer(downloadbuffer, signer, chunks)
 		})
@@ -1040,36 +1041,46 @@ fn send_chunks(
 		})
 }
 
-fn get_signer<'a>(
-	privatekey: &'a openssl::pkey::PKey<openssl::pkey::Private>,
-) -> impl Future<Item = Box<openssl::sign::Signer<'a>>, Error = io::Error>
+fn get_signer(
+	privatekey: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+) -> Result<Signer, io::Error>
 {
-	openssl::sign::Signer::new(
-		openssl::hash::MessageDigest::sha512(),
-		privatekey,
-	)
-	.map_err(|error| io::Error::new(ErrorKind::Other, error))
-	.map(|signer| Box::new(signer))
-	.into_future()
+	owning_ref::OwningHandle::try_new(privatekey, |privatekey| {
+		openssl::sign::Signer::new(
+			openssl::hash::MessageDigest::sha512(),
+			unsafe { privatekey.as_ref().unwrap() },
+		)
+		.map_err(|error| io::Error::new(ErrorKind::Other, error))
+		.map(|signer| Box::new(signer))
+	})
 }
+
+type Signer = owning_ref::OwningHandle<
+	sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+	Box<openssl::sign::Signer<'static>>,
+>;
 
 fn send_chunks_with_signer(
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
-	signer: Box<openssl::sign::Signer>,
+	signer: Signer,
 	chunks: impl Stream<Item = (Message, Vec<u8>), Error = io::Error>,
-) -> impl Future<Item = Box<openssl::sign::Signer>, Error = io::Error>
+) -> impl Future<Item = Signer, Error = io::Error>
 {
 	chunks
 		.fold((signer, downloadbuffer), |state, (message, buffer)| {
 			let (mut signer, downloadbuffer) = state;
-			signer.update(&buffer);
-			downloadbuffer
+			let signing = signer
+				.update(&buffer)
+				.map_err(|error| io::Error::new(ErrorKind::Other, error))
+				.into_future();
+			let downloading = downloadbuffer
 				.send((message, buffer))
 				.map_err(|error| {
 					eprintln!("Send error while sending chunks: {:?}", error);
 					io::Error::new(ErrorKind::ConnectionReset, error)
 				})
-				.map(|downloadbuffer| (signer, downloadbuffer))
+				.map(|downloadbuffer| (signer, downloadbuffer));
+			signing.and_then(|()| downloading)
 		})
 		.map(|(signer, _downloadbuffer)| signer)
 }
