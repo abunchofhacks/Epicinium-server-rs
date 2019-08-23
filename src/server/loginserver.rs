@@ -39,7 +39,7 @@ impl LoginServer
 	pub fn login(
 		&self,
 		request: LoginRequest,
-	) -> impl Future<Item = LoginData, Error = ResponseStatus>
+	) -> impl Future<Item = LoginResponse, Error = ResponseStatus>
 	{
 		match &self.connection
 		{
@@ -51,7 +51,7 @@ impl LoginServer
 	fn dev_login(
 		&self,
 		request: LoginRequest,
-	) -> impl Future<Item = LoginData, Error = ResponseStatus>
+	) -> impl Future<Item = LoginResponse, Error = ResponseStatus>
 	{
 		let username;
 		let unlocks;
@@ -81,7 +81,7 @@ impl LoginServer
 			}
 		}
 
-		let data = LoginResponseData {
+		let data = LoginData {
 			username: username,
 			unlocks: unlocks,
 			rating: 0.0,
@@ -89,10 +89,9 @@ impl LoginServer
 			recent_stars: 0,
 		};
 
-		future::ok(LoginData {
+		future::ok(LoginResponse {
 			status: ResponseStatus::Success,
-			account_id: request.account_id,
-			response_data: data,
+			data: Some(data),
 		})
 	}
 }
@@ -138,10 +137,8 @@ impl Connection
 	fn login(
 		&self,
 		request: LoginRequest,
-	) -> impl Future<Item = LoginData, Error = ResponseStatus>
+	) -> impl Future<Item = LoginResponse, Error = ResponseStatus>
 	{
-		let account_id = request.account_id.clone();
-
 		let payload = json!({
 			"id": request.account_id,
 			"token": request.token,
@@ -149,7 +146,7 @@ impl Connection
 		});
 
 		self.http
-			.get(self.validate_session_url.clone())
+			.post(self.validate_session_url.clone())
 			.json(&payload)
 			.send()
 			.map_err(|error| {
@@ -176,13 +173,16 @@ impl Connection
 					ResponseStatus::ResponseMalformed
 				})
 			})
-			.map(|data| {
-				println!("Got a response from login server: {:?}", data);
+			.and_then(|response: LoginResponse| {
+				println!("Got a response from login server: {:?}", response);
 
-				LoginData {
-					status: ResponseStatus::Success,
-					account_id: account_id,
-					response_data: data,
+				if response.status == ResponseStatus::Success
+				{
+					Ok(response)
+				}
+				else
+				{
+					Err(response.status)
 				}
 			})
 	}

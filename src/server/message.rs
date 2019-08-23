@@ -267,16 +267,17 @@ pub fn unlock_from_unlock_id(x: u8) -> Unlock
 	}
 }
 
-#[derive(Clone, Debug)]
-pub struct LoginData
+#[derive(Clone, Deserialize, Debug)]
+pub struct LoginResponse
 {
 	pub status: ResponseStatus,
-	pub account_id: String,
-	pub response_data: LoginResponseData,
+
+	#[serde(flatten)]
+	pub data: Option<LoginData>,
 }
 
 #[derive(Clone, Deserialize, Debug)]
-pub struct LoginResponseData
+pub struct LoginData
 {
 	pub username: String,
 	// TODO deserialize using unlock_from_unlock_id

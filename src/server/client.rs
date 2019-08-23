@@ -540,9 +540,9 @@ fn start_login_task(
 				io::Error::new(ErrorKind::ConnectionReset, message)
 			})
 		})
-		.for_each(move |logindata| {
+		.for_each(move |response| {
 			// TODO handle
-			println!("Received login data: {:#?}", logindata);
+			println!("Received login response: {:#?}", response);
 			future::ok(())
 		})
 }
