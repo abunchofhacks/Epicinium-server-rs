@@ -6,7 +6,7 @@ use std::io;
 
 use tokio::prelude::*;
 
-pub fn load() -> impl Future<Item = StampMetadata, Error = ()>
+pub fn load() -> impl Future<Item = StampMetadata, Error = ()> + Send
 {
 	load_from_file().map_err(|e| match e
 	{
@@ -25,7 +25,8 @@ pub fn load() -> impl Future<Item = StampMetadata, Error = ()>
 	})
 }
 
-fn load_from_file() -> impl Future<Item = StampMetadata, Error = LoadError>
+fn load_from_file(
+) -> impl Future<Item = StampMetadata, Error = LoadError> + Send
 {
 	tokio::fs::read("server-notice.json")
 		.map_err(|error| LoadError::Read { error })

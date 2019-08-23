@@ -43,7 +43,7 @@ fn start_acceptance_task(
 	listener: TcpListener,
 	login: sync::Arc<LoginServer>,
 	privatekey: sync::Arc<PrivateKey>,
-) -> impl Future<Item = (), Error = ()>
+) -> impl Future<Item = (), Error = ()> + Send
 {
 	listener
 		.incoming()

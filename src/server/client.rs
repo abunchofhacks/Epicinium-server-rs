@@ -263,7 +263,7 @@ fn start_send_task(
 fn send_bytes(
 	socket: WriteHalf<TcpStream>,
 	buffer: Vec<u8>,
-) -> impl Future<Item = WriteHalf<TcpStream>, Error = io::Error>
+) -> impl Future<Item = WriteHalf<TcpStream>, Error = io::Error> + Send
 {
 	tokio_io::io::write_all(socket, buffer).map(move |(socket, buffer)| {
 		println!("Sent {} bytes.", buffer.len());
@@ -1025,7 +1025,7 @@ fn fulfil_request(
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
 	name: String,
 	key: sync::Arc<PrivateKey>,
-) -> impl Future<Item = Message, Error = io::Error>
+) -> impl Future<Item = Message, Error = io::Error> + Send
 {
 	let path = PathBuf::from(&name);
 	if !is_requestable(&path)
@@ -1066,7 +1066,7 @@ fn send_file(
 	name: String,
 	filepath: PathBuf,
 	key: sync::Arc<PrivateKey>,
-) -> impl Future<Item = SentFile, Error = io::Error>
+) -> impl Future<Item = SentFile, Error = io::Error> + Send
 {
 	tokio::fs::File::open(filepath)
 		.and_then(|file| file.metadata())
@@ -1118,7 +1118,7 @@ fn chunk_file(
 	filesize: usize,
 	compressed: bool,
 	executable: bool,
-) -> impl Stream<Item = (Message, Vec<u8>), Error = io::Error>
+) -> impl Stream<Item = (Message, Vec<u8>), Error = io::Error> + Send
 {
 	stream::unfold((file, 0), move |(file, offset)| {
 		if offset >= filesize
@@ -1166,8 +1166,8 @@ fn chunk_file(
 fn send_chunks(
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
 	privatekey: sync::Arc<PrivateKey>,
-	chunks: impl Stream<Item = (Message, Vec<u8>), Error = io::Error>,
-) -> impl Future<Item = Vec<u8>, Error = io::Error>
+	chunks: impl Stream<Item = (Message, Vec<u8>), Error = io::Error> + Send,
+) -> impl Future<Item = Vec<u8>, Error = io::Error> + Send
 {
 	get_signer(privatekey)
 		.into_future()
@@ -1201,8 +1201,8 @@ type Signer = owning_ref::OwningHandle<
 fn send_chunks_with_signer(
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
 	signer: Signer,
-	chunks: impl Stream<Item = (Message, Vec<u8>), Error = io::Error>,
-) -> impl Future<Item = Signer, Error = io::Error>
+	chunks: impl Stream<Item = (Message, Vec<u8>), Error = io::Error> + Send,
+) -> impl Future<Item = Signer, Error = io::Error> + Send
 {
 	chunks
 		.fold((signer, downloadbuffer), |state, (message, buffer)| {

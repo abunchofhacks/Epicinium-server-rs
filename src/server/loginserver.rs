@@ -39,7 +39,7 @@ impl LoginServer
 	pub fn login(
 		&self,
 		request: LoginRequest,
-	) -> impl Future<Item = LoginResponse, Error = ResponseStatus>
+	) -> impl Future<Item = LoginResponse, Error = ResponseStatus> + Send
 	{
 		match &self.connection
 		{
@@ -51,7 +51,7 @@ impl LoginServer
 	fn dev_login(
 		&self,
 		request: LoginRequest,
-	) -> impl Future<Item = LoginResponse, Error = ResponseStatus>
+	) -> impl Future<Item = LoginResponse, Error = ResponseStatus> + Send
 	{
 		let username;
 		let unlocks;
@@ -137,7 +137,7 @@ impl Connection
 	fn login(
 		&self,
 		request: LoginRequest,
-	) -> impl Future<Item = LoginResponse, Error = ResponseStatus>
+	) -> impl Future<Item = LoginResponse, Error = ResponseStatus> + Send
 	{
 		let payload = json!({
 			"id": request.account_id,
