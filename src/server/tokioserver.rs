@@ -11,7 +11,6 @@ use std::sync;
 
 use futures::{Future, Stream};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
 
 pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 {
@@ -28,11 +27,10 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let pkey: PrivateKey = openssl::pkey::PKey::private_key_from_pem(&pem)?;
 	let privatekey = sync::Arc::new(pkey);
 
-	let (login_req_in, login_req_out) = mpsc::channel::<LoginRequest>(1000);
-	let login_task = start_login_task(login_req_out);
-	let client_task = start_acceptance_task(listener, login_req_in, privatekey);
+	let login_server = LoginServer::connect(settings)?;
+	let login = sync::Arc::new(login_server);
 
-	let server = login_task.join(client_task).map(|((), ())| ());
+	let server = start_acceptance_task(listener, login, privatekey);
 
 	// TODO signal handling
 
@@ -43,7 +41,7 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 
 fn start_acceptance_task(
 	listener: TcpListener,
-	login: mpsc::Sender<LoginRequest>,
+	login: sync::Arc<LoginServer>,
 	privatekey: sync::Arc<PrivateKey>,
 ) -> impl Future<Item = (), Error = ()>
 {

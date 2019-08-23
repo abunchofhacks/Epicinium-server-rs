@@ -3,7 +3,7 @@
 use common::base32;
 use common::version::*;
 use server::limits::*;
-use server::loginserver::LoginRequest;
+use server::loginserver::*;
 use server::message::*;
 use server::notice;
 use server::patch::*;
@@ -37,6 +37,7 @@ struct Client
 	pong_receive_time: watch::Sender<()>,
 	trigger_notice: mpsc::Sender<()>,
 	requests: mpsc::Sender<String>,
+	login: mpsc::Sender<LoginRequest>,
 	is_versioned: sync::Arc<atomic::AtomicBool>,
 	supports_empty_pulses: mpsc::Sender<bool>,
 	quitbuffer: watch::Sender<()>,
@@ -56,7 +57,7 @@ impl Client
 
 pub fn accept_client(
 	socket: TcpStream,
-	login: mpsc::Sender<LoginRequest>,
+	login_server: sync::Arc<LoginServer>,
 	privatekey: sync::Arc<PrivateKey>,
 ) -> io::Result<()>
 {
@@ -73,6 +74,7 @@ pub fn accept_client(
 	let (supports_empty_in, supports_empty_out) = mpsc::channel::<bool>(1);
 	let (noticebuffer_in, noticebuffer_out) = mpsc::channel::<()>(1);
 	let (requestbuffer_in, requestbuffer_out) = mpsc::channel::<String>(10);
+	let (loginbuffer_in, loginbuffer_out) = mpsc::channel::<LoginRequest>(1);
 	let (reader, writer) = socket.split();
 
 	let client = Client {
@@ -82,6 +84,7 @@ pub fn accept_client(
 		pong_receive_time: pongbuffer_in,
 		trigger_notice: noticebuffer_in,
 		requests: requestbuffer_in,
+		login: loginbuffer_in,
 		is_versioned: sync::Arc::new(atomic::AtomicBool::new(false)),
 		supports_empty_pulses: supports_empty_in,
 		quitbuffer: quitbuffer_in,
@@ -107,11 +110,14 @@ pub fn accept_client(
 		requestbuffer_out,
 		privatekey,
 	);
+	let login_task = start_login_task(loginbuffer_out, login_server);
 	let quit_task = start_quit_task(quitbuffer_out);
 
 	let task = receive_task
 		.join5(ping_task, pulse_task, notice_task, request_task)
 		.map(|((), (), (), (), ())| ())
+		.join(login_task)
+		.map(|((), ())| ())
 		.select(quit_task)
 		.map(|((), _)| ())
 		.map_err(|(e, _)| e)
@@ -517,6 +523,30 @@ fn start_request_task(
 		})
 }
 
+fn start_login_task(
+	requestbuffer: mpsc::Receiver<LoginRequest>,
+	login_server: sync::Arc<LoginServer>,
+) -> impl Future<Item = (), Error = io::Error>
+{
+	requestbuffer
+		.map_err(|error| {
+			eprintln!("Recv error in request_task: {:?}", error);
+			io::Error::new(ErrorKind::ConnectionReset, error)
+		})
+		.and_then(move |request| {
+			login_server.login(request).map_err(|status| {
+				// TODO handle
+				let message = format!("Login failed with {:?}", status);
+				io::Error::new(ErrorKind::ConnectionReset, message)
+			})
+		})
+		.for_each(move |logindata| {
+			// TODO handle
+			println!("Received login data: {:#?}", logindata);
+			future::ok(())
+		})
+}
+
 fn start_quit_task(
 	quitbuffer: watch::Receiver<()>,
 ) -> impl Future<Item = (), Error = io::Error>
@@ -543,6 +573,10 @@ enum ReceiveTaskError
 	Notice
 	{
 		error: mpsc::error::TrySendError<String>,
+	},
+	Login
+	{
+		error: mpsc::error::TrySendError<LoginRequest>,
 	},
 	Recv
 	{
@@ -578,6 +612,11 @@ impl Into<io::Result<()>> for ReceiveTaskError
 			ReceiveTaskError::Notice { error } =>
 			{
 				eprintln!("Notice error in receive_task: {:?}", error);
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+			ReceiveTaskError::Login { error } =>
+			{
+				eprintln!("Login error in receive_task: {:?}", error);
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
 			ReceiveTaskError::Recv { error } =>
@@ -750,7 +789,7 @@ fn handle_message(
 				content: None,
 				sender: None,
 				metadata: None,
-			});
+			})?;
 		}
 		Message::JoinServer {
 			status: None,
@@ -773,7 +812,7 @@ fn handle_message(
 			}
 			else
 			{
-				joining_server(client, token, account_id);
+				joining_server(client, token, account_id)?;
 			}
 		}
 		Message::JoinServer { .. } =>
@@ -916,9 +955,39 @@ fn greet_client(
 	Ok(())
 }
 
-fn joining_server(client: &mut Client, token: String, account_id: String)
+fn joining_server(
+	client: &mut Client,
+	token: String,
+	account_id: String,
+) -> Result<(), ReceiveTaskError>
 {
 	println!("Client is logging in with account id {}", &account_id);
+
+	match client.login.try_send(LoginRequest { token, account_id })
+	{
+		Ok(()) => Ok(()),
+		Err(error) =>
+		{
+			eprintln!("Failed to enqueue for login: {:?}", error);
+
+			if error.is_full()
+			{
+				// TODO better error handling (#962)
+				let message = Message::JoinServer {
+					status: Some(ResponseStatus::ConnectionFailed),
+					content: None,
+					sender: None,
+					metadata: None,
+				};
+				client.sendbuffer.try_send(message)?;
+				Ok(())
+			}
+			else
+			{
+				Err(ReceiveTaskError::Login { error })
+			}
+		}
+	}
 }
 
 fn handle_request(

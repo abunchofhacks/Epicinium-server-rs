@@ -9,11 +9,13 @@ extern crate owning_ref;
 extern crate rand;
 extern crate reqwest;
 extern crate serde;
-extern crate serde_json;
 extern crate signal_hook;
 extern crate tokio;
 extern crate tokio_io;
 extern crate vec_drain_where;
+
+#[macro_use]
+extern crate serde_json;
 
 #[macro_use]
 extern crate serde_repr;
