@@ -133,7 +133,7 @@ pub fn accept_client(
 fn start_recieve_task(
 	mut client: Client,
 	socket: ReadHalf<TcpStream>,
-) -> impl Future<Item = (), Error = io::Error>
+) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	let receive_versioned = client.is_versioned.clone();
 
@@ -240,7 +240,7 @@ fn start_send_task(
 	sendbuffer: mpsc::Receiver<Message>,
 	downloadbuffer: mpsc::Receiver<(Message, Vec<u8>)>,
 	socket: WriteHalf<TcpStream>,
-) -> impl Future<Item = (), Error = io::Error>
+) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	let messages = sendbuffer
 		.map_err(|e| io::Error::new(ErrorKind::ConnectionReset, e))
@@ -375,7 +375,7 @@ fn start_ping_task(
 	timebuffer: watch::Receiver<()>,
 	pingbuffer: watch::Receiver<()>,
 	pongbuffer: watch::Receiver<()>,
-) -> impl Future<Item = (), Error = io::Error>
+) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	// TODO variable ping_tolerance
 	let ping_tolerance = Duration::from_secs(120);
@@ -450,7 +450,7 @@ fn start_ping_task(
 fn start_pulse_task(
 	mut sendbuffer: mpsc::Sender<Message>,
 	supported: mpsc::Receiver<bool>,
-) -> impl Future<Item = (), Error = io::Error>
+) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	supported
 		.into_future()
@@ -478,7 +478,7 @@ fn start_pulse_task(
 fn start_notice_task(
 	mut sendbuffer: mpsc::Sender<Message>,
 	noticebuffer: mpsc::Receiver<()>,
-) -> impl Future<Item = (), Error = io::Error>
+) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	noticebuffer
 		.map_err(|error| {
@@ -502,7 +502,7 @@ fn start_request_task(
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
 	requestbuffer: mpsc::Receiver<String>,
 	privatekey: sync::Arc<PrivateKey>,
-) -> impl Future<Item = (), Error = io::Error>
+) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	requestbuffer
 		.map_err(|error| {
@@ -526,7 +526,7 @@ fn start_request_task(
 fn start_login_task(
 	requestbuffer: mpsc::Receiver<LoginRequest>,
 	login_server: sync::Arc<LoginServer>,
-) -> impl Future<Item = (), Error = io::Error>
+) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	requestbuffer
 		.map_err(|error| {
@@ -549,7 +549,7 @@ fn start_login_task(
 
 fn start_quit_task(
 	quitbuffer: watch::Receiver<()>,
-) -> impl Future<Item = (), Error = io::Error>
+) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	quitbuffer
 		.skip(1)
