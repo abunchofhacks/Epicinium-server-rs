@@ -2,6 +2,7 @@
 
 mod client;
 mod limits;
+mod loginserver;
 mod message;
 mod notice;
 mod patch;

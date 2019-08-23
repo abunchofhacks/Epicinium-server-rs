@@ -3,6 +3,7 @@
 use common::base32;
 use common::version::*;
 use server::limits::*;
+use server::loginserver::LoginRequest;
 use server::message::*;
 use server::notice;
 use server::patch::*;
@@ -25,6 +26,8 @@ use futures::future;
 use futures::future::Either;
 use futures::stream;
 use futures::{Future, Stream};
+
+pub type PrivateKey = openssl::pkey::PKey<openssl::pkey::Private>;
 
 struct Client
 {
@@ -53,7 +56,8 @@ impl Client
 
 pub fn accept_client(
 	socket: TcpStream,
-	privatekey: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+	login: mpsc::Sender<LoginRequest>,
+	privatekey: sync::Arc<PrivateKey>,
 ) -> io::Result<()>
 {
 	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
@@ -491,7 +495,7 @@ fn start_request_task(
 	mut sendbuffer: mpsc::Sender<Message>,
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
 	requestbuffer: mpsc::Receiver<String>,
-	privatekey: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+	privatekey: sync::Arc<PrivateKey>,
 ) -> impl Future<Item = (), Error = io::Error>
 {
 	requestbuffer
@@ -728,10 +732,72 @@ fn handle_message(
 		{
 			handle_request(client, name)?;
 		}
-		_ =>
+		// TODO if closing
+		Message::JoinServer { .. } if false =>
 		{
-			// TODO handle
-			println!("Unhandled message: {:?}", message);
+			client.sendbuffer.try_send(Message::Closing)?;
+		}
+		Message::JoinServer {
+			status: None,
+			content: Some(ref token),
+			sender: Some(_),
+			metadata: _,
+		} if token == "%discord2018" =>
+		{
+			// This session code is now deprecated.
+			client.sendbuffer.try_send(Message::JoinServer {
+				status: Some(ResponseStatus::CredsInvalid),
+				content: None,
+				sender: None,
+				metadata: None,
+			});
+		}
+		Message::JoinServer {
+			status: None,
+			content: Some(token),
+			sender: Some(account_id),
+			metadata: _,
+		} =>
+		{
+			let curver = Version::current();
+			if client.version.major != curver.major
+				|| client.version.minor != curver.minor
+			{
+				// Why is this LEAVE_SERVER {} and not
+				// JOIN_SERVER {}? Maybe it has something
+				// to do with MainMenu. Well, let's leave
+				// it until we do proper error handling.
+				// TODO #962
+				let rejection = Message::LeaveServer { content: None };
+				client.sendbuffer.try_send(rejection)?;
+			}
+			else
+			{
+				joining_server(client, token, account_id);
+			}
+		}
+		Message::JoinServer { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(ReceiveTaskError::Illegal);
+		}
+		Message::LeaveServer { .. } =>
+		{
+			println!("Ignoring message from client: {:?}", message);
+		}
+		Message::Init | Message::Chat { .. } =>
+		{
+			println!("Invalid message from offline client: {:?}", message);
+			return Err(ReceiveTaskError::Illegal);
+		}
+		Message::Closing
+		| Message::Stamp { .. }
+		| Message::Download { .. }
+		| Message::RequestDenied { .. }
+		| Message::RequestFulfilled { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(ReceiveTaskError::Illegal);
 		}
 	}
 
@@ -850,6 +916,11 @@ fn greet_client(
 	Ok(())
 }
 
+fn joining_server(client: &mut Client, token: String, account_id: String)
+{
+	println!("Client is logging in with account id {}", &account_id);
+}
+
 fn handle_request(
 	client: &mut Client,
 	name: String,
@@ -884,7 +955,7 @@ fn handle_request(
 fn fulfil_request(
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
 	name: String,
-	key: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+	key: sync::Arc<PrivateKey>,
 ) -> impl Future<Item = Message, Error = io::Error>
 {
 	let path = PathBuf::from(&name);
@@ -925,7 +996,7 @@ fn send_file(
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
 	name: String,
 	filepath: PathBuf,
-	key: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+	key: sync::Arc<PrivateKey>,
 ) -> impl Future<Item = SentFile, Error = io::Error>
 {
 	tokio::fs::File::open(filepath)
@@ -1025,7 +1096,7 @@ fn chunk_file(
 
 fn send_chunks(
 	downloadbuffer: mpsc::Sender<(Message, Vec<u8>)>,
-	privatekey: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+	privatekey: sync::Arc<PrivateKey>,
 	chunks: impl Stream<Item = (Message, Vec<u8>), Error = io::Error>,
 ) -> impl Future<Item = Vec<u8>, Error = io::Error>
 {
@@ -1041,9 +1112,7 @@ fn send_chunks(
 		})
 }
 
-fn get_signer(
-	privatekey: sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
-) -> Result<Signer, io::Error>
+fn get_signer(privatekey: sync::Arc<PrivateKey>) -> Result<Signer, io::Error>
 {
 	owning_ref::OwningHandle::try_new(privatekey, |privatekey| {
 		openssl::sign::Signer::new(
@@ -1056,7 +1125,7 @@ fn get_signer(
 }
 
 type Signer = owning_ref::OwningHandle<
-	sync::Arc<openssl::pkey::PKey<openssl::pkey::Private>>,
+	sync::Arc<PrivateKey>,
 	Box<openssl::sign::Signer<'static>>,
 >;
 
