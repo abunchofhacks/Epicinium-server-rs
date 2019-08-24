@@ -1,6 +1,7 @@
 /* TokioServer */
 
 use common::keycode::*;
+use server::chat;
 use server::client::*;
 use server::loginserver::*;
 use server::settings::*;
@@ -31,7 +32,10 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let login_server = LoginServer::connect(settings)?;
 	let login = sync::Arc::new(login_server);
 
-	let server = start_acceptance_task(listener, login, privatekey);
+	let chat_server = chat::Server::start();
+	let chat = sync::Arc::new(chat_server);
+
+	let server = start_acceptance_task(listener, login, chat, privatekey);
 
 	// TODO signal handling
 
@@ -43,6 +47,7 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 fn start_acceptance_task(
 	listener: TcpListener,
 	login: sync::Arc<LoginServer>,
+	chat: sync::Arc<chat::Server>,
 	privatekey: sync::Arc<PrivateKey>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
@@ -58,8 +63,14 @@ fn start_acceptance_task(
 			let key: u16 = rand::random();
 			let id = keycode(key, serial);
 
-			accept_client(socket, id, login.clone(), privatekey.clone())
-				.map(|()| println!("Accepted client {}.", id))
+			accept_client(
+				socket,
+				id,
+				login.clone(),
+				chat.clone(),
+				privatekey.clone(),
+			)
+			.map(|()| println!("Accepted client {}.", id))
 		})
 		.map_err(|e| {
 			eprintln!("Incoming connection failed: {:?}", e);

@@ -1,9 +1,11 @@
 /* Message */
 
 use common::header::*;
+use common::keycode::Keycode;
 use common::version::*;
 
 use enumset::*;
+use tokio::sync::mpsc;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
@@ -73,6 +75,29 @@ pub enum Message
 	{
 		content: String,
 		metadata: DownloadMetadata,
+	},
+
+	#[serde(skip)]
+	SetUsernameInternal
+	{
+		username: String,
+	},
+	#[serde(skip)]
+	JoinServerInternal
+	{
+		client_id: Keycode,
+		login_data: LoginData,
+		sendbuffer: mpsc::Sender<Message>,
+	},
+	#[serde(skip)]
+	LeaveServerInternal
+	{
+		client_id: Keycode,
+	},
+	#[serde(skip)]
+	InitInternal
+	{
+		client_id: Keycode,
 	},
 }
 

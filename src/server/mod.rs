@@ -1,5 +1,6 @@
 /* Server */
 
+mod chat;
 mod client;
 mod limits;
 mod loginserver;

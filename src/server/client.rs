@@ -3,6 +3,7 @@
 use common::base32;
 use common::keycode::Keycode;
 use common::version::*;
+use server::chat;
 use server::limits::*;
 use server::loginserver::*;
 use server::message::*;
@@ -39,17 +40,16 @@ struct Client
 	trigger_notice: mpsc::Sender<()>,
 	requests: mpsc::Sender<String>,
 	login: mpsc::Sender<LoginRequest>,
+	general_chat: Option<mpsc::Sender<Message>>,
 	is_versioned: sync::Arc<atomic::AtomicBool>,
 	supports_empty_pulses: mpsc::Sender<bool>,
 	quitbuffer: watch::Sender<()>,
 
 	pub id: Keycode,
 	pub username: String,
-	pub id_and_username: String,
 	pub version: Version,
 	pub platform: Platform,
 	pub patchmode: Patchmode,
-	pub online: bool,
 }
 
 impl Client
@@ -64,6 +64,7 @@ pub fn accept_client(
 	socket: TcpStream,
 	id: Keycode,
 	login_server: sync::Arc<LoginServer>,
+	chat_server: sync::Arc<chat::Server>,
 	privatekey: sync::Arc<PrivateKey>,
 ) -> io::Result<()>
 {
@@ -72,7 +73,9 @@ pub fn accept_client(
 	let sendbuffer_pulse = sendbuffer_in.clone();
 	let sendbuffer_notice = sendbuffer_in.clone();
 	let sendbuffer_request = sendbuffer_in.clone();
+	let sendbuffer_login = sendbuffer_in.clone();
 	let (dlbuffer_in, dlbuffer_out) = mpsc::channel::<(Message, Vec<u8>)>(1);
+	let (namebuffer_in, namebuffer_out) = watch::channel("".to_string());
 	let (pingbuffer_in, pingbuffer_out) = watch::channel(());
 	let (timebuffer_in, timebuffer_out) = watch::channel(());
 	let (pongbuffer_in, pongbuffer_out) = watch::channel(());
@@ -91,20 +94,19 @@ pub fn accept_client(
 		trigger_notice: noticebuffer_in,
 		requests: requestbuffer_in,
 		login: loginbuffer_in,
+		general_chat: None,
 		is_versioned: sync::Arc::new(atomic::AtomicBool::new(false)),
 		supports_empty_pulses: supports_empty_in,
 		quitbuffer: quitbuffer_in,
 
 		id: id,
 		username: String::new(),
-		id_and_username: format!("{}", id),
 		version: Version::undefined(),
 		platform: Platform::Unknown,
 		patchmode: Patchmode::None,
-		online: false,
 	};
 
-	let receive_task = start_recieve_task(client, reader);
+	let receive_task = start_receive_task(client, namebuffer_out, reader);
 	let send_task = start_send_task(id, sendbuffer_out, dlbuffer_out, writer);
 	let ping_task = start_ping_task(
 		id,
@@ -121,7 +123,14 @@ pub fn accept_client(
 		requestbuffer_out,
 		privatekey,
 	);
-	let login_task = start_login_task(loginbuffer_out, login_server);
+	let login_task = start_login_task(
+		id,
+		sendbuffer_login,
+		namebuffer_in,
+		loginbuffer_out,
+		login_server,
+		chat_server,
+	);
 	let quit_task = start_quit_task(id, quitbuffer_out);
 
 	let task = receive_task
@@ -141,13 +150,18 @@ pub fn accept_client(
 	Ok(())
 }
 
-fn start_recieve_task(
+fn start_receive_task(
 	mut client: Client,
+	namebuffer: watch::Receiver<String>,
 	socket: ReadHalf<TcpStream>,
 ) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	let client_id = client.id;
 	let receive_versioned = client.is_versioned.clone();
+
+	let servermessages = namebuffer
+		.map(|username| Message::SetUsernameInternal { username })
+		.map_err(|error| ReceiveTaskError::Watch { error });
 
 	stream::unfold(socket, move |socket| {
 		let versioned: bool = receive_versioned.load(atomic::Ordering::Relaxed);
@@ -161,6 +175,7 @@ fn start_recieve_task(
 		Some(future_length)
 	})
 	.map_err(|error| ReceiveTaskError::Recv { error })
+	.select(servermessages)
 	.for_each(move |message: Message| handle_message(&mut client, message))
 	.or_else(|error| -> io::Result<()> { error.into() })
 	.map(move |()| println!("Client {} stopped receiving.", client_id))
@@ -542,26 +557,63 @@ fn start_request_task(
 }
 
 fn start_login_task(
+	client_id: Keycode,
+	mut sendbuffer: mpsc::Sender<Message>,
+	mut namebuffer: watch::Sender<String>,
 	requestbuffer: mpsc::Receiver<LoginRequest>,
 	login_server: sync::Arc<LoginServer>,
+	chat_server: sync::Arc<chat::Server>,
 ) -> impl Future<Item = (), Error = io::Error> + Send
 {
+	let sendbuffer_for_login_failure = sendbuffer.clone();
+
 	requestbuffer
 		.map_err(|error| {
-			eprintln!("Recv error in request_task: {:?}", error);
+			eprintln!("Recv error in login_task: {:?}", error);
 			io::Error::new(ErrorKind::ConnectionReset, error)
 		})
 		.and_then(move |request| {
-			login_server.login(request).map_err(|status| {
-				// TODO handle
-				let message = format!("Login failed with {:?}", status);
-				io::Error::new(ErrorKind::ConnectionReset, message)
-			})
+			login_server
+				.login(request)
+				.map(|logindata| Ok(logindata))
+				.or_else(|status| Ok(Err(status)))
 		})
-		.for_each(move |response| {
-			// TODO handle
-			println!("Received login response: {:#?}", response);
-			future::ok(())
+		.and_then(move |result| match result
+		{
+			Ok(logindata) => Ok(Some(logindata)),
+			Err(status) =>
+			{
+				eprintln!("Login failed with {:?}", status);
+				let message = Message::JoinServer {
+					status: Some(status),
+					content: None,
+					sender: None,
+					metadata: None,
+				};
+				sendbuffer_for_login_failure
+					.try_send(message)
+					.map_err(|error| {
+						eprintln!("Send error in login_task: {:?}", error);
+						io::Error::new(ErrorKind::ConnectionReset, error)
+					})
+					.map(|()| None)
+			}
+		})
+		.filter_map(|x| x)
+		.and_then(move |logindata| {
+			chat_server
+				.join(client_id, logindata, sendbuffer.clone())
+				.map_err(|error| {
+					eprintln!("TrySend error in login_task: {:?}", error);
+					io::Error::new(ErrorKind::ConnectionReset, error)
+				})
+		})
+		.filter_map(|x| x)
+		.for_each(move |logindata| {
+			namebuffer.broadcast(logindata.username).map_err(|error| {
+				eprintln!("Broadcast error in login_task: {:?}", error);
+				io::Error::new(ErrorKind::ConnectionReset, error)
+			})
 		})
 }
 
@@ -598,6 +650,10 @@ enum ReceiveTaskError
 	Login
 	{
 		error: mpsc::error::TrySendError<LoginRequest>,
+	},
+	Watch
+	{
+		error: watch::error::RecvError,
 	},
 	Recv
 	{
@@ -638,6 +694,11 @@ impl Into<io::Result<()>> for ReceiveTaskError
 			ReceiveTaskError::Login { error } =>
 			{
 				eprintln!("Login error in receive_task: {:?}", error);
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+			ReceiveTaskError::Watch { error } =>
+			{
+				eprintln!("Watch error in receive_task: {:?}", error);
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
 			ReceiveTaskError::Recv { error } =>
@@ -792,7 +853,7 @@ fn handle_message(
 		{
 			handle_request(client, name)?;
 		}
-		Message::JoinServer { .. } if client.online =>
+		Message::JoinServer { .. } if client.general_chat.is_some() =>
 		{
 			println!("Ignoring message from online client: {:?}", message);
 		}
@@ -845,24 +906,52 @@ fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
-		Message::LeaveServer { .. } if !client.online =>
-		{
-			println!("Ignoring message from offline client: {:?}", message);
-		}
 		Message::LeaveServer { content: _ } =>
 		{
-			leave_server(client);
-		}
-		Message::Init | Message::Chat { .. } if !client.online =>
-		{
-			println!("Invalid message from offline client: {:?}", message);
-			return Err(ReceiveTaskError::Illegal);
+			let general_chat = client.general_chat.take().ok_or_else(|| {
+				println!("Invalid message from offline client: {:?}", message);
+				return ReceiveTaskError::Illegal;
+			})?;
+			general_chat.try_send(Message::LeaveServerInternal {
+				client_id: client.id,
+			})?;
 		}
 		Message::Init =>
 		{
-			init_client(client);
+			let general_chat = client.general_chat.ok_or_else(|| {
+				println!("Invalid message from offline client: {:?}", message);
+				return ReceiveTaskError::Illegal;
+			})?;
+			general_chat.try_send(Message::InitInternal {
+				client_id: client.id,
+			})?;
 		}
-		// TODO chat
+		Message::Chat { .. } if client.username.is_empty() =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(ReceiveTaskError::Illegal);
+		}
+		Message::Chat {
+			content,
+			sender: None,
+			target: ChatTarget::General,
+		} =>
+		{
+			let general_chat = client.general_chat.ok_or_else(|| {
+				println!("Invalid message from offline client: {:?}", message);
+				return ReceiveTaskError::Illegal;
+			})?;
+			println!(
+				"Client {} '{}' sent chat message: {}",
+				client.id, client.username, content
+			);
+			general_chat.try_send(Message::Chat {
+				content: content,
+				sender: Some(client.username.clone()),
+				target: ChatTarget::General,
+			})?;
+		}
+		// TODO lobby chat
 		Message::Chat { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
@@ -876,6 +965,17 @@ fn handle_message(
 		{
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
+		}
+
+		Message::SetUsernameInternal { username } =>
+		{
+			client.username = username;
+		}
+		Message::JoinServerInternal { .. }
+		| Message::LeaveServerInternal { .. }
+		| Message::InitInternal { .. } =>
+		{
+			panic!("Misrouted message from client: {:?}", message);
 		}
 	}
 
@@ -1030,19 +1130,6 @@ fn joining_server(
 			}
 		}
 	}
-}
-
-fn leave_server(client: &mut Client)
-{
-	// TODO
-
-	client.online = false;
-}
-
-fn init_client(client: &mut Client)
-{
-	// TODO
-	let _ = client;
 }
 
 fn handle_request(

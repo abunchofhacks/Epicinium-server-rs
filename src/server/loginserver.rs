@@ -39,7 +39,7 @@ impl LoginServer
 	pub fn login(
 		&self,
 		request: LoginRequest,
-	) -> impl Future<Item = LoginResponse, Error = ResponseStatus> + Send
+	) -> impl Future<Item = LoginData, Error = ResponseStatus> + Send
 	{
 		match &self.connection
 		{
@@ -51,7 +51,7 @@ impl LoginServer
 	fn dev_login(
 		&self,
 		request: LoginRequest,
-	) -> impl Future<Item = LoginResponse, Error = ResponseStatus> + Send
+	) -> impl Future<Item = LoginData, Error = ResponseStatus> + Send
 	{
 		let username;
 		let unlocks;
@@ -89,10 +89,7 @@ impl LoginServer
 			recent_stars: 0,
 		};
 
-		future::ok(LoginResponse {
-			status: ResponseStatus::Success,
-			data: Some(data),
-		})
+		future::ok(data)
 	}
 }
 
@@ -137,7 +134,7 @@ impl Connection
 	fn login(
 		&self,
 		request: LoginRequest,
-	) -> impl Future<Item = LoginResponse, Error = ResponseStatus> + Send
+	) -> impl Future<Item = LoginData, Error = ResponseStatus> + Send
 	{
 		let payload = json!({
 			"id": request.account_id,
@@ -178,7 +175,7 @@ impl Connection
 
 				if response.status == ResponseStatus::Success
 				{
-					Ok(response)
+					response.data.ok_or(ResponseStatus::ResponseMalformed)
 				}
 				else
 				{
