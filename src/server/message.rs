@@ -78,16 +78,19 @@ pub enum Message
 	},
 
 	#[serde(skip)]
-	SetUsernameInternal
-	{
-		username: String,
-	},
-	#[serde(skip)]
-	JoinServerInternal
+	JoiningServerInternal
 	{
 		client_id: Keycode,
-		login_data: LoginData,
+		username: String,
+		unlocks: EnumSet<Unlock>,
 		sendbuffer: mpsc::Sender<Message>,
+	},
+	#[serde(skip)]
+	JoinedServerInternal
+	{
+		username: String,
+		unlocks: EnumSet<Unlock>,
+		general_chat: mpsc::Sender<Message>,
 	},
 	#[serde(skip)]
 	LeaveServerInternal

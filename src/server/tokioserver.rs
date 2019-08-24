@@ -4,6 +4,7 @@ use common::keycode::*;
 use server::chat;
 use server::client::*;
 use server::loginserver::*;
+use server::message::*;
 use server::settings::*;
 
 use std::error;
@@ -13,6 +14,7 @@ use std::sync;
 
 use futures::{Future, Stream};
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 
 pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 {
@@ -32,8 +34,7 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let login_server = LoginServer::connect(settings)?;
 	let login = sync::Arc::new(login_server);
 
-	let chat_server = chat::Server::start();
-	let chat = sync::Arc::new(chat_server);
+	let chat = chat::start();
 
 	let server = start_acceptance_task(listener, login, chat, privatekey);
 
@@ -47,7 +48,7 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 fn start_acceptance_task(
 	listener: TcpListener,
 	login: sync::Arc<LoginServer>,
-	chat: sync::Arc<chat::Server>,
+	chat: mpsc::Sender<Message>,
 	privatekey: sync::Arc<PrivateKey>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {

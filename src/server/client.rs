@@ -3,7 +3,6 @@
 use common::base32;
 use common::keycode::Keycode;
 use common::version::*;
-use server::chat;
 use server::limits::*;
 use server::loginserver::*;
 use server::message::*;
@@ -29,6 +28,8 @@ use futures::future::Either;
 use futures::stream;
 use futures::{Future, Stream};
 
+use enumset::EnumSet;
+
 pub type PrivateKey = openssl::pkey::PKey<openssl::pkey::Private>;
 
 struct Client
@@ -50,6 +51,7 @@ struct Client
 	pub version: Version,
 	pub platform: Platform,
 	pub patchmode: Patchmode,
+	pub unlocks: EnumSet<Unlock>,
 }
 
 impl Client
@@ -64,7 +66,7 @@ pub fn accept_client(
 	socket: TcpStream,
 	id: Keycode,
 	login_server: sync::Arc<LoginServer>,
-	chat_server: sync::Arc<chat::Server>,
+	chat_server: mpsc::Sender<Message>,
 	privatekey: sync::Arc<PrivateKey>,
 ) -> io::Result<()>
 {
@@ -75,7 +77,7 @@ pub fn accept_client(
 	let sendbuffer_request = sendbuffer_in.clone();
 	let sendbuffer_login = sendbuffer_in.clone();
 	let (dlbuffer_in, dlbuffer_out) = mpsc::channel::<(Message, Vec<u8>)>(1);
-	let (namebuffer_in, namebuffer_out) = watch::channel("".to_string());
+	let (joinedbuffer_in, joinedbuffer_out) = mpsc::channel::<Message>(1);
 	let (pingbuffer_in, pingbuffer_out) = watch::channel(());
 	let (timebuffer_in, timebuffer_out) = watch::channel(());
 	let (pongbuffer_in, pongbuffer_out) = watch::channel(());
@@ -104,9 +106,10 @@ pub fn accept_client(
 		version: Version::undefined(),
 		platform: Platform::Unknown,
 		patchmode: Patchmode::None,
+		unlocks: EnumSet::empty(),
 	};
 
-	let receive_task = start_receive_task(client, namebuffer_out, reader);
+	let receive_task = start_receive_task(client, joinedbuffer_out, reader);
 	let send_task = start_send_task(id, sendbuffer_out, dlbuffer_out, writer);
 	let ping_task = start_ping_task(
 		id,
@@ -126,7 +129,7 @@ pub fn accept_client(
 	let login_task = start_login_task(
 		id,
 		sendbuffer_login,
-		namebuffer_in,
+		joinedbuffer_in,
 		loginbuffer_out,
 		login_server,
 		chat_server,
@@ -152,16 +155,12 @@ pub fn accept_client(
 
 fn start_receive_task(
 	mut client: Client,
-	namebuffer: watch::Receiver<String>,
+	servermessages: mpsc::Receiver<Message>,
 	socket: ReadHalf<TcpStream>,
 ) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	let client_id = client.id;
 	let receive_versioned = client.is_versioned.clone();
-
-	let servermessages = namebuffer
-		.map(|username| Message::SetUsernameInternal { username })
-		.map_err(|error| ReceiveTaskError::Watch { error });
 
 	stream::unfold(socket, move |socket| {
 		let versioned: bool = receive_versioned.load(atomic::Ordering::Relaxed);
@@ -175,7 +174,7 @@ fn start_receive_task(
 		Some(future_length)
 	})
 	.map_err(|error| ReceiveTaskError::Recv { error })
-	.select(servermessages)
+	.select(servermessages.map_err(|error| ReceiveTaskError::Server { error }))
 	.for_each(move |message: Message| handle_message(&mut client, message))
 	.or_else(|error| -> io::Result<()> { error.into() })
 	.map(move |()| println!("Client {} stopped receiving.", client_id))
@@ -558,14 +557,15 @@ fn start_request_task(
 
 fn start_login_task(
 	client_id: Keycode,
-	mut sendbuffer: mpsc::Sender<Message>,
-	mut namebuffer: watch::Sender<String>,
+	sendbuffer: mpsc::Sender<Message>,
+	mut joinedbuffer: mpsc::Sender<Message>,
 	requestbuffer: mpsc::Receiver<LoginRequest>,
 	login_server: sync::Arc<LoginServer>,
-	chat_server: sync::Arc<chat::Server>,
+	mut chat_server: mpsc::Sender<Message>,
 ) -> impl Future<Item = (), Error = io::Error> + Send
 {
-	let sendbuffer_for_login_failure = sendbuffer.clone();
+	let mut sendbuffer_for_login_failure = sendbuffer.clone();
+	let mut sendbuffer_for_access_failure = sendbuffer.clone();
 
 	requestbuffer
 		.map_err(|error| {
@@ -601,17 +601,53 @@ fn start_login_task(
 		})
 		.filter_map(|x| x)
 		.and_then(move |logindata| {
-			chat_server
-				.join(client_id, logindata, sendbuffer.clone())
-				.map_err(|error| {
-					eprintln!("TrySend error in login_task: {:?}", error);
-					io::Error::new(ErrorKind::ConnectionReset, error)
-				})
+			let mut unlocks = EnumSet::<Unlock>::empty();
+			for &x in &logindata.unlocks
+			{
+				unlocks.insert(unlock_from_unlock_id(x));
+			}
+
+			if !unlocks.contains(Unlock::Access)
+			{
+				println!("Login failed due to insufficient access");
+				return sendbuffer_for_access_failure
+					.try_send(Message::JoinServer {
+						status: Some(ResponseStatus::KeyRequired),
+						content: None,
+						sender: None,
+						metadata: None,
+					})
+					.map_err(|error| {
+						eprintln!("Send error in login_task: {:?}", error);
+						io::Error::new(ErrorKind::ConnectionReset, error)
+					})
+					.map(|()| None);
+			}
+
+			Ok(Some((logindata.username, unlocks)))
 		})
 		.filter_map(|x| x)
-		.for_each(move |logindata| {
-			namebuffer.broadcast(logindata.username).map_err(|error| {
-				eprintln!("Broadcast error in login_task: {:?}", error);
+		.and_then(move |(username, unlocks)| {
+			chat_server
+				.try_send(Message::JoiningServerInternal {
+					client_id,
+					username: username.clone(),
+					unlocks,
+					sendbuffer: sendbuffer.clone(),
+				})
+				.map_err(|error| {
+					eprintln!("Joining chat error in login_task: {:?}", error);
+					io::Error::new(ErrorKind::ConnectionReset, error)
+				})
+				.map(|()| Message::JoinedServerInternal {
+					username: username,
+					unlocks: unlocks,
+					general_chat: chat_server.clone(),
+				})
+		})
+		.for_each(move |servermessage| {
+			joinedbuffer.try_send(servermessage).map_err(|error| {
+				eprintln!("Send error in login_task: {:?}", error);
 				io::Error::new(ErrorKind::ConnectionReset, error)
 			})
 		})
@@ -651,9 +687,9 @@ enum ReceiveTaskError
 	{
 		error: mpsc::error::TrySendError<LoginRequest>,
 	},
-	Watch
+	Server
 	{
-		error: watch::error::RecvError,
+		error: mpsc::error::RecvError,
 	},
 	Recv
 	{
@@ -696,9 +732,9 @@ impl Into<io::Result<()>> for ReceiveTaskError
 				eprintln!("Login error in receive_task: {:?}", error);
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
-			ReceiveTaskError::Watch { error } =>
+			ReceiveTaskError::Server { error } =>
 			{
-				eprintln!("Watch error in receive_task: {:?}", error);
+				eprintln!("Server error in receive_task: {:?}", error);
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
 			ReceiveTaskError::Recv { error } =>
@@ -967,11 +1003,17 @@ fn handle_message(
 			return Err(ReceiveTaskError::Illegal);
 		}
 
-		Message::SetUsernameInternal { username } =>
+		Message::JoinedServerInternal {
+			username,
+			unlocks,
+			general_chat,
+		} =>
 		{
 			client.username = username;
+			client.unlocks = unlocks;
+			client.general_chat = Some(general_chat);
 		}
-		Message::JoinServerInternal { .. }
+		Message::JoiningServerInternal { .. }
 		| Message::LeaveServerInternal { .. }
 		| Message::InitInternal { .. } =>
 		{
