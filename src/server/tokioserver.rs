@@ -1,5 +1,6 @@
 /* TokioServer */
 
+use common::keycode::*;
 use server::client::*;
 use server::loginserver::*;
 use server::settings::*;
@@ -45,11 +46,20 @@ fn start_acceptance_task(
 	privatekey: sync::Arc<PrivateKey>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
+	let mut ticker: u64 = rand::random();
+
 	listener
 		.incoming()
 		.for_each(move |socket| {
 			println!("Incoming connection: {:?}", socket);
-			accept_client(socket, login.clone(), privatekey.clone())
+
+			let serial = ticker;
+			ticker += 1;
+			let key: u16 = rand::random();
+			let id = keycode(key, serial);
+
+			accept_client(socket, id, login.clone(), privatekey.clone())
+				.map(|()| println!("Accepted client {}.", id))
 		})
 		.map_err(|e| {
 			eprintln!("Incoming connection failed: {:?}", e);

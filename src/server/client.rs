@@ -1,6 +1,7 @@
 /* Server::Client */
 
 use common::base32;
+use common::keycode::Keycode;
 use common::version::*;
 use server::limits::*;
 use server::loginserver::*;
@@ -42,9 +43,13 @@ struct Client
 	supports_empty_pulses: mpsc::Sender<bool>,
 	quitbuffer: watch::Sender<()>,
 
+	pub id: Keycode,
+	pub username: String,
+	pub id_and_username: String,
 	pub version: Version,
 	pub platform: Platform,
 	pub patchmode: Patchmode,
+	pub online: bool,
 }
 
 impl Client
@@ -57,6 +62,7 @@ impl Client
 
 pub fn accept_client(
 	socket: TcpStream,
+	id: Keycode,
 	login_server: sync::Arc<LoginServer>,
 	privatekey: sync::Arc<PrivateKey>,
 ) -> io::Result<()>
@@ -89,14 +95,19 @@ pub fn accept_client(
 		supports_empty_pulses: supports_empty_in,
 		quitbuffer: quitbuffer_in,
 
+		id: id,
+		username: String::new(),
+		id_and_username: format!("{}", id),
 		version: Version::undefined(),
 		platform: Platform::Unknown,
 		patchmode: Patchmode::None,
+		online: false,
 	};
 
 	let receive_task = start_recieve_task(client, reader);
-	let send_task = start_send_task(sendbuffer_out, dlbuffer_out, writer);
+	let send_task = start_send_task(id, sendbuffer_out, dlbuffer_out, writer);
 	let ping_task = start_ping_task(
+		id,
 		sendbuffer_ping,
 		timebuffer_out,
 		pingbuffer_out,
@@ -111,7 +122,7 @@ pub fn accept_client(
 		privatekey,
 	);
 	let login_task = start_login_task(loginbuffer_out, login_server);
-	let quit_task = start_quit_task(quitbuffer_out);
+	let quit_task = start_quit_task(id, quitbuffer_out);
 
 	let task = receive_task
 		.join5(ping_task, pulse_task, notice_task, request_task)
@@ -123,7 +134,7 @@ pub fn accept_client(
 		.map_err(|(e, _)| e)
 		.join(send_task)
 		.map(|((), ())| ())
-		.map_err(|e| eprintln!("Error in client: {:?}", e));
+		.map_err(move |e| eprintln!("Error in client {}: {:?}", id, e));
 
 	tokio::spawn(task);
 
@@ -135,6 +146,7 @@ fn start_recieve_task(
 	socket: ReadHalf<TcpStream>,
 ) -> impl Future<Item = (), Error = io::Error> + Send
 {
+	let client_id = client.id;
 	let receive_versioned = client.is_versioned.clone();
 
 	stream::unfold(socket, move |socket| {
@@ -151,7 +163,7 @@ fn start_recieve_task(
 	.map_err(|error| ReceiveTaskError::Recv { error })
 	.for_each(move |message: Message| handle_message(&mut client, message))
 	.or_else(|error| -> io::Result<()> { error.into() })
-	.map(|()| println!("Stopped receiving."))
+	.map(move |()| println!("Client {} stopped receiving.", client_id))
 }
 
 fn receive_message(
@@ -237,6 +249,7 @@ fn parse_message(buffer: Vec<u8>) -> io::Result<Message>
 }
 
 fn start_send_task(
+	client_id: Keycode,
 	sendbuffer: mpsc::Receiver<Message>,
 	downloadbuffer: mpsc::Receiver<(Message, Vec<u8>)>,
 	socket: WriteHalf<TcpStream>,
@@ -257,7 +270,7 @@ fn start_send_task(
 			eprintln!("Error in send_task: {:?}", error);
 			error
 		})
-		.map(|_socket| println!("Stopped sending."))
+		.map(move |_socket| println!("Client {} stopped sending.", client_id))
 }
 
 fn send_bytes(
@@ -371,6 +384,7 @@ fn prepare_buffer_size(buffer: &Vec<u8>) -> u32
 }
 
 fn start_ping_task(
+	client_id: Keycode,
 	mut sendbuffer: mpsc::Sender<Message>,
 	timebuffer: watch::Receiver<()>,
 	pingbuffer: watch::Receiver<()>,
@@ -424,7 +438,11 @@ fn start_ping_task(
 		})
 		.timeout(ping_tolerance)
 		.and_then(move |pingtime| {
-			println!("Client has {}ms ping.", pingtime.elapsed().as_millis());
+			println!(
+				"Client {} has {}ms ping.",
+				client_id,
+				pingtime.elapsed().as_millis()
+			);
 			Ok(())
 		})
 		.map_err(|e| {
@@ -548,13 +566,16 @@ fn start_login_task(
 }
 
 fn start_quit_task(
+	client_id: Keycode,
 	quitbuffer: watch::Receiver<()>,
 ) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	quitbuffer
 		.skip(1)
 		.into_future()
-		.map(|(_, _)| println!("Client gracefully disconnected."))
+		.map(move |(_, _)| {
+			println!("Client {} gracefully disconnected.", client_id)
+		})
 		.map_err(|(error, _)| {
 			eprintln!("Error in quit_task: {:?}", error);
 			io::Error::new(ErrorKind::ConnectionReset, error)
@@ -771,6 +792,10 @@ fn handle_message(
 		{
 			handle_request(client, name)?;
 		}
+		Message::JoinServer { .. } if client.online =>
+		{
+			println!("Ignoring message from online client: {:?}", message);
+		}
 		// TODO if closing
 		Message::JoinServer { .. } if false =>
 		{
@@ -820,13 +845,27 @@ fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
-		Message::LeaveServer { .. } =>
+		Message::LeaveServer { .. } if !client.online =>
 		{
-			println!("Ignoring message from client: {:?}", message);
+			println!("Ignoring message from offline client: {:?}", message);
 		}
-		Message::Init | Message::Chat { .. } =>
+		Message::LeaveServer { content: _ } =>
+		{
+			leave_server(client);
+		}
+		Message::Init | Message::Chat { .. } if !client.online =>
 		{
 			println!("Invalid message from offline client: {:?}", message);
+			return Err(ReceiveTaskError::Illegal);
+		}
+		Message::Init =>
+		{
+			init_client(client);
+		}
+		// TODO chat
+		Message::Chat { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
 		Message::Closing
@@ -851,7 +890,7 @@ fn greet_client(
 {
 	client.version = version;
 	client.is_versioned.store(true, atomic::Ordering::Relaxed);
-	println!("Client has version {}", version.to_string());
+	println!("Client {} has version {}.", client.id, version.to_string());
 
 	if let Some(PlatformMetadata {
 		platform,
@@ -859,9 +898,9 @@ fn greet_client(
 	}) = metadata
 	{
 		client.platform = platform;
-		println!("Client has platform {:?}", platform);
+		println!("Client {} has platform {:?}.", client.id, platform);
 		client.patchmode = patchmode;
-		println!("Client has patchmode {:?}", patchmode);
+		println!("Client {} has patchmode {:?}.", client.id, patchmode);
 	}
 
 	let myversion = Version::current();
@@ -961,7 +1000,10 @@ fn joining_server(
 	account_id: String,
 ) -> Result<(), ReceiveTaskError>
 {
-	println!("Client is logging in with account id {}", &account_id);
+	println!(
+		"Client {} is logging in with account id {}",
+		client.id, &account_id
+	);
 
 	match client.login.try_send(LoginRequest { token, account_id })
 	{
@@ -988,6 +1030,19 @@ fn joining_server(
 			}
 		}
 	}
+}
+
+fn leave_server(client: &mut Client)
+{
+	// TODO
+
+	client.online = false;
+}
+
+fn init_client(client: &mut Client)
+{
+	// TODO
+	let _ = client;
 }
 
 fn handle_request(
