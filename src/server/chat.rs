@@ -70,10 +70,11 @@ fn handle_message(
 		{
 			for (&id, client) in clients.iter_mut()
 			{
-				client
-					.sendbuffer
-					.try_send(message.clone())
-					.map_err(|_| to_be_removed.push(id));
+				match client.sendbuffer.try_send(message.clone())
+				{
+					Ok(()) => (),
+					Err(_error) => to_be_removed.push(id),
+				}
 			}
 		}
 

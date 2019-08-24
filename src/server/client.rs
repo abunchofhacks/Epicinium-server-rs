@@ -942,26 +942,34 @@ fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
-		Message::LeaveServer { content: _ } =>
+		Message::LeaveServer { content: _ } => match client.general_chat.take()
 		{
-			let general_chat = client.general_chat.take().ok_or_else(|| {
+			Some(mut general_chat) =>
+			{
+				general_chat.try_send(Message::LeaveServerInternal {
+					client_id: client.id,
+				})?;
+			}
+			None =>
+			{
 				println!("Invalid message from offline client: {:?}", message);
-				return ReceiveTaskError::Illegal;
-			})?;
-			general_chat.try_send(Message::LeaveServerInternal {
-				client_id: client.id,
-			})?;
-		}
-		Message::Init =>
+				return Err(ReceiveTaskError::Illegal);
+			}
+		},
+		Message::Init => match client.general_chat
 		{
-			let general_chat = client.general_chat.ok_or_else(|| {
+			Some(ref mut general_chat) =>
+			{
+				general_chat.try_send(Message::InitInternal {
+					client_id: client.id,
+				})?;
+			}
+			None =>
+			{
 				println!("Invalid message from offline client: {:?}", message);
-				return ReceiveTaskError::Illegal;
-			})?;
-			general_chat.try_send(Message::InitInternal {
-				client_id: client.id,
-			})?;
-		}
+				return Err(ReceiveTaskError::Illegal);
+			}
+		},
 		Message::Chat { .. } if client.username.is_empty() =>
 		{
 			println!("Invalid message from client: {:?}", message);
@@ -971,22 +979,31 @@ fn handle_message(
 			content,
 			sender: None,
 			target: ChatTarget::General,
-		} =>
+		} => match client.general_chat
 		{
-			let general_chat = client.general_chat.ok_or_else(|| {
+			Some(ref mut general_chat) =>
+			{
+				println!(
+					"Client {} '{}' sent chat message: {}",
+					client.id, client.username, content
+				);
+				general_chat.try_send(Message::Chat {
+					content: content,
+					sender: Some(client.username.clone()),
+					target: ChatTarget::General,
+				})?;
+			}
+			None =>
+			{
+				let message = Message::Chat {
+					content,
+					sender: None,
+					target: ChatTarget::General,
+				};
 				println!("Invalid message from offline client: {:?}", message);
-				return ReceiveTaskError::Illegal;
-			})?;
-			println!(
-				"Client {} '{}' sent chat message: {}",
-				client.id, client.username, content
-			);
-			general_chat.try_send(Message::Chat {
-				content: content,
-				sender: Some(client.username.clone()),
-				target: ChatTarget::General,
-			})?;
-		}
+				return Err(ReceiveTaskError::Illegal);
+			}
+		},
 		// TODO lobby chat
 		Message::Chat { .. } =>
 		{
