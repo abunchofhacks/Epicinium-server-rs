@@ -14,18 +14,7 @@ use tokio::sync::mpsc;
 
 use enumset::*;
 
-pub fn start() -> mpsc::Sender<Message>
-{
-	let (general_in, general_out) = mpsc::channel::<Message>(10000);
-
-	let task = start_chat_task(general_out);
-
-	tokio::spawn(task);
-
-	general_in
-}
-
-fn start_chat_task(
+pub fn start_chat_task(
 	messages: mpsc::Receiver<Message>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
@@ -41,8 +30,6 @@ fn handle_message(
 	clients: &mut HashMap<Keycode, Client>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
-	let mut to_be_removed: Vec<Keycode> = Vec::new();
-
 	match message
 	{
 		Message::InitInternal { client_id } =>
@@ -63,19 +50,16 @@ fn handle_message(
 		}
 		Message::LeaveServerInternal { client_id } =>
 		{
-			to_be_removed.push(client_id);
+			clients.remove(&client_id);
 		}
 
 		Message::Chat { .. } =>
 		{
-			for (&id, client) in clients.iter_mut()
+			for client in clients.values_mut()
 			{
-				match client.sendbuffer.try_send(message.clone())
-				{
-					Ok(()) => (),
-					Err(_error) => to_be_removed.push(id),
-				}
+				client.send(message.clone());
 			}
+			clients.retain(|_id, client| !client.dead);
 		}
 
 		Message::Pulse
@@ -98,19 +82,28 @@ fn handle_message(
 		}
 	}
 
-	for id in to_be_removed
-	{
-		clients.remove(&id);
-	}
-
 	Either::B(future::ok(()))
 }
 
 struct Client
 {
-	pub username: String,
-	pub join_metadata: Option<JoinMetadata>,
-	pub sendbuffer: mpsc::Sender<Message>,
+	username: String,
+	join_metadata: Option<JoinMetadata>,
+	sendbuffer: mpsc::Sender<Message>,
+	hidden: bool,
+	dead: bool,
+}
+
+impl Client
+{
+	fn send(&mut self, message: Message)
+	{
+		match self.sendbuffer.try_send(message.clone())
+		{
+			Ok(()) => (),
+			Err(_error) => self.dead = true,
+		}
+	}
 }
 
 fn joined_server(
@@ -124,15 +117,81 @@ fn joined_server(
 	// TODO ghostbusting
 
 	let join_metadata = generate_join_metadata(&unlocks);
+	let hidden = username.starts_with("#");
 
-	let client = Client {
+	let mut newcomer = Client {
 		username,
 		join_metadata,
 		sendbuffer,
+		hidden: hidden,
+		dead: false,
 	};
-	clients.insert(id, client);
+
+	// Confirm to the newcomer that they have joined.
+	let message = Message::JoinServer {
+		status: None,
+		content: Some(newcomer.username.clone()),
+		sender: None,
+		metadata: newcomer.join_metadata,
+	};
+	newcomer.send(message.clone());
+
+	// Tell the newcomer that they are online.
+	// TODO this is weird (#)
+	newcomer.send(message.clone());
+
+	// Tell everyone who the newcomer is.
+	if !newcomer.hidden
+	{
+		for other in clients.values_mut()
+		{
+			other.send(message.clone());
+		}
+
+		// Tell everyone the rating and stars of the newcomer.
+		// TODO rating and stars
+	}
+
+	// Let the client know which lobbies there are.
+	// TODO lobbies
+
+	// Let the client know who else is online.
+	for other in clients.values()
+	{
+		if !other.hidden
+		{
+			newcomer.send(Message::JoinServer {
+				status: None,
+				content: Some(other.username.clone()),
+				sender: None,
+				metadata: other.join_metadata,
+			});
+
+			// TODO rating
+			// TODO stars
+			// TODO join_lobby
+			// TODO in_game
+		}
+	}
+
+	// Let the client know we are done initializing.
+	newcomer.send(Message::Init);
+
+	// Show them a welcome message, if any.
+	welcome_client(&mut newcomer);
+
+	clients.retain(|_id, client| !client.dead);
+	if !newcomer.dead
+	{
+		clients.insert(id, newcomer);
+	}
 
 	future::ok(())
+}
+
+fn welcome_client(_client: &mut Client)
+{
+	// No welcome message at the moment.
 }
 
 fn generate_join_metadata(unlocks: &EnumSet<Unlock>) -> Option<JoinMetadata>

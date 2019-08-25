@@ -1,7 +1,7 @@
 /* TokioServer */
 
 use common::keycode::*;
-use server::chat;
+use server::chat::*;
 use server::client::*;
 use server::loginserver::*;
 use server::message::*;
@@ -34,9 +34,13 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let login_server = LoginServer::connect(settings)?;
 	let login = sync::Arc::new(login_server);
 
-	let chat = chat::start();
+	let (general_in, general_out) = mpsc::channel::<Message>(10000);
+	let chat_task = start_chat_task(general_out);
+	let chat = general_in;
 
-	let server = start_acceptance_task(listener, login, chat, privatekey);
+	let client_task = start_acceptance_task(listener, login, chat, privatekey);
+
+	let server = client_task.join(chat_task).map(|((), ())| ());
 
 	// TODO signal handling
 
