@@ -34,8 +34,11 @@ fn handle_message(
 	{
 		Message::InitInternal { client_id } =>
 		{
-			// TODO init
-			let _ = client_id;
+			match clients.get_mut(&client_id)
+			{
+				Some(found_client) => init_client(found_client, clients),
+				None => eprintln!("Client {} not found", client_id),
+			}
 		}
 		Message::JoiningServerInternal {
 			client_id,
@@ -50,7 +53,11 @@ fn handle_message(
 		}
 		Message::LeaveServerInternal { client_id } =>
 		{
-			clients.remove(&client_id);
+			match clients.remove(&client_id)
+			{
+				Some(removed_client) => leaving_server(removed_client, clients),
+				None => eprintln!("Client {} not found", client_id),
+			}
 		}
 
 		Message::Chat { .. } =>
@@ -214,4 +221,28 @@ fn generate_join_metadata(unlocks: &EnumSet<Unlock>) -> Option<JoinMetadata>
 	{
 		Some(metadata)
 	}
+}
+
+fn init_client(
+	found_client: &mut Client,
+	clients: &mut HashMap<Keycode, Client>,
+)
+{
+	// TODO
+}
+
+fn leaving_server(
+	removed_client: Client,
+	clients: &mut HashMap<Keycode, Client>,
+)
+{
+	let message = Message::LeaveServer {
+		content: Some(removed_client.username.clone()),
+	};
+	for client in clients.values_mut()
+	{
+		client.send(message.clone());
+	}
+	clients.retain(|_id, client| !client.dead);
+	removed_client.send(message);
 }
