@@ -34,9 +34,16 @@ fn handle_message(
 	{
 		Message::InitInternal { client_id } =>
 		{
-			match clients.get_mut(&client_id)
+			match clients.remove(&client_id)
 			{
-				Some(found_client) => init_client(found_client, clients),
+				Some(mut found_client) =>
+				{
+					init_client(&mut found_client, clients);
+					if !found_client.dead
+					{
+						clients.insert(client_id, found_client);
+					}
+				}
 				None => eprintln!("Client {} not found", client_id),
 			}
 		}
@@ -228,11 +235,49 @@ fn init_client(
 	clients: &mut HashMap<Keycode, Client>,
 )
 {
-	// TODO
+	// Let the client know which lobbies there are.
+	// TODO lobbies
+
+	// Tell the client that they are online.
+	found_client.send(Message::JoinServer {
+		status: None,
+		content: Some(found_client.username.clone()),
+		sender: None,
+		metadata: found_client.join_metadata,
+	});
+
+	// TODO rating
+	// TODO stars
+	// TODO join_lobby
+	// TODO in_game
+
+	// Let the client know who else is online.
+	for other in clients.values()
+	{
+		if !other.hidden
+		{
+			found_client.send(Message::JoinServer {
+				status: None,
+				content: Some(other.username.clone()),
+				sender: None,
+				metadata: other.join_metadata,
+			});
+
+			// TODO rating
+			// TODO stars
+			// TODO join_lobby
+			// TODO in_game
+		}
+	}
+
+	// Let the client know we are done initializing.
+	found_client.send(Message::Init);
+
+	clients.retain(|_id, client| !client.dead);
 }
 
 fn leaving_server(
-	removed_client: Client,
+	mut removed_client: Client,
 	clients: &mut HashMap<Keycode, Client>,
 )
 {
