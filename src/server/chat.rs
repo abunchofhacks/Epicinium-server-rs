@@ -14,40 +14,49 @@ use tokio::sync::mpsc;
 
 use enumset::*;
 
-pub fn start_chat_task(
-	messages: mpsc::Receiver<Message>,
-) -> impl Future<Item = (), Error = ()> + Send
+pub enum Update
 {
-	let mut clients: HashMap<Keycode, Client> = HashMap::new();
-
-	messages
-		.map_err(|error| eprintln!("Recv error in chat_task: {:?}", error))
-		.for_each(move |message| handle_message(message, &mut clients))
+	Join
+	{
+		client_id: Keycode,
+		username: String,
+		unlocks: EnumSet<Unlock>,
+		sendbuffer: mpsc::Sender<Message>,
+	},
+	Init
+	{
+		sendbuffer: mpsc::Sender<Message>
+	},
+	Leave
+	{
+		client_id: Keycode,
+		username: String,
+	},
+	Msg
+	{
+		message: Message
+	},
 }
 
-fn handle_message(
-	message: Message,
-	clients: &mut HashMap<Keycode, Client>,
+pub fn start_task(
+	updates: mpsc::Receiver<Update>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
-	match message
+	let mut clients: Vec<Client> = Vec::new();
+
+	updates
+		.map_err(|error| eprintln!("Recv error in chat_task: {:?}", error))
+		.for_each(move |update| handle_update(update, &mut clients))
+}
+
+fn handle_update(
+	update: Update,
+	clients: &mut Vec<Client>,
+) -> impl Future<Item = (), Error = ()> + Send
+{
+	match update
 	{
-		Message::InitInternal { client_id } =>
-		{
-			match clients.remove(&client_id)
-			{
-				Some(mut found_client) =>
-				{
-					init_client(&mut found_client, clients);
-					if !found_client.dead
-					{
-						clients.insert(client_id, found_client);
-					}
-				}
-				None => eprintln!("Client {} not found", client_id),
-			}
-		}
-		Message::JoiningServerInternal {
+		Update::Join {
 			client_id,
 			username,
 			unlocks,
@@ -58,41 +67,18 @@ fn handle_message(
 				client_id, username, unlocks, sendbuffer, clients,
 			));
 		}
-		Message::LeaveServerInternal { client_id } =>
-		{
-			match clients.remove(&client_id)
-			{
-				Some(removed_client) => leaving_server(removed_client, clients),
-				None => eprintln!("Client {} not found", client_id),
-			}
-		}
+		Update::Leave {
+			client_id,
+			username,
+		} => ,
 
-		Message::Chat { .. } =>
+		Update::Msg { message } =>
 		{
 			for client in clients.values_mut()
 			{
 				client.send(message.clone());
 			}
 			clients.retain(|_id, client| !client.dead);
-		}
-
-		Message::Pulse
-		| Message::Ping
-		| Message::Pong
-		| Message::Version { .. }
-		| Message::JoinServer { .. }
-		| Message::LeaveServer { .. }
-		| Message::Init
-		| Message::Closing
-		| Message::Quit
-		| Message::Stamp { .. }
-		| Message::Download { .. }
-		| Message::Request { .. }
-		| Message::RequestDenied { .. }
-		| Message::RequestFulfilled { .. }
-		| Message::JoinedServerInternal { .. } =>
-		{
-			panic!("Misrouted message in chat_task: {:?}", message);
 		}
 	}
 
