@@ -63,22 +63,23 @@ fn handle_update(
 			sendbuffer,
 		} =>
 		{
-			return Either::A(joined_server(
+			return Either::A(handle_join(
 				client_id, username, unlocks, sendbuffer, clients,
 			));
 		}
+		Update::Init { sendbuffer } => handle_init(sendbuffer, clients),
 		Update::Leave {
 			client_id,
 			username,
-		} => ,
+		} => handle_leave(client_id, username, clients),
 
 		Update::Msg { message } =>
 		{
-			for client in clients.values_mut()
+			for client in clients
 			{
 				client.send(message.clone());
 			}
-			clients.retain(|_id, client| !client.dead);
+			clients.retain(|client| !client.dead);
 		}
 	}
 
@@ -87,6 +88,7 @@ fn handle_update(
 
 struct Client
 {
+	id: Keycode,
 	username: String,
 	join_metadata: Option<JoinMetadata>,
 	sendbuffer: mpsc::Sender<Message>,
@@ -106,12 +108,12 @@ impl Client
 	}
 }
 
-fn joined_server(
+fn handle_join(
 	id: Keycode,
 	username: String,
 	unlocks: EnumSet<Unlock>,
 	sendbuffer: mpsc::Sender<Message>,
-	clients: &mut HashMap<Keycode, Client>,
+	clients: &mut Vec<Client>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
 	// TODO ghostbusting
@@ -120,6 +122,7 @@ fn joined_server(
 	let hidden = username.starts_with("#");
 
 	let mut newcomer = Client {
+		id: id,
 		username,
 		join_metadata,
 		sendbuffer,
@@ -136,14 +139,10 @@ fn joined_server(
 	};
 	newcomer.send(message.clone());
 
-	// Tell the newcomer that they are online.
-	// TODO this is weird (#)
-	newcomer.send(message.clone());
-
 	// Tell everyone who the newcomer is.
 	if !newcomer.hidden
 	{
-		for other in clients.values_mut()
+		for other in clients
 		{
 			other.send(message.clone());
 		}
@@ -156,7 +155,7 @@ fn joined_server(
 	// TODO lobbies
 
 	// Let the client know who else is online.
-	for other in clients.values()
+	for other in clients
 	{
 		if !other.hidden
 		{
@@ -174,17 +173,17 @@ fn joined_server(
 		}
 	}
 
+	// Tell the newcomer that they are online.
+	// TODO this is weird (#)
+	newcomer.send(message);
+
 	// Let the client know we are done initializing.
 	newcomer.send(Message::Init);
 
 	// Show them a welcome message, if any.
 	welcome_client(&mut newcomer);
 
-	clients.retain(|_id, client| !client.dead);
-	if !newcomer.dead
-	{
-		clients.insert(id, newcomer);
-	}
+	clients.push(newcomer);
 
 	future::ok(())
 }
@@ -216,38 +215,34 @@ fn generate_join_metadata(unlocks: &EnumSet<Unlock>) -> Option<JoinMetadata>
 	}
 }
 
-fn init_client(
-	found_client: &mut Client,
-	clients: &mut HashMap<Keycode, Client>,
-)
+fn handle_init(sendbuffer: mpsc::Sender<Message>, clients: &Vec<Client>)
+{
+	match do_init(sendbuffer, clients)
+	{
+		Ok(()) => (),
+		Err(e) => eprintln!("Send error while processing init: {:?}", e),
+	}
+}
+
+fn do_init(
+	sendbuffer: mpsc::Sender<Message>,
+	clients: &Vec<Client>,
+) -> Result<(), mpsc::error::TrySendError<Message>>
 {
 	// Let the client know which lobbies there are.
 	// TODO lobbies
 
-	// Tell the client that they are online.
-	found_client.send(Message::JoinServer {
-		status: None,
-		content: Some(found_client.username.clone()),
-		sender: None,
-		metadata: found_client.join_metadata,
-	});
-
-	// TODO rating
-	// TODO stars
-	// TODO join_lobby
-	// TODO in_game
-
 	// Let the client know who else is online.
-	for other in clients.values()
+	for client in clients
 	{
-		if !other.hidden
+		if !client.hidden
 		{
-			found_client.send(Message::JoinServer {
+			sendbuffer.try_send(Message::JoinServer {
 				status: None,
-				content: Some(other.username.clone()),
+				content: Some(client.username.clone()),
 				sender: None,
-				metadata: other.join_metadata,
-			});
+				metadata: client.join_metadata,
+			})?;
 
 			// TODO rating
 			// TODO stars
@@ -257,23 +252,17 @@ fn init_client(
 	}
 
 	// Let the client know we are done initializing.
-	found_client.send(Message::Init);
-
-	clients.retain(|_id, client| !client.dead);
+	sendbuffer.try_send(Message::Init)
 }
 
-fn leaving_server(
-	mut removed_client: Client,
-	clients: &mut HashMap<Keycode, Client>,
-)
+fn handle_leave(client_id: Keycode, username: String, clients: &mut Vec<Client>)
 {
 	let message = Message::LeaveServer {
-		content: Some(removed_client.username.clone()),
+		content: Some(username),
 	};
-	for client in clients.values_mut()
+	for client in clients
 	{
 		client.send(message.clone());
 	}
-	clients.retain(|_id, client| !client.dead);
-	removed_client.send(message);
+	clients.retain(|client| client.id != client_id);
 }
