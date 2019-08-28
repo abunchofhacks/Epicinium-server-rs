@@ -11,6 +11,7 @@ use futures::stream::Stream;
 use tokio::sync::mpsc;
 
 use enumset::*;
+use vec_drain_where::VecDrainWhereExt;
 
 #[derive(Debug)]
 pub enum Update
@@ -29,7 +30,6 @@ pub enum Update
 	Leave
 	{
 		client_id: Keycode,
-		username: String,
 	},
 
 	Msg(Message),
@@ -65,10 +65,7 @@ fn handle_update(
 			));
 		}
 		Update::Init { sendbuffer } => handle_init(sendbuffer, clients),
-		Update::Leave {
-			client_id,
-			username,
-		} => handle_leave(client_id, username, clients),
+		Update::Leave { client_id } => handle_leave(client_id, clients),
 
 		Update::Msg(message) =>
 		{
@@ -252,14 +249,39 @@ fn do_init(
 	sendbuffer.try_send(Message::Init)
 }
 
-fn handle_leave(client_id: Keycode, username: String, clients: &mut Vec<Client>)
+fn handle_leave(client_id: Keycode, clients: &mut Vec<Client>)
 {
-	let message = Message::LeaveServer {
-		content: Some(username),
-	};
-	for client in clients.iter_mut()
+	let removed: Vec<Client> = clients
+		.e_drain_where(|client| client.id == client_id)
+		.collect();
+
+	for removed_client in removed
 	{
-		client.send(message.clone());
+		let Client {
+			id: _,
+			username,
+			join_metadata: _,
+			mut sendbuffer,
+			hidden,
+			dead: _,
+		} = removed_client;
+
+		let message = Message::LeaveServer {
+			content: Some(username),
+		};
+
+		if !hidden
+		{
+			for client in clients.iter_mut()
+			{
+				client.send(message.clone());
+			}
+		}
+
+		match sendbuffer.try_send(message)
+		{
+			Ok(()) => (),
+			Err(e) => eprintln!("Send error while processing leave: {:?}", e),
+		}
 	}
-	clients.retain(|client| client.id != client_id);
 }

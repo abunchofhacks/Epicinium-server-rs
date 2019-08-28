@@ -63,6 +63,31 @@ impl Client
 	}
 }
 
+impl Drop for Client
+{
+	fn drop(&mut self)
+	{
+		match leave_general_chat(self)
+		{
+			Ok(()) => (),
+			Err(e) => eprintln!("Error while dropping client: {:?}", e),
+		}
+	}
+}
+
+fn leave_general_chat(
+	client: &mut Client,
+) -> Result<(), mpsc::error::TrySendError<chat::Update>>
+{
+	match client.general_chat.take()
+	{
+		Some(mut general_chat) => general_chat.try_send(chat::Update::Leave {
+			client_id: client.id,
+		}),
+		None => Ok(()),
+	}
+}
+
 pub fn accept_client(
 	socket: TcpStream,
 	id: Keycode,
@@ -1002,7 +1027,6 @@ fn handle_message(
 			{
 				general_chat.try_send(chat::Update::Leave {
 					client_id: client.id,
-					username: client.username.clone(),
 				})?;
 			}
 			None =>
