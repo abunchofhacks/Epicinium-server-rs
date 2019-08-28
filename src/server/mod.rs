@@ -2,6 +2,7 @@
 
 mod chat;
 mod client;
+mod killer;
 mod limits;
 mod loginserver;
 mod message;

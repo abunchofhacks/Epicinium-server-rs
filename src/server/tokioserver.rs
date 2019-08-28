@@ -3,6 +3,7 @@
 use common::keycode::*;
 use server::chat;
 use server::client::*;
+use server::killer;
 use server::loginserver::*;
 use server::settings::*;
 
@@ -14,6 +15,7 @@ use std::sync;
 use futures::{Future, Stream};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 
 pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 {
@@ -30,6 +32,9 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let pkey: PrivateKey = openssl::pkey::PKey::private_key_from_pem(&pem)?;
 	let privatekey = sync::Arc::new(pkey);
 
+	let (killcount_in, killcount_out) = watch::channel(0u8);
+	let killer_task = killer::start_task(killcount_in);
+
 	let login_server = LoginServer::connect(settings)?;
 	let login = sync::Arc::new(login_server);
 
@@ -37,11 +42,12 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let chat_task = chat::start_task(general_out);
 	let chat = general_in;
 
+	let _ = killcount_out;
 	let client_task = start_acceptance_task(listener, login, chat, privatekey);
 
-	let server = client_task.join(chat_task).map(|((), ())| ());
-
-	// TODO signal handling
+	let server = client_task
+		.join3(chat_task, killer_task)
+		.map(|((), (), ())| ());
 
 	tokio::run(server);
 

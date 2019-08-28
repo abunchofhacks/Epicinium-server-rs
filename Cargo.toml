@@ -11,7 +11,7 @@ serde_repr = "*"
 enum-map = "*"
 enum-map-derive = "*"
 enumset = "*"
-signal-hook = "0.1.10"
+signal-hook = {version = "0.1.10", features = ["tokio-support"] }
 vec-drain-where = "*"
 rand = "0.7.0"
 openssl = "*"
