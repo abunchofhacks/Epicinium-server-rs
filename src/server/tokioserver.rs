@@ -1,10 +1,9 @@
 /* TokioServer */
 
 use common::keycode::*;
-use server::chat::*;
+use server::chat;
 use server::client::*;
 use server::loginserver::*;
-use server::message::*;
 use server::settings::*;
 
 use std::error;
@@ -34,8 +33,8 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let login_server = LoginServer::connect(settings)?;
 	let login = sync::Arc::new(login_server);
 
-	let (general_in, general_out) = mpsc::channel::<Message>(10000);
-	let chat_task = start_chat_task(general_out);
+	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
+	let chat_task = chat::start_task(general_out);
 	let chat = general_in;
 
 	let client_task = start_acceptance_task(listener, login, chat, privatekey);
@@ -52,7 +51,7 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 fn start_acceptance_task(
 	listener: TcpListener,
 	login: sync::Arc<LoginServer>,
-	chat: mpsc::Sender<Message>,
+	chat: mpsc::Sender<chat::Update>,
 	privatekey: sync::Arc<PrivateKey>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {

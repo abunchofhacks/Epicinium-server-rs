@@ -3,8 +3,6 @@
 use common::keycode::*;
 use server::message::*;
 
-use std::collections::HashMap;
-
 use futures::future;
 use futures::future::Either;
 use futures::future::Future;
@@ -14,6 +12,7 @@ use tokio::sync::mpsc;
 
 use enumset::*;
 
+#[derive(Debug)]
 pub enum Update
 {
 	Join
@@ -25,17 +24,15 @@ pub enum Update
 	},
 	Init
 	{
-		sendbuffer: mpsc::Sender<Message>
+		sendbuffer: mpsc::Sender<Message>,
 	},
 	Leave
 	{
 		client_id: Keycode,
 		username: String,
 	},
-	Msg
-	{
-		message: Message
-	},
+
+	Msg(Message),
 }
 
 pub fn start_task(
@@ -73,9 +70,9 @@ fn handle_update(
 			username,
 		} => handle_leave(client_id, username, clients),
 
-		Update::Msg { message } =>
+		Update::Msg(message) =>
 		{
-			for client in clients
+			for client in clients.iter_mut()
 			{
 				client.send(message.clone());
 			}
@@ -142,7 +139,7 @@ fn handle_join(
 	// Tell everyone who the newcomer is.
 	if !newcomer.hidden
 	{
-		for other in clients
+		for other in clients.iter_mut()
 		{
 			other.send(message.clone());
 		}
@@ -155,7 +152,7 @@ fn handle_join(
 	// TODO lobbies
 
 	// Let the client know who else is online.
-	for other in clients
+	for other in clients.iter()
 	{
 		if !other.hidden
 		{
@@ -225,7 +222,7 @@ fn handle_init(sendbuffer: mpsc::Sender<Message>, clients: &Vec<Client>)
 }
 
 fn do_init(
-	sendbuffer: mpsc::Sender<Message>,
+	mut sendbuffer: mpsc::Sender<Message>,
 	clients: &Vec<Client>,
 ) -> Result<(), mpsc::error::TrySendError<Message>>
 {
@@ -260,7 +257,7 @@ fn handle_leave(client_id: Keycode, username: String, clients: &mut Vec<Client>)
 	let message = Message::LeaveServer {
 		content: Some(username),
 	};
-	for client in clients
+	for client in clients.iter_mut()
 	{
 		client.send(message.clone());
 	}
