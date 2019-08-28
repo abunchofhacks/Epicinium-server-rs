@@ -73,7 +73,6 @@ fn handle_update(
 			{
 				client.send(message.clone());
 			}
-			clients.retain(|client| !client.dead);
 		}
 	}
 
