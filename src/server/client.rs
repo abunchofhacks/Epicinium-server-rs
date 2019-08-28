@@ -53,6 +53,8 @@ struct Client
 	pub platform: Platform,
 	pub patchmode: Patchmode,
 	pub unlocks: EnumSet<Unlock>,
+
+	closing: bool,
 }
 
 impl Client
@@ -93,6 +95,7 @@ pub fn accept_client(
 	id: Keycode,
 	login_server: sync::Arc<LoginServer>,
 	chat_server: mpsc::Sender<chat::Update>,
+	killcount: watch::Receiver<u8>,
 	privatekey: sync::Arc<PrivateKey>,
 ) -> io::Result<()>
 {
@@ -133,9 +136,12 @@ pub fn accept_client(
 		platform: Platform::Unknown,
 		patchmode: Patchmode::None,
 		unlocks: EnumSet::empty(),
+
+		closing: false,
 	};
 
-	let receive_task = start_receive_task(client, joinedbuffer_out, reader);
+	let receive_task =
+		start_receive_task(client, joinedbuffer_out, killcount, reader);
 	let send_task = start_send_task(id, sendbuffer_out, dlbuffer_out, writer);
 	let ping_task = start_ping_task(
 		id,
@@ -183,11 +189,26 @@ pub fn accept_client(
 fn start_receive_task(
 	mut client: Client,
 	servermessages: mpsc::Receiver<Update>,
+	killcount: watch::Receiver<u8>,
 	socket: ReadHalf<TcpStream>,
 ) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	let client_id = client.id;
 	let receive_versioned = client.is_versioned.clone();
+
+	let killcount_updates = killcount
+		.filter(|&x| x > 0)
+		.map(|x| {
+			if x <= 1
+			{
+				Update::Closing
+			}
+			else
+			{
+				Update::Quit
+			}
+		})
+		.map_err(|error| ReceiveTaskError::Killcount { error });
 
 	stream::unfold(socket, move |socket| {
 		let versioned: bool = receive_versioned.load(atomic::Ordering::Relaxed);
@@ -203,6 +224,7 @@ fn start_receive_task(
 	.map_err(|error| ReceiveTaskError::Recv { error })
 	.map(|message| Update::Msg(message))
 	.select(servermessages.map_err(|error| ReceiveTaskError::Server { error }))
+	.select(killcount_updates)
 	.for_each(move |update: Update| handle_update(&mut client, update))
 	.or_else(|error| -> io::Result<()> { error.into() })
 	.map(move |()| println!("Client {} stopped receiving.", client_id))
@@ -714,6 +736,8 @@ enum Update
 		unlocks: EnumSet<Unlock>,
 		general_chat: mpsc::Sender<chat::Update>,
 	},
+	Closing,
+	Quit,
 	Msg(Message),
 }
 
@@ -741,6 +765,10 @@ enum ReceiveTaskError
 	Server
 	{
 		error: mpsc::error::RecvError,
+	},
+	Killcount
+	{
+		error: watch::error::RecvError,
 	},
 	Recv
 	{
@@ -799,6 +827,11 @@ impl Into<io::Result<()>> for ReceiveTaskError
 			ReceiveTaskError::Server { error } =>
 			{
 				eprintln!("Server error in receive_task: {:?}", error);
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+			ReceiveTaskError::Killcount { error } =>
+			{
+				eprintln!("Killcount error in receive_task: {:?}", error);
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
 			ReceiveTaskError::Recv { error } =>
@@ -923,6 +956,20 @@ fn handle_update(
 			Ok(())
 		}
 
+		Update::Closing =>
+		{
+			client.closing = true;
+			client.sendbuffer.try_send(Message::Closing)?;
+			Ok(())
+		}
+		Update::Quit =>
+		{
+			client.closing = true;
+			client.sendbuffer.try_send(Message::Closing)?;
+			client.sendbuffer.try_send(Message::Quit)?;
+			return Err(ReceiveTaskError::Goodbye);
+		}
+
 		Update::Msg(message) => handle_message(client, message),
 	}
 }
@@ -982,8 +1029,7 @@ fn handle_message(
 		{
 			println!("Ignoring message from online client: {:?}", message);
 		}
-		// TODO if closing
-		Message::JoinServer { .. } if false =>
+		Message::JoinServer { .. } if client.closing =>
 		{
 			client.sendbuffer.try_send(Message::Closing)?;
 		}
@@ -1049,6 +1095,7 @@ fn handle_message(
 		{
 			Some(ref mut general_chat) =>
 			{
+				client.sendbuffer.try_send(Message::Closing)?;
 				general_chat.try_send(chat::Update::Init {
 					sendbuffer: client.sendbuffer.clone(),
 				})?;
@@ -1171,8 +1218,7 @@ fn greet_client(
 
 		return Err(ReceiveTaskError::Goodbye);
 	}
-	// TODO is_closing
-	else if false
+	else if client.closing
 	{
 		client.sendbuffer.try_send(Message::Closing)?;
 		return Err(ReceiveTaskError::Goodbye);

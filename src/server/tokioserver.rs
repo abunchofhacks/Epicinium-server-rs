@@ -40,10 +40,14 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 
 	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
 	let chat_task = chat::start_task(general_out);
-	let chat = general_in;
 
-	let _ = killcount_out;
-	let client_task = start_acceptance_task(listener, login, chat, privatekey);
+	let client_task = start_acceptance_task(
+		listener,
+		login,
+		general_in,
+		killcount_out,
+		privatekey,
+	);
 
 	let server = client_task
 		.join3(chat_task, killer_task)
@@ -58,6 +62,7 @@ fn start_acceptance_task(
 	listener: TcpListener,
 	login: sync::Arc<LoginServer>,
 	chat: mpsc::Sender<chat::Update>,
+	killcount: watch::Receiver<u8>,
 	privatekey: sync::Arc<PrivateKey>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
@@ -78,6 +83,7 @@ fn start_acceptance_task(
 				id,
 				login.clone(),
 				chat.clone(),
+				killcount.clone(),
 				privatekey.clone(),
 			)
 			.map(|()| println!("Accepted client {}.", id))
