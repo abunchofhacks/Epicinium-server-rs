@@ -143,6 +143,7 @@ pub fn accept_client(
 		timebuffer_out,
 		pingbuffer_out,
 		pongbuffer_out,
+		quitbuffer_out.clone(),
 	);
 	let pulse_task = start_pulse_task(sendbuffer_pulse, supports_empty_out);
 	let notice_task = start_notice_task(sendbuffer_notice, noticebuffer_out);
@@ -430,6 +431,7 @@ fn start_ping_task(
 	timebuffer: watch::Receiver<()>,
 	pingbuffer: watch::Receiver<()>,
 	pongbuffer: watch::Receiver<()>,
+	quitbuffer: watch::Receiver<()>,
 ) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	// TODO variable ping_tolerance
@@ -456,6 +458,12 @@ fn start_ping_task(
 				})
 			}
 		})
+		.select(
+			quitbuffer
+				.skip(1)
+				.map_err(|error| PingTaskError::Recv { error })
+				.and_then(|()| Err(PingTaskError::Quit)),
+		)
 		.select(
 			pingbuffer
 				.skip(1)
@@ -817,6 +825,7 @@ enum PingTaskError
 		error: watch::error::RecvError,
 	},
 	NoPong,
+	Quit,
 }
 
 impl Into<io::Result<()>> for PingTaskError
@@ -845,6 +854,7 @@ impl Into<io::Result<()>> for PingTaskError
 				println!("Client failed to respond to ping.");
 				Err(io::Error::new(ErrorKind::ConnectionReset, "no pong"))
 			}
+			PingTaskError::Quit => Ok(()),
 		}
 	}
 }
