@@ -11,7 +11,6 @@ use futures::stream::Stream;
 use tokio::sync::mpsc;
 
 use enumset::*;
-use vec_drain_where::VecDrainWhereExt;
 
 #[derive(Debug)]
 pub enum Update
@@ -38,22 +37,18 @@ pub enum Update
 
 pub fn start_task(
 	updates: mpsc::Receiver<Update>,
-	mut loopback: mpsc::Sender<Update>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
 	let mut clients: Vec<Client> = Vec::new();
 
 	updates
 		.map_err(|error| eprintln!("Recv error in chat_task: {:?}", error))
-		.for_each(move |update| {
-			handle_update(update, &mut clients, &mut loopback)
-		})
+		.for_each(move |update| handle_update(update, &mut clients))
 }
 
 fn handle_update(
 	update: Update,
 	clients: &mut Vec<Client>,
-	loopback: &mut mpsc::Sender<Update>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
 	match update
@@ -66,7 +61,7 @@ fn handle_update(
 		} =>
 		{
 			return Either::A(handle_join(
-				client_id, username, unlocks, sendbuffer, clients, loopback,
+				client_id, username, unlocks, sendbuffer, clients,
 			));
 		}
 		Update::Init { sendbuffer } => handle_init(sendbuffer, clients),
@@ -81,7 +76,7 @@ fn handle_update(
 			{
 				client.send(message.clone());
 			}
-			cleanup(clients, loopback);
+			clients.retain(|client| !client.dead);
 		}
 	}
 
@@ -116,7 +111,6 @@ fn handle_join(
 	unlocks: EnumSet<Unlock>,
 	sendbuffer: mpsc::Sender<Message>,
 	clients: &mut Vec<Client>,
-	loopback: &mut mpsc::Sender<Update>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
 	// TODO ghostbusting
@@ -187,8 +181,6 @@ fn handle_join(
 	welcome_client(&mut newcomer);
 
 	clients.push(newcomer);
-
-	cleanup(clients, loopback);
 
 	future::ok(())
 }
@@ -270,16 +262,4 @@ fn handle_leave(client_id: Keycode, username: String, clients: &mut Vec<Client>)
 		client.send(message.clone());
 	}
 	clients.retain(|client| client.id != client_id);
-}
-
-fn cleanup(clients: &mut Vec<Client>, loopback: &mut mpsc::Sender<Update>)
-{
-	for client in clients.e_drain_where(|client| client.dead)
-	{
-		loopback
-			.try_send(Update::Msg(Message::LeaveServer {
-				content: Some(client.username),
-			}))
-			.expect("loopback should have the same lifetime as receiver");
-	}
 }

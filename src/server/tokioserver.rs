@@ -34,7 +34,7 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let login = sync::Arc::new(login_server);
 
 	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
-	let chat_task = chat::start_task(general_out, general_in.clone());
+	let chat_task = chat::start_task(general_out);
 	let chat = general_in;
 
 	let client_task = start_acceptance_task(listener, login, chat, privatekey);
