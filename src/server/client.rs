@@ -43,7 +43,8 @@ struct Client
 	requests: mpsc::Sender<String>,
 	login: mpsc::Sender<LoginRequest>,
 	general_chat: Option<mpsc::Sender<chat::Update>>,
-	is_versioned: sync::Arc<atomic::AtomicBool>,
+	has_proper_version: bool,
+	has_proper_version_a: sync::Arc<atomic::AtomicBool>,
 	supports_empty_pulses: mpsc::Sender<bool>,
 	quitbuffer: watch::Sender<()>,
 
@@ -61,7 +62,7 @@ impl Client
 {
 	fn is_unversioned(&self) -> bool
 	{
-		self.version == Version::undefined()
+		!self.has_proper_version
 	}
 }
 
@@ -126,7 +127,8 @@ pub fn accept_client(
 		requests: requestbuffer_in,
 		login: loginbuffer_in,
 		general_chat: None,
-		is_versioned: sync::Arc::new(atomic::AtomicBool::new(false)),
+		has_proper_version: false,
+		has_proper_version_a: sync::Arc::new(atomic::AtomicBool::new(false)),
 		supports_empty_pulses: supports_empty_in,
 		quitbuffer: quitbuffer_in,
 
@@ -194,7 +196,7 @@ fn start_receive_task(
 ) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	let client_id = client.id;
-	let receive_versioned = client.is_versioned.clone();
+	let receive_versioned = client.has_proper_version_a.clone();
 
 	let killcount_updates = killcount
 		.filter(|&x| x > 0)
@@ -744,7 +746,6 @@ enum Update
 enum ReceiveTaskError
 {
 	Quit,
-	Goodbye,
 	Illegal,
 	Send
 	{
@@ -799,7 +800,6 @@ impl Into<io::Result<()>> for ReceiveTaskError
 		match self
 		{
 			ReceiveTaskError::Quit => Ok(()),
-			ReceiveTaskError::Goodbye => Ok(()),
 			ReceiveTaskError::Illegal => Err(io::Error::new(
 				ErrorKind::ConnectionReset,
 				"Illegal message received",
@@ -967,7 +967,7 @@ fn handle_update(
 			client.closing = true;
 			client.sendbuffer.try_send(Message::Closing)?;
 			client.sendbuffer.try_send(Message::Quit)?;
-			return Err(ReceiveTaskError::Goodbye);
+			return Err(ReceiveTaskError::Quit);
 		}
 
 		Update::Msg(message) => handle_message(client, message),
@@ -1167,7 +1167,6 @@ fn greet_client(
 ) -> Result<(), ReceiveTaskError>
 {
 	client.version = version;
-	client.is_versioned.store(true, atomic::Ordering::Relaxed);
 	println!("Client {} has version {}.", client.id, version.to_string());
 
 	if let Some(PlatformMetadata {
@@ -1190,7 +1189,8 @@ fn greet_client(
 
 	if version.major != myversion.major || version == Version::undefined()
 	{
-		return Err(ReceiveTaskError::Goodbye);
+		// The client does not have a proper version.
+		return Ok(());
 	}
 	else if (client.patchmode == Patchmode::Itchio
 		|| client.patchmode == Patchmode::Gamejolt)
@@ -1216,13 +1216,22 @@ fn greet_client(
 		};
 		client.sendbuffer.try_send(message)?;
 
-		return Err(ReceiveTaskError::Goodbye);
+		// We treat the client as if they do not have a proper version,
+		// because we do not want to receive any more messages.
+		return Ok(());
 	}
 	else if client.closing
 	{
 		client.sendbuffer.try_send(Message::Closing)?;
-		return Err(ReceiveTaskError::Goodbye);
+		client.sendbuffer.try_send(Message::Quit)?;
+		return Err(ReceiveTaskError::Quit);
 	}
+
+	// If we got this far, the client has a proper version.
+	client.has_proper_version = true;
+	client
+		.has_proper_version_a
+		.store(true, atomic::Ordering::Relaxed);
 
 	let epsupport = version >= Version::exact(0, 31, 1, 0);
 	{
