@@ -46,7 +46,6 @@ struct Client
 	has_proper_version: bool,
 	has_proper_version_a: sync::Arc<atomic::AtomicBool>,
 	supports_empty_pulses: mpsc::Sender<bool>,
-	quitbuffer: watch::Sender<()>,
 
 	pub id: Keycode,
 	pub username: String,
@@ -111,7 +110,6 @@ pub fn accept_client(
 	let (pingbuffer_in, pingbuffer_out) = watch::channel(());
 	let (timebuffer_in, timebuffer_out) = watch::channel(());
 	let (pongbuffer_in, pongbuffer_out) = watch::channel(());
-	let (quitbuffer_in, quitbuffer_out) = watch::channel(());
 	let (supports_empty_in, supports_empty_out) = mpsc::channel::<bool>(1);
 	let (noticebuffer_in, noticebuffer_out) = mpsc::channel::<()>(1);
 	let (requestbuffer_in, requestbuffer_out) = mpsc::channel::<String>(10);
@@ -130,7 +128,6 @@ pub fn accept_client(
 		has_proper_version: false,
 		has_proper_version_a: sync::Arc::new(atomic::AtomicBool::new(false)),
 		supports_empty_pulses: supports_empty_in,
-		quitbuffer: quitbuffer_in,
 
 		id: id,
 		username: String::new(),
@@ -151,7 +148,6 @@ pub fn accept_client(
 		timebuffer_out,
 		pingbuffer_out,
 		pongbuffer_out,
-		quitbuffer_out.clone(),
 	);
 	let pulse_task = start_pulse_task(sendbuffer_pulse, supports_empty_out);
 	let notice_task = start_notice_task(sendbuffer_notice, noticebuffer_out);
@@ -169,16 +165,16 @@ pub fn accept_client(
 		login_server,
 		chat_server,
 	);
-	let quit_task = start_quit_task(id, quitbuffer_out);
 
-	let task = receive_task
+	let support_task = login_task
 		.join5(ping_task, pulse_task, notice_task, request_task)
 		.map(|((), (), (), (), ())| ())
-		.join(login_task)
-		.map(|((), ())| ())
-		.select(quit_task)
-		.map(|((), _)| ())
-		.map_err(|(e, _)| e)
+		.map(|()| debug_assert!(false, "All support tasks dropped"));
+
+	let task = receive_task
+		.select(support_task)
+		.map(|((), _other_future)| ())
+		.map_err(|(error, _other_future)| error)
 		.join(send_task)
 		.map(|((), ())| ())
 		.map_err(move |e| eprintln!("Error in client {}: {:?}", id, e));
@@ -455,7 +451,6 @@ fn start_ping_task(
 	timebuffer: watch::Receiver<()>,
 	pingbuffer: watch::Receiver<()>,
 	pongbuffer: watch::Receiver<()>,
-	quitbuffer: watch::Receiver<()>,
 ) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	// TODO variable ping_tolerance
@@ -482,12 +477,6 @@ fn start_ping_task(
 				})
 			}
 		})
-		.select(
-			quitbuffer
-				.skip(1)
-				.map_err(|error| PingTaskError::Recv { error })
-				.and_then(|()| Err(PingTaskError::Quit)),
-		)
 		.select(
 			pingbuffer
 				.skip(1)
@@ -712,23 +701,6 @@ fn start_login_task(
 		})
 }
 
-fn start_quit_task(
-	client_id: Keycode,
-	quitbuffer: watch::Receiver<()>,
-) -> impl Future<Item = (), Error = io::Error> + Send
-{
-	quitbuffer
-		.skip(1)
-		.into_future()
-		.map(move |(_, _)| {
-			println!("Client {} gracefully disconnected.", client_id)
-		})
-		.map_err(|(error, _)| {
-			eprintln!("Error in quit_task: {:?}", error);
-			io::Error::new(ErrorKind::ConnectionReset, error)
-		})
-}
-
 #[derive(Debug)]
 enum Update
 {
@@ -858,7 +830,6 @@ enum PingTaskError
 		error: watch::error::RecvError,
 	},
 	NoPong,
-	Quit,
 }
 
 impl Into<io::Result<()>> for PingTaskError
@@ -887,7 +858,6 @@ impl Into<io::Result<()>> for PingTaskError
 				println!("Client failed to respond to ping.");
 				Err(io::Error::new(ErrorKind::ConnectionReset, "no pong"))
 			}
-			PingTaskError::Quit => Ok(()),
 		}
 	}
 }
@@ -967,7 +937,7 @@ fn handle_update(
 			client.closing = true;
 			client.sendbuffer.try_send(Message::Closing)?;
 			client.sendbuffer.try_send(Message::Quit)?;
-			return Err(ReceiveTaskError::Quit);
+			Ok(())
 		}
 
 		Update::Msg(message) => handle_message(client, message),
@@ -1005,9 +975,7 @@ fn handle_message(
 		}
 		Message::Quit =>
 		{
-			// There might be a Future waiting for this, or there might not be.
-			let _ = client.quitbuffer.broadcast(());
-
+			println!("Client {} gracefully disconnected.", client.id);
 			return Err(ReceiveTaskError::Quit);
 		}
 		Message::Request { .. } | Message::JoinServer { .. }
@@ -1095,7 +1063,10 @@ fn handle_message(
 		{
 			Some(ref mut general_chat) =>
 			{
-				client.sendbuffer.try_send(Message::Closing)?;
+				if client.closing
+				{
+					client.sendbuffer.try_send(Message::Closing)?;
+				}
 				general_chat.try_send(chat::Update::Init {
 					sendbuffer: client.sendbuffer.clone(),
 				})?;
@@ -1224,7 +1195,10 @@ fn greet_client(
 	{
 		client.sendbuffer.try_send(Message::Closing)?;
 		client.sendbuffer.try_send(Message::Quit)?;
-		return Err(ReceiveTaskError::Quit);
+
+		// We treat the client as if they do not have a proper version,
+		// because we do not want to receive any more messages.
+		return Ok(());
 	}
 
 	// If we got this far, the client has a proper version.
