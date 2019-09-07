@@ -5,7 +5,7 @@ use common::keycode::Keycode;
 use common::version::*;
 use server::chat;
 use server::limits::*;
-use server::loginserver::*;
+use server::login;
 use server::message::*;
 use server::notice;
 use server::patch::*;
@@ -41,7 +41,7 @@ struct Client
 	pong_receive_time: watch::Sender<()>,
 	trigger_notice: mpsc::Sender<()>,
 	requests: mpsc::Sender<String>,
-	login: mpsc::Sender<LoginRequest>,
+	login: mpsc::Sender<login::Request>,
 	general_chat: Option<mpsc::Sender<chat::Update>>,
 	has_proper_version: bool,
 	has_proper_version_a: sync::Arc<atomic::AtomicBool>,
@@ -93,7 +93,7 @@ fn leave_general_chat(
 pub fn accept_client(
 	socket: TcpStream,
 	id: Keycode,
-	login_server: sync::Arc<LoginServer>,
+	login_server: sync::Arc<login::Server>,
 	chat_server: mpsc::Sender<chat::Update>,
 	killcount: watch::Receiver<u8>,
 	privatekey: sync::Arc<PrivateKey>,
@@ -113,7 +113,7 @@ pub fn accept_client(
 	let (supports_empty_in, supports_empty_out) = mpsc::channel::<bool>(1);
 	let (noticebuffer_in, noticebuffer_out) = mpsc::channel::<()>(1);
 	let (requestbuffer_in, requestbuffer_out) = mpsc::channel::<String>(10);
-	let (loginbuffer_in, loginbuffer_out) = mpsc::channel::<LoginRequest>(1);
+	let (loginbuffer_in, loginbuffer_out) = mpsc::channel::<login::Request>(1);
 	let (reader, writer) = socket.split();
 
 	let client = Client {
@@ -607,8 +607,8 @@ fn start_login_task(
 	client_id: Keycode,
 	sendbuffer: mpsc::Sender<Message>,
 	mut joinedbuffer: mpsc::Sender<Update>,
-	requestbuffer: mpsc::Receiver<LoginRequest>,
-	login_server: sync::Arc<LoginServer>,
+	requestbuffer: mpsc::Receiver<login::Request>,
+	login_server: sync::Arc<login::Server>,
 	mut chat_server: mpsc::Sender<chat::Update>,
 ) -> impl Future<Item = (), Error = io::Error> + Send
 {
@@ -729,7 +729,7 @@ enum ReceiveTaskError
 	},
 	Login
 	{
-		error: mpsc::error::TrySendError<LoginRequest>,
+		error: mpsc::error::TrySendError<login::Request>,
 	},
 	Chat
 	{
@@ -1270,7 +1270,7 @@ fn joining_server(
 		client.id, &account_id
 	);
 
-	match client.login.try_send(LoginRequest { token, account_id })
+	match client.login.try_send(login::Request { token, account_id })
 	{
 		Ok(()) => Ok(()),
 		Err(error) =>

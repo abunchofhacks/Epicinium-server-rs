@@ -1,10 +1,10 @@
-/* TokioServer */
+/* Server::Tokio */
 
 use common::keycode::*;
 use server::chat;
 use server::client::*;
 use server::killer;
-use server::loginserver::*;
+use server::login;
 use server::settings::*;
 
 use std::error;
@@ -35,7 +35,7 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let (killcount_in, killcount_out) = watch::channel(0u8);
 	let killer_task = killer::start_task(killcount_in);
 
-	let login_server = LoginServer::connect(settings)?;
+	let login_server = login::connect(settings)?;
 	let login = sync::Arc::new(login_server);
 
 	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
@@ -60,7 +60,7 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 
 fn start_acceptance_task(
 	listener: TcpListener,
-	login: sync::Arc<LoginServer>,
+	login: sync::Arc<login::Server>,
 	chat: mpsc::Sender<chat::Update>,
 	killcount: watch::Receiver<u8>,
 	privatekey: sync::Arc<PrivateKey>,

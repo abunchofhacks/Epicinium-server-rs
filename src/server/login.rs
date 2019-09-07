@@ -1,4 +1,4 @@
-/* LoginServer */
+/* Server::Login */
 
 use common::keycode::*;
 use server::message::*;
@@ -12,33 +12,31 @@ use futures::future::{Either, Future};
 use reqwest as http;
 
 #[derive(Debug)]
-pub struct LoginRequest
+pub struct Request
 {
 	pub token: String,
 	pub account_id: String,
 }
 
-pub struct LoginServer
+pub struct Server
 {
 	connection: Option<Connection>,
 }
 
-impl LoginServer
+pub fn connect(settings: &Settings) -> Result<Server, Box<dyn error::Error>>
 {
-	pub fn connect(
-		settings: &Settings,
-	) -> Result<LoginServer, Box<dyn error::Error>>
-	{
-		let connection = Connection::open(settings)?;
+	let connection = Connection::open(settings)?;
 
-		Ok(LoginServer {
-			connection: connection,
-		})
-	}
+	Ok(Server {
+		connection: connection,
+	})
+}
 
+impl Server
+{
 	pub fn login(
 		&self,
-		request: LoginRequest,
+		request: Request,
 	) -> impl Future<Item = LoginData, Error = ResponseStatus> + Send
 	{
 		match &self.connection
@@ -50,7 +48,7 @@ impl LoginServer
 
 	fn dev_login(
 		&self,
-		request: LoginRequest,
+		request: Request,
 	) -> impl Future<Item = LoginData, Error = ResponseStatus> + Send
 	{
 		let username;
@@ -133,7 +131,7 @@ impl Connection
 
 	fn login(
 		&self,
-		request: LoginRequest,
+		request: Request,
 	) -> impl Future<Item = LoginData, Error = ResponseStatus> + Send
 	{
 		let payload = json!({

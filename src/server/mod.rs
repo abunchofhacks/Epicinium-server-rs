@@ -4,13 +4,13 @@ mod chat;
 mod client;
 mod killer;
 mod limits;
-mod loginserver;
+mod login;
 mod message;
 mod notice;
 mod patch;
 
 pub mod settings;
-pub mod tokioserver;
+pub mod tokio;
 
 pub use self::settings::*;
-pub use self::tokioserver::*;
+pub use self::tokio::*;
