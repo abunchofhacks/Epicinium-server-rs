@@ -1213,6 +1213,11 @@ fn greet_client(
 		let _ = client.supports_empty_pulses.try_send(epsupport);
 	}
 
+	if version >= Version::exact(0, 32, 0, 0)
+	{
+		// TODO enable compression
+	}
+
 	if version >= Version::exact(0, 31, 1, 0)
 	{
 		match client.platform
