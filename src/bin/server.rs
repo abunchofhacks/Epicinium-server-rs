@@ -4,14 +4,20 @@ extern crate epicinium;
 
 use epicinium::*;
 
-use std::io;
-
-fn main() -> io::Result<()>
+fn main()
 {
 	let mut logname = "rust".to_string();
 	let currentversion = Version::current();
 
-	let mut settings = Settings::create("settings-server.json")?;
+	let mut settings = match Settings::create("settings-server.json")
+	{
+		Ok(settings) => settings,
+		Err(e) =>
+		{
+			eprintln!("Error while loading the settings: {}", e);
+			return;
+		}
+	};
 
 	match settings.logname()
 	{
@@ -32,12 +38,17 @@ fn main() -> io::Result<()>
 	);
 	println!("");
 
+	match run_server(&settings)
 	{
-		run_server(&settings)?;
+		Ok(()) =>
+		{
+			println!("");
+			println!("[ Done ]");
+		}
+		Err(e) =>
+		{
+			eprintln!("Error while running the server: {}", e);
+			return;
+		}
 	}
-
-	println!("");
-	println!("[ Done ]");
-
-	Ok(())
 }

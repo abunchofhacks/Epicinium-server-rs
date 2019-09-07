@@ -6,7 +6,6 @@ pub fn is_requestable(filepath: &Path) -> bool
 {
 	(is_picture(&filepath) || is_ruleset(&filepath) || is_fzmodel(&filepath))
 		&& filepath.is_relative()
-		&& filepath.is_file()
 }
 
 fn is_picture(filepath: &Path) -> bool

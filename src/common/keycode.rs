@@ -4,7 +4,7 @@ use common::base32;
 
 use std::fmt;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Keycode(pub u64);
 
 // Create a lossy keycode by interleaving a 16 bit key and the 44 least-

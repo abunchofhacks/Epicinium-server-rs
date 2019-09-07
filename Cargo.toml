@@ -11,12 +11,16 @@ serde_repr = "*"
 enum-map = "*"
 enum-map-derive = "*"
 enumset = "*"
-signal-hook = "0.1.10"
+signal-hook = {version = "0.1.10", features = ["tokio-support"] }
 vec-drain-where = "*"
 rand = "0.7.0"
 openssl = "*"
 reqwest = "*"
-futures = "*"
+futures = "0.1"
+tokio = "0.1"
+tokio-io = "0.1"
+backtrace = "*"
+owning_ref = "*"
 
 [features]
 defaults = []
