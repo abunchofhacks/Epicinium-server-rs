@@ -33,7 +33,7 @@ pub fn start_task(
 				Err(KillerError::TripleTerminate)
 			}
 		})
-		.map(|_killcount| ())
+		.map(|_killcount| debug_assert!(false, "Kill task dropped"))
 		.map_err(|error| eprintln!("Error in killer: {:?}", error))
 }
 

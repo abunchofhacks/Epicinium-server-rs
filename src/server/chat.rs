@@ -167,7 +167,7 @@ fn handle_join(
 	}
 
 	// Tell the newcomer that they are online.
-	// TODO this is weird (#)
+	// TODO this is weird (#1411)
 	newcomer.send(message);
 
 	// Let the client know we are done initializing.
