@@ -28,7 +28,6 @@ pub enum State
 	Open,
 	Closing,
 	Closed,
-	Disconnected,
 }
 
 pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
@@ -125,59 +124,81 @@ fn start_close_task(
 	live_count: sync::Arc<atomic::AtomicUsize>,
 	chat_closed: oneshot::Receiver<()>,
 	chat_closing: oneshot::Sender<()>,
+	server_state: watch::Sender<State>,
+) -> impl Future<Item = (), Error = ()> + Send
+{
+	wait_for_kill(killcount.clone(), chat_closing, server_state)
+		.and_then(move |state| wait_for_close(killcount, chat_closed, state))
+		.and_then(move |()| wait_for_disconnect(live_count))
+}
+
+fn wait_for_kill(
+	killcount: watch::Receiver<u8>,
+	chat_closing: oneshot::Sender<()>,
+	mut server_state: watch::Sender<State>,
+) -> impl Future<Item = watch::Sender<State>, Error = ()> + Send
+{
+	killcount
+		.skip_while(|&x| Ok(x < 1))
+		.into_future()
+		.map_err(|(error, _killcount)| {
+			eprintln!("Killcount error in close task: {:?}", error)
+		})
+		.and_then(move |(_current, _killcount)| {
+			chat_closing.send(()).map_err(|error| {
+				eprintln!("Chat send error in close task: {:?}", error)
+			})
+		})
+		.inspect(|()| println!("Closing..."))
+		.and_then(move |()| {
+			server_state
+				.broadcast(State::Closing)
+				.map_err(|error| {
+					eprintln!("Broadcast error in close task: {:?}", error)
+				})
+				.map(|()| server_state)
+		})
+}
+
+fn wait_for_close(
+	killcount: watch::Receiver<u8>,
+	chat_closed: oneshot::Receiver<()>,
 	mut server_state: watch::Sender<State>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
 	killcount
+		.skip_while(|&x| Ok(x < 2))
 		.into_future()
 		.map_err(|(error, _)| {
 			eprintln!("Killcount error in close task: {:?}", error)
 		})
-		.and_then(move |(_current, killcount)| {
-			// TODO broadcast State::CLOSING
-			chat_closing
-				.send(())
-				.map_err(|error| {
-					eprintln!("Chat send error in close task: {:?}", error)
-				})
-				.map(move |()| killcount)
+		.and_then(|(x, _killcount)| {
+			x.ok_or_else(|| eprintln!("No killcount in close task"))
 		})
-		.and_then(move |killcount| {
-			killcount
-				.filter(|&x| x >= 2)
-				.map(|_x| State::Closed)
-				.into_future()
-				.map_err(|(error, _)| {
-					eprintln!("Killcount error in close task: {:?}", error)
-				})
-				.and_then(|(x, _killcount)| {
-					x.ok_or_else(|| eprintln!("No killcount in close task"))
-				})
-				.select(chat_closed.map(|()| State::Closed).map_err(|error| {
-					eprintln!("Chat recv error in close task: {:?}", error)
-				}))
-				.map(|(state, _other_future)| state)
-				.map_err(|((), _other_future)| ())
-		})
-		.map(move |state: State| {
-			let timer = Interval::new_interval(Duration::from_millis(500))
-				.skip_while(move |_instant| {
-					Ok(live_count.load(atomic::Ordering::Relaxed) > 0)
-				})
-				.map(|_instant| State::Disconnected)
-				.timeout(Duration::from_secs(5))
-				.map_err(|error| {
-					eprintln!("Timer error in close task: {:?}", error)
-				});
-
-			Ok(state).into_future().into_stream().chain(timer)
-		})
-		.into_stream()
-		.flatten()
-		.take_while(|&state| Ok(state != State::Disconnected))
-		.for_each(move |state| {
-			server_state.broadcast(state).map_err(|error| {
+		.map(|_x| println!("Closing forcefully..."))
+		.select(chat_closed.map_err(|error| {
+			eprintln!("Chat recv error in close task: {:?}", error)
+		}))
+		.map(|((), _other_future)| ())
+		.map_err(|((), _other_future)| ())
+		.and_then(move |()| {
+			server_state.broadcast(State::Closed).map_err(|error| {
 				eprintln!("Broadcast error in close task: {:?}", error)
 			})
 		})
+}
+
+fn wait_for_disconnect(
+	live_count: sync::Arc<atomic::AtomicUsize>,
+) -> impl Future<Item = (), Error = ()> + Send
+{
+	Interval::new_interval(Duration::from_millis(500))
+		.skip_while(move |_instant| {
+			Ok(live_count.load(atomic::Ordering::Relaxed) > 0)
+		})
+		.into_future()
+		.map(|(_instant, _interval)| println!("All clients have disconnected."))
+		.map_err(|(error, _interval)| error)
+		.timeout(Duration::from_secs(5))
+		.map_err(|error| eprintln!("Timer error in close task: {:?}", error))
 }

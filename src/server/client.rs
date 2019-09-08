@@ -208,11 +208,6 @@ fn start_receive_task(
 			ServerState::Open => None,
 			ServerState::Closing => Some(Update::Closing),
 			ServerState::Closed => Some(Update::Quit),
-			ServerState::Disconnected =>
-			{
-				debug_assert!(false, "Not all clients are disconnected");
-				Some(Update::Quit)
-			}
 		})
 		.map_err(|error| ReceiveTaskError::Killcount { error });
 
@@ -943,7 +938,6 @@ fn handle_update(
 		Update::Quit =>
 		{
 			client.closing = true;
-			client.sendbuffer.try_send(Message::Closing)?;
 			client.sendbuffer.try_send(Message::Quit)?;
 			Ok(())
 		}
@@ -1201,7 +1195,6 @@ fn greet_client(
 	}
 	else if client.closing
 	{
-		client.sendbuffer.try_send(Message::Closing)?;
 		client.sendbuffer.try_send(Message::Quit)?;
 
 		// We treat the client as if they do not have a proper version,

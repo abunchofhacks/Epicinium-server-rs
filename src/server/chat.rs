@@ -95,6 +95,10 @@ fn handle_update(
 		Update::Closing =>
 		{
 			close.is_closing = true;
+			if clients.is_empty()
+			{
+				do_close(close);
+			}
 		}
 
 		Update::Msg(message) =>
@@ -288,19 +292,21 @@ fn handle_leave(
 
 	if close.is_closing && clients.is_empty()
 	{
-		if let Some(watcher) = close.watcher.take()
-		{
-			match watcher.send(())
-			{
-				Ok(()) => (),
-				Err(error) =>
-				{
-					eprintln!("Closed error while processing init: {:?}", error)
-				}
-			}
-		}
-		close.is_closed = true;
+		do_close(close);
 	}
+}
+
+fn do_close(close: &mut Close)
+{
+	if let Some(watcher) = close.watcher.take()
+	{
+		match watcher.send(())
+		{
+			Ok(()) => (),
+			Err(_error) => println!("Chat force-closed."),
+		}
+	}
+	close.is_closed = true;
 }
 
 fn do_leave(client_id: Keycode, clients: &mut Vec<Client>)
