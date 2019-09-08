@@ -9,6 +9,7 @@ use futures::future::Future;
 use futures::stream::Stream;
 
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
 use enumset::*;
 use vec_drain_where::VecDrainWhereExt;
@@ -31,28 +32,53 @@ pub enum Update
 	{
 		client_id: Keycode,
 	},
+	Closing,
 
 	Msg(Message),
 }
 
 pub fn start_task(
 	updates: mpsc::Receiver<Update>,
+	closing: oneshot::Receiver<()>,
+	closed: oneshot::Sender<()>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
 	let mut clients: Vec<Client> = Vec::new();
+	let mut close = Close {
+		is_closing: false,
+		is_closed: false,
+		close: closed,
+	};
+
+	let closing_updates = closing
+		.map(|()| Update::Closing)
+		.map_err(|error| eprintln!("Closing error in chat_task: {:?}", error))
+		.into_stream();
 
 	updates
 		.map_err(|error| eprintln!("Recv error in chat_task: {:?}", error))
-		.for_each(move |update| handle_update(update, &mut clients))
+		.select(closing_updates)
+		.for_each(move |update| handle_update(update, &mut clients, &mut close))
+}
+
+struct Close
+{
+	is_closing: bool,
+	is_closed: bool,
+	close: oneshot::Sender<()>,
 }
 
 fn handle_update(
 	update: Update,
 	clients: &mut Vec<Client>,
+	close: &mut Close,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
 	match update
 	{
+		Update::Join { .. } | Update::Init { .. } | Update::Leave { .. }
+			if close.is_closed =>
+		{}
 		Update::Join {
 			client_id,
 			username,
@@ -65,7 +91,11 @@ fn handle_update(
 			));
 		}
 		Update::Init { sendbuffer } => handle_init(sendbuffer, clients),
-		Update::Leave { client_id } => handle_leave(client_id, clients),
+		Update::Leave { client_id } => handle_leave(client_id, clients, close),
+		Update::Closing =>
+		{
+			close.is_closing = true;
+		}
 
 		Update::Msg(message) =>
 		{
@@ -248,7 +278,24 @@ fn do_init(
 	sendbuffer.try_send(Message::Init)
 }
 
-fn handle_leave(client_id: Keycode, clients: &mut Vec<Client>)
+fn handle_leave(
+	client_id: Keycode,
+	clients: &mut Vec<Client>,
+	close: &mut Close,
+)
+{
+	do_leave(client_id, clients);
+
+	if close.is_closing && clients.is_empty()
+	{
+		close.close.send(()).map_err(|error| {
+			eprintln!("Closed error while processing init: {:?}", error)
+		});
+		close.is_closed = true;
+	}
+}
+
+fn do_leave(client_id: Keycode, clients: &mut Vec<Client>)
 {
 	let removed: Vec<Client> = clients
 		.e_drain_where(|client| client.id == client_id)

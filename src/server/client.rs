@@ -9,6 +9,7 @@ use server::login;
 use server::message::*;
 use server::notice;
 use server::patch::*;
+use server::tokio::State as ServerState;
 
 use std::io;
 use std::io::ErrorKind;
@@ -95,10 +96,13 @@ pub fn accept_client(
 	id: Keycode,
 	login_server: sync::Arc<login::Server>,
 	chat_server: mpsc::Sender<chat::Update>,
-	killcount: watch::Receiver<u8>,
+	server_state: watch::Receiver<ServerState>,
+	live_count: sync::Arc<atomic::AtomicUsize>,
 	privatekey: sync::Arc<PrivateKey>,
 ) -> io::Result<()>
 {
+	live_count.fetch_add(1, atomic::Ordering::Relaxed);
+
 	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
 	let sendbuffer_ping = sendbuffer_in.clone();
 	let sendbuffer_pulse = sendbuffer_in.clone();
@@ -140,7 +144,7 @@ pub fn accept_client(
 	};
 
 	let receive_task =
-		start_receive_task(client, joinedbuffer_out, killcount, reader);
+		start_receive_task(client, joinedbuffer_out, server_state, reader);
 	let send_task = start_send_task(id, sendbuffer_out, dlbuffer_out, writer);
 	let ping_task = start_ping_task(
 		id,
@@ -177,7 +181,11 @@ pub fn accept_client(
 		.map_err(|(error, _other_future)| error)
 		.join(send_task)
 		.map(|((), ())| ())
-		.map_err(move |e| eprintln!("Error in client {}: {:?}", id, e));
+		.map_err(move |e| eprintln!("Error in client {}: {:?}", id, e))
+		.then(|result| {
+			live_count.fetch_sub(1, atomic::Ordering::Relaxed);
+			result
+		});
 
 	tokio::spawn(task);
 
@@ -187,23 +195,23 @@ pub fn accept_client(
 fn start_receive_task(
 	mut client: Client,
 	servermessages: mpsc::Receiver<Update>,
-	killcount: watch::Receiver<u8>,
+	server_state: watch::Receiver<ServerState>,
 	socket: ReadHalf<TcpStream>,
 ) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	let client_id = client.id;
 	let receive_versioned = client.has_proper_version_a.clone();
 
-	let killcount_updates = killcount
-		.filter(|&x| x > 0)
-		.map(|x| {
-			if x <= 1
+	let killcount_updates = server_state
+		.filter_map(|x| match x
+		{
+			ServerState::Open => None,
+			ServerState::Closing => Some(Update::Closing),
+			ServerState::Closed => Some(Update::Quit),
+			ServerState::Disconnected =>
 			{
-				Update::Closing
-			}
-			else
-			{
-				Update::Quit
+				debug_assert!(false, "Not all clients are disconnected");
+				Some(Update::Quit)
 			}
 		})
 		.map_err(|error| ReceiveTaskError::Killcount { error });
