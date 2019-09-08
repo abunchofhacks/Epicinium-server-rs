@@ -47,7 +47,7 @@ pub fn start_task(
 	let mut close = Close {
 		is_closing: false,
 		is_closed: false,
-		close: closed,
+		watcher: Some(closed),
 	};
 
 	let closing_updates = closing
@@ -65,7 +65,7 @@ struct Close
 {
 	is_closing: bool,
 	is_closed: bool,
-	close: oneshot::Sender<()>,
+	watcher: Option<oneshot::Sender<()>>,
 }
 
 fn handle_update(
@@ -288,9 +288,17 @@ fn handle_leave(
 
 	if close.is_closing && clients.is_empty()
 	{
-		close.close.send(()).map_err(|error| {
-			eprintln!("Closed error while processing init: {:?}", error)
-		});
+		if let Some(watcher) = close.watcher.take()
+		{
+			match watcher.send(())
+			{
+				Ok(()) => (),
+				Err(error) =>
+				{
+					eprintln!("Closed error while processing init: {:?}", error)
+				}
+			}
+		}
 		close.is_closed = true;
 	}
 }

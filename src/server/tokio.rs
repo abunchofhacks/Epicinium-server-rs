@@ -125,7 +125,7 @@ fn start_close_task(
 	live_count: sync::Arc<atomic::AtomicUsize>,
 	chat_closed: oneshot::Receiver<()>,
 	chat_closing: oneshot::Sender<()>,
-	server_state: watch::Sender<State>,
+	mut server_state: watch::Sender<State>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
 	killcount
@@ -175,7 +175,7 @@ fn start_close_task(
 		.into_stream()
 		.flatten()
 		.take_while(|&state| Ok(state != State::Disconnected))
-		.for_each(|state| {
+		.for_each(move |state| {
 			server_state.broadcast(state).map_err(|error| {
 				eprintln!("Broadcast error in close task: {:?}", error)
 			})

@@ -182,7 +182,7 @@ pub fn accept_client(
 		.join(send_task)
 		.map(|((), ())| ())
 		.map_err(move |e| eprintln!("Error in client {}: {:?}", id, e))
-		.then(|result| {
+		.then(move |result| {
 			live_count.fetch_sub(1, atomic::Ordering::Relaxed);
 			result
 		});
