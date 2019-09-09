@@ -23,7 +23,11 @@ impl Version
 {
 	pub fn current() -> Version
 	{
-		if cfg!(debug_assertions)
+		if cfg!(feature = "version-is-dev")
+		{
+			Version::dev()
+		}
+		else if cfg!(debug_assertions)
 		{
 			if cfg!(feature = "candidate")
 			{

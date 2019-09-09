@@ -1,0 +1,2 @@
+This folder contains automatically generated log files.
+If the game is not currently running, these files can be deleted to free up space.
