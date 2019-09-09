@@ -192,7 +192,7 @@ fn wait_for_disconnect(
 	live_count: sync::Arc<atomic::AtomicUsize>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
-	Interval::new_interval(Duration::from_millis(500))
+	Interval::new_interval(Duration::from_millis(25))
 		.skip_while(move |_instant| {
 			Ok(live_count.load(atomic::Ordering::Relaxed) > 0)
 		})

@@ -2,6 +2,10 @@
 /target
 **/*.rs.bk
 
+# copied epicinium output
+/bin
+/tools
+
 # output files
 *.out
 
