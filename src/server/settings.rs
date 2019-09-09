@@ -223,7 +223,11 @@ impl Settings
 			defaults: Default::default(),
 		};
 
-		if cfg!(debug_assertions)
+		if cfg!(feature = "version-is-dev")
+		{
+			settings.defaults.port = Some(9999);
+		}
+		else if cfg!(debug_assertions)
 		{
 			if cfg!(feature = "candidate")
 			{

@@ -103,7 +103,8 @@ impl Connection
 		settings: &Settings,
 	) -> Result<Option<Connection>, Box<dyn error::Error>>
 	{
-		let url = if !cfg!(debug_assertions) || cfg!(feature = "candidate")
+		let url = if !cfg!(feature = "version-is-dev")
+			&& (!cfg!(debug_assertions) || cfg!(feature = "candidate"))
 		{
 			settings.get_login_server()?
 		}
