@@ -239,7 +239,7 @@ fn receive_message(
 {
 	if length == 0
 	{
-		println!("Received pulse.");
+		//println!("Received pulse.");
 
 		// Unfold expects the value first and the state second.
 		let result = Ok((Message::Pulse, socket));
@@ -276,12 +276,12 @@ fn receive_message(
 		println!("Receiving very large message of length {}", length);
 	}
 
-	println!("Receiving message of length {}...", length);
+	//println!("Receiving message of length {}...", length);
 
 	let buffer = vec![0; length as usize];
 	let future_data = tokio_io::io::read_exact(socket, buffer).and_then(
 		|(socket, buffer)| {
-			println!("Received message of length {}.", buffer.len());
+			//println!("Received message of length {}.", buffer.len());
 			let message = parse_message(buffer)?;
 
 			// Unfold expects the value first and the state second.
@@ -305,7 +305,7 @@ fn parse_message(buffer: Vec<u8>) -> io::Result<Message>
 
 	if jsonstr.len() < 200
 	{
-		println!("Received message: {}", jsonstr);
+		//println!("Received message: {}", jsonstr);
 	}
 
 	let message: Message = serde_json::from_str(&jsonstr)?;
@@ -344,7 +344,7 @@ fn send_bytes(
 ) -> impl Future<Item = WriteHalf<TcpStream>, Error = io::Error> + Send
 {
 	tokio_io::io::write_all(socket, buffer).map(move |(socket, buffer)| {
-		println!("Sent {} bytes.", buffer.len());
+		//println!("Sent {} bytes.", buffer.len());
 		socket
 	})
 }
@@ -353,7 +353,7 @@ fn prepare_message(message: Message) -> Vec<u8>
 {
 	if let Message::Pulse = message
 	{
-		println!("Sending pulse...");
+		//println!("Sending pulse...");
 
 		let zeroes = [0u8; 4];
 		return zeroes.to_vec();
@@ -411,11 +411,11 @@ fn prepare_message_data(message: Message) -> (String, u32)
 		println!("Sending very large message of length {}", length);
 	}
 
-	println!("Sending message of length {}...", length);
+	//println!("Sending message of length {}...", length);
 
 	if length < 200
 	{
-		println!("Sending message: {}", jsonstr);
+		//println!("Sending message: {}", jsonstr);
 	}
 
 	(jsonstr, length)
@@ -443,7 +443,7 @@ fn prepare_buffer_size(buffer: &Vec<u8>) -> u32
 		);
 	}
 
-	println!("And sending chunk of size {}...", size);
+	//println!("And sending chunk of size {}...", size);
 
 	size
 }
@@ -1140,7 +1140,7 @@ fn greet_client(
 ) -> Result<(), ReceiveTaskError>
 {
 	client.version = version;
-	println!("Client {} has version {}.", client.id, version.to_string());
+	//println!("Client {} has version {}.", client.id, version.to_string());
 
 	if let Some(PlatformMetadata {
 		platform,
@@ -1148,9 +1148,9 @@ fn greet_client(
 	}) = metadata
 	{
 		client.platform = platform;
-		println!("Client {} has platform {:?}.", client.id, platform);
+		//println!("Client {} has platform {:?}.", client.id, platform);
 		client.patchmode = patchmode;
-		println!("Client {} has patchmode {:?}.", client.id, patchmode);
+		//println!("Client {} has patchmode {:?}.", client.id, patchmode);
 	}
 
 	let myversion = Version::current();

@@ -4,6 +4,7 @@ use common::keycode::*;
 use server::chat;
 use server::client::*;
 use server::killer;
+use server::limits;
 use server::login;
 use server::settings::*;
 
@@ -32,6 +33,9 @@ pub enum State
 
 pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 {
+	limits::enable_coredumps()?;
+	limits::increase_sockets()?;
+
 	let server = settings.get_server()?;
 	let port = settings.get_port()?;
 	let address: SocketAddr = format!("{}:{}", server, port).parse()?;

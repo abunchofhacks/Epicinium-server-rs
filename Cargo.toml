@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Sander in 't Veld <sanderintveld@hotmail.com>"]
 
 [dependencies]
+rlimit = "*"
 serde = "*"
 serde_derive = "*"
 serde_json = "*"

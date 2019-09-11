@@ -8,6 +8,7 @@ extern crate openssl;
 extern crate owning_ref;
 extern crate rand;
 extern crate reqwest;
+extern crate rlimit;
 extern crate serde;
 extern crate signal_hook;
 extern crate tokio;
