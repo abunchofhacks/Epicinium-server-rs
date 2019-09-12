@@ -9,6 +9,7 @@ mod message;
 mod notice;
 mod patch;
 
+pub mod countingtest;
 pub mod settings;
 pub mod tokio;
 
