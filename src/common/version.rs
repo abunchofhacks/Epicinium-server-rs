@@ -126,9 +126,11 @@ pub enum VersionParseError
 	},
 }
 
+impl std::error::Error for VersionParseError {}
+
 impl Display for VersionParseError
 {
-	fn fmt(&self, f: &mut Formatter) -> ::std::fmt::Result
+	fn fmt(&self, f: &mut Formatter) -> std::fmt::Result
 	{
 		match self
 		{
