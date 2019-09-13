@@ -223,34 +223,57 @@ impl Settings
 			defaults: Default::default(),
 		};
 
+		settings.set_defaults();
+		settings.parse_arguments()?;
+		settings.load()?;
+
+		Ok(settings)
+	}
+
+	fn set_defaults(&mut self)
+	{
 		if cfg!(feature = "version-is-dev")
 		{
-			settings.defaults.port = Some(9999);
+			self.defaults.port = Some(9999);
 		}
 		else if cfg!(debug_assertions)
 		{
 			if cfg!(feature = "candidate")
 			{
-				settings.defaults.port = Some(9976);
-				settings.defaults.login_server =
+				self.defaults.port = Some(9976);
+				self.defaults.login_server =
 					Some("https://test.epicinium.nl".to_string());
 			}
 			else
 			{
-				settings.defaults.port = Some(9999);
+				self.defaults.port = Some(9999);
 			}
 		}
 		else
 		{
-			settings.defaults.port = Some(9975);
-			settings.defaults.login_server =
+			self.defaults.port = Some(9975);
+			self.defaults.login_server =
 				Some("https://login.epicinium.nl".to_string());
 		}
-		settings.defaults.allow_discord_login = Some(false);
 
-		settings.load()?;
+		self.defaults.allow_discord_login = Some(false);
+	}
 
-		Ok(settings)
+	fn parse_arguments(&mut self) -> io::Result<()>
+	{
+		for arg in std::env::args().skip(1)
+		{
+			if arg.starts_with("-")
+			{
+				// TODO
+			}
+			else
+			{
+				// Not a settings argument; will be handled by the application.
+			}
+		}
+
+		Ok(())
 	}
 
 	pub fn load(&mut self) -> io::Result<()>
