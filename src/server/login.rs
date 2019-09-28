@@ -94,6 +94,38 @@ impl Server
 			}
 		}
 	}
+
+	pub fn deregister_server(
+		&self,
+	) -> impl Future<Item = (), Error = ApiError> + Send
+	{
+		match self.connection
+		{
+			ConnectionImpl::Http(ref connection) =>
+			{
+				Either::A(connection.deregister_server())
+			}
+			ConnectionImpl::Dummy(ref connection) => Either::B(Ok(())),
+		}
+	}
+
+	pub fn get_port(&self) -> u16
+	{
+		match self.connection
+		{
+			ConnectionImpl::Http(ref connection) => connection.port,
+			ConnectionImpl::Dummy(ref connection) => connection.port,
+		}
+	}
+
+	pub fn set_port(&mut self, port: u16) -> Result<(), ApiError>
+	{
+		match self.connection
+		{
+			ConnectionImpl::Http(ref connection) => connection.set_port(port),
+			ConnectionImpl::Dummy(ref connection) => Ok(()),
+		}
+	}
 }
 
 struct Dummy
@@ -165,6 +197,8 @@ struct Connection
 	http: http::async::Client,
 	register_server_url: http::Url,
 	validate_session_url: http::Url,
+	port: u16,
+	registered_url: http::Url,
 }
 
 impl Connection
@@ -177,13 +211,15 @@ impl Connection
 		let mut register_server_url = base_url.clone();
 		register_server_url.set_path("api/v1/servers");
 
-		let mut validate_session_url = base_url;
+		let mut validate_session_url = base_url.clone();
 		validate_session_url.set_path("validate_session.php");
 
 		Ok(Connection {
 			http: http::async::Client::new(),
 			register_server_url,
 			validate_session_url,
+			registered_url: base_url,
+			port: 0,
 		})
 	}
 
@@ -245,7 +281,7 @@ impl Connection
 	) -> impl Future<Item = RegistrationResponse, Error = ApiError> + Send
 	{
 		self.http
-			.post(self.register_server_url.clone())
+			.request(http::Method::POST, self.register_server_url.clone())
 			.send()
 			.map_err(|error| {
 				eprintln!("Failed to register server: {}", error);
@@ -264,6 +300,36 @@ impl Connection
 				})
 			})
 	}
+
+	fn deregister_server(
+		&self,
+	) -> impl Future<Item = (), Error = ApiError> + Send
+	{
+		self.http
+			.request(http::Method::DELETE, self.registered_url.clone())
+			.send()
+			.map_err(|error| {
+				eprintln!("Failed to deregister server: {}", error);
+				error.into()
+			})
+			.and_then(|response| {
+				response.error_for_status().map_err(|e| e.into())
+			})
+			.map(|_| ())
+	}
+
+	fn set_port(&mut self, port: u16) -> Result<(), ApiError>
+	{
+		self.port = port;
+		self.registered_url = self
+			.register_server_url
+			.join(&port.to_string())
+			.map_err(|error| {
+				eprintln!("Failed to append port to url: {}", error);
+				error.into()
+			})?;
+		Ok(())
+	}
 }
 
 #[derive(Debug)]
@@ -276,6 +342,10 @@ pub enum ApiError
 	Response
 	{
 		error: io::Error
+	},
+	Url
+	{
+		error: http::UrlError
 	},
 }
 
@@ -292,6 +362,14 @@ impl From<io::Error> for ApiError
 	fn from(error: io::Error) -> Self
 	{
 		ApiError::Response { error }
+	}
+}
+
+impl From<http::UrlError> for ApiError
+{
+	fn from(error: http::UrlError) -> Self
+	{
+		ApiError::Url { error }
 	}
 }
 

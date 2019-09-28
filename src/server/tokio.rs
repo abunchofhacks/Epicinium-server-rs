@@ -40,8 +40,7 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let server = settings.get_server()?;
 	let ipaddress = server.to_string();
 
-	let login_server = login::connect(settings)?;
-	let login = sync::Arc::new(login_server);
+	let login = login::connect(settings)?;
 
 	let privatekey = get_private_key()?;
 
@@ -51,21 +50,31 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 
 fn start_running(
 	ipaddress: String,
-	login: sync::Arc<login::Server>,
+	login: login::Server,
 	privatekey: sync::Arc<PrivateKey>,
 )
 {
 	let server = login
-		.clone()
 		.register_server()
 		.map_err(|error| eprintln!("Failed to register server: {}", error))
-		.and_then(move |RegistrationResponse { port }| {
-			start_listening(ipaddress, port).map_err(|error| {
-				eprintln!("Failed to start listening: {}", error)
-			})
+		.and_then(move |response| {
+			let port = response.port;
+			login.set_port(port);
+			start_listening(ipaddress, port)
+				.map_err(|error| {
+					eprintln!("Failed to start listening: {}", error)
+				})
+				.map(move |listener| (listener, login))
 		})
-		.and_then(move |listener| {
+		.and_then(move |(listener, login_server)| {
+			let login = sync::Arc::new(login);
 			start_server_task(listener, login, privatekey)
+				.map(|()| login_server)
+		})
+		.then(|login| {
+			login.deregister_server().map_err(|error| {
+				eprintln!("Failed to deregister server: {}", error)
+			})
 		});
 
 	tokio::run(server);
