@@ -216,32 +216,53 @@ impl Settings
 
 	pub fn create(filename: &str) -> io::Result<Settings>
 	{
-		let mut settings = Settings {
-			filename: filename.to_string(),
-			overrides: Default::default(),
-			contents: Default::default(),
-			defaults: Default::default(),
+		let defaults = Settings::get_defaults();
+		let arguments = Settings::parse_arguments()?;
+
+		let fname = match arguments.fallback
+		{
+			Some(ref x) => x.to_string(),
+			None => filename.to_string(),
 		};
 
-		settings.set_defaults();
-		settings.parse_arguments()?;
+		let mut settings = Settings {
+			filename: fname,
+			overrides: arguments,
+			contents: Default::default(),
+			defaults: defaults,
+		};
+
 		settings.load()?;
 
 		Ok(settings)
 	}
 
-	fn set_defaults(&mut self)
+	fn get_defaults() -> SettingContents
 	{
-		self.defaults.allow_discord_login = Some(false);
+		SettingContents {
+			allow_discord_login: Some(false),
+			..Default::default()
+		}
 	}
 
-	fn parse_arguments(&mut self) -> io::Result<()>
+	fn parse_arguments() -> io::Result<SettingContents>
 	{
+		let mut blob: String = String::new();
+
 		for arg in std::env::args().skip(1)
 		{
-			if arg.starts_with("-")
+			if arg.starts_with("--")
 			{
-				// TODO
+				let (_, assignment) = arg.split_at(2);
+				if blob.is_empty()
+				{
+					blob = assignment.to_string();
+				}
+				else
+				{
+					blob.push('&');
+					blob.push_str(assignment);
+				}
 			}
 			else
 			{
@@ -249,7 +270,9 @@ impl Settings
 			}
 		}
 
-		Ok(())
+		// This is a bit weird, but it works.
+		serde_urlencoded::from_str::<SettingContents>(&blob)
+			.map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 	}
 
 	pub fn load(&mut self) -> io::Result<()>
