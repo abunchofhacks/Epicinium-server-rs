@@ -6,6 +6,7 @@ use server::client::*;
 use server::killer;
 use server::limits;
 use server::login;
+use server::login::RegistrationResponse;
 use server::settings::*;
 
 use std::error;
@@ -37,18 +38,69 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	limits::increase_sockets()?;
 
 	let server = settings.get_server()?;
-	let port = settings.get_port()?;
-	let address: SocketAddr = format!("{}:{}", server, port).parse()?;
+	let ipaddress = server.to_string();
+
+	let login_server = login::connect(settings)?;
+	let login = sync::Arc::new(login_server);
+
+	let privatekey = get_private_key()?;
+
+	start_running(ipaddress, login, privatekey);
+	Ok(())
+}
+
+fn start_running(
+	ipaddress: String,
+	login: sync::Arc<login::Server>,
+	privatekey: sync::Arc<PrivateKey>,
+)
+{
+	let server = login
+		.clone()
+		.register_server()
+		.map_err(|error| eprintln!("Failed to register server: {}", error))
+		.and_then(move |RegistrationResponse { port }| {
+			start_listening(ipaddress, port).map_err(|error| {
+				eprintln!("Failed to start listening: {}", error)
+			})
+		})
+		.and_then(move |listener| {
+			start_server_task(listener, login, privatekey)
+		});
+
+	tokio::run(server);
+}
+
+fn start_listening(
+	ipaddress: String,
+	port: u16,
+) -> Result<TcpListener, Box<dyn error::Error>>
+{
+	let address: SocketAddr = format!("{}:{}", ipaddress, port).parse()?;
 	let listener = TcpListener::bind(&address)?;
 
-	println!("Listening on {}:{}", server, port);
+	println!("Listening on {}:{}", ipaddress, port);
 
+	Ok(listener)
+}
+
+fn get_private_key() -> Result<sync::Arc<PrivateKey>, Box<dyn error::Error>>
+{
 	let mut pem: Vec<u8> = Vec::new();
 	let mut file = std::fs::File::open("keys/dummy_private.pem")?;
 	file.read_to_end(&mut pem)?;
 	let pkey: PrivateKey = openssl::pkey::PKey::private_key_from_pem(&pem)?;
 	let privatekey = sync::Arc::new(pkey);
 
+	Ok(privatekey)
+}
+
+fn start_server_task(
+	listener: TcpListener,
+	login: sync::Arc<login::Server>,
+	privatekey: sync::Arc<PrivateKey>,
+) -> impl Future<Item = (), Error = ()> + Send
+{
 	let (killcount_in, killcount_out) = watch::channel(0u8);
 	let killer_task = killer::start_task(killcount_in);
 
@@ -64,9 +116,6 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 		state_in,
 	);
 
-	let login_server = login::connect(settings)?;
-	let login = sync::Arc::new(login_server);
-
 	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
 	let chat_task = chat::start_task(general_out, closing_out, closed_in);
 
@@ -74,16 +123,12 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 		listener, login, general_in, state_out, live_count, privatekey,
 	);
 
-	let server = client_task
+	client_task
 		.join3(chat_task, killer_task)
 		.map(|((), (), ())| ())
 		.select(close_task)
 		.map(|((), _other_future)| ())
-		.map_err(|(error, _other_future)| error);
-
-	tokio::run(server);
-
-	Ok(())
+		.map_err(|(error, _other_future)| error)
 }
 
 fn start_acceptance_task(

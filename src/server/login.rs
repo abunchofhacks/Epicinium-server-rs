@@ -5,9 +5,12 @@ use server::message::*;
 use server::settings::*;
 
 use std::error;
+use std::fmt;
+use std::io;
 
 use futures::future;
-use futures::future::{Either, Future};
+use futures::future::Either;
+use futures::{Future, IntoFuture};
 
 use reqwest as http;
 
@@ -18,18 +21,41 @@ pub struct Request
 	pub account_id: String,
 }
 
+#[derive(Clone, Deserialize, Debug)]
+pub struct RegistrationResponse
+{
+	pub port: u16,
+}
+
 pub struct Server
 {
-	connection: Option<Connection>,
+	connection: ConnectionImpl,
+}
+
+enum ConnectionImpl
+{
+	Http(Connection),
+	Dummy(Dummy),
 }
 
 pub fn connect(settings: &Settings) -> Result<Server, Box<dyn error::Error>>
 {
-	let connection = Connection::open(settings)?;
-
-	Ok(Server {
-		connection: connection,
-	})
+	if settings.login_server().is_some()
+		|| (!cfg!(feature = "version-is-dev")
+			&& (!cfg!(debug_assertions) || cfg!(feature = "candidate")))
+	{
+		let connection = Connection::open(settings)?;
+		Ok(Server {
+			connection: ConnectionImpl::Http(connection),
+		})
+	}
+	else
+	{
+		let dummy = Dummy::open(settings)?;
+		Ok(Server {
+			connection: ConnectionImpl::Dummy(dummy),
+		})
+	}
 }
 
 impl Server
@@ -39,14 +65,52 @@ impl Server
 		request: Request,
 	) -> impl Future<Item = LoginData, Error = ResponseStatus> + Send
 	{
-		match &self.connection
+		match self.connection
 		{
-			Some(connection) => Either::A(connection.login(request)),
-			None => Either::B(self.dev_login(request)),
+			ConnectionImpl::Http(ref connection) =>
+			{
+				Either::A(connection.login(request))
+			}
+			ConnectionImpl::Dummy(ref connection) =>
+			{
+				Either::B(connection.login(request))
+			}
 		}
 	}
 
-	fn dev_login(
+	pub fn register_server(
+		&self,
+	) -> impl Future<Item = RegistrationResponse, Error = ApiError> + Send
+	{
+		match self.connection
+		{
+			ConnectionImpl::Http(ref connection) =>
+			{
+				Either::A(connection.register_server())
+			}
+			ConnectionImpl::Dummy(ref connection) =>
+			{
+				Either::B(connection.register_server().into_future())
+			}
+		}
+	}
+}
+
+struct Dummy
+{
+	port: u16,
+}
+
+impl Dummy
+{
+	fn open(settings: &Settings) -> Result<Dummy, Box<dyn error::Error>>
+	{
+		let port = settings.get_port()?;
+
+		Ok(Dummy { port })
+	}
+
+	fn login(
 		&self,
 		request: Request,
 	) -> impl Future<Item = LoginData, Error = ResponseStatus> + Send
@@ -89,45 +153,38 @@ impl Server
 
 		future::ok(data)
 	}
+
+	fn register_server(&self) -> Result<RegistrationResponse, ApiError>
+	{
+		Ok(RegistrationResponse { port: self.port })
+	}
 }
 
 struct Connection
 {
 	http: http::async::Client,
+	register_server_url: http::Url,
 	validate_session_url: http::Url,
 }
 
 impl Connection
 {
-	fn open(
-		settings: &Settings,
-	) -> Result<Option<Connection>, Box<dyn error::Error>>
+	fn open(settings: &Settings) -> Result<Connection, Box<dyn error::Error>>
 	{
-		let url = if !cfg!(feature = "version-is-dev")
-			&& (!cfg!(debug_assertions) || cfg!(feature = "candidate"))
-		{
-			settings.get_login_server()?
-		}
-		else
-		{
-			match settings.login_server()
-			{
-				Some(x) => x,
-				None =>
-				{
-					return Ok(None);
-				}
-			}
-		};
-
+		let url = settings.get_login_server()?;
 		let base_url = http::Url::parse(url)?;
+
+		let mut register_server_url = base_url.clone();
+		register_server_url.set_path("api/v1/servers");
+
 		let mut validate_session_url = base_url;
 		validate_session_url.set_path("validate_session.php");
 
-		Ok(Some(Connection {
+		Ok(Connection {
 			http: http::async::Client::new(),
-			validate_session_url: validate_session_url,
-		}))
+			register_server_url,
+			validate_session_url,
+		})
 	}
 
 	fn login(
@@ -181,5 +238,83 @@ impl Connection
 					Err(response.status)
 				}
 			})
+	}
+
+	fn register_server(
+		&self,
+	) -> impl Future<Item = RegistrationResponse, Error = ApiError> + Send
+	{
+		self.http
+			.post(self.register_server_url.clone())
+			.send()
+			.map_err(|error| {
+				eprintln!("Failed to register server: {}", error);
+				error.into()
+			})
+			.and_then(|response| {
+				response.error_for_status().map_err(|e| e.into())
+			})
+			.and_then(|mut response| {
+				response.json().map_err(|error| {
+					eprintln!(
+						"Received malformed response from login server: {}",
+						error
+					);
+					error.into()
+				})
+			})
+	}
+}
+
+#[derive(Debug)]
+pub enum ApiError
+{
+	Request
+	{
+		error: http::Error
+	},
+	Response
+	{
+		error: io::Error
+	},
+}
+
+impl From<http::Error> for ApiError
+{
+	fn from(error: http::Error) -> Self
+	{
+		ApiError::Request { error }
+	}
+}
+
+impl From<io::Error> for ApiError
+{
+	fn from(error: io::Error) -> Self
+	{
+		ApiError::Response { error }
+	}
+}
+
+impl fmt::Display for ApiError
+{
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
+	{
+		match self
+		{
+			ApiError::Request { error } => error.fmt(f),
+			ApiError::Response { error } => error.fmt(f),
+		}
+	}
+}
+
+impl error::Error for ApiError
+{
+	fn source(&self) -> Option<&(dyn error::Error + 'static)>
+	{
+		match self
+		{
+			ApiError::Request { error } => error.source(),
+			ApiError::Response { error } => error.source(),
+		}
 	}
 }

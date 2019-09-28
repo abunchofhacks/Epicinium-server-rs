@@ -32,7 +32,7 @@ struct SettingContents
 	#[serde(default, skip_serializing_if = "is_zero")]
 	server: Option<String>,
 	#[serde(default, skip_serializing_if = "is_zero")]
-	port: Option<i32>,
+	port: Option<u16>,
 	#[serde(default, skip_serializing_if = "is_zero")]
 	login_server: Option<String>,
 	#[serde(default, skip_serializing_if = "is_zero")]
@@ -67,7 +67,7 @@ impl Settings
 			.or(self.contents.server.as_ref())
 			.or(self.defaults.server.as_ref())
 	}
-	pub fn port(&self) -> Option<i32>
+	pub fn port(&self) -> Option<u16>
 	{
 		self.overrides
 			.port
@@ -122,7 +122,7 @@ impl Settings
 	{
 		self.server().ok_or(Error::new("server"))
 	}
-	pub fn get_port(&self) -> Result<i32, Error>
+	pub fn get_port(&self) -> Result<u16, Error>
 	{
 		self.port().ok_or(Error::new("port"))
 	}
@@ -156,7 +156,7 @@ impl Settings
 	{
 		self.contents.server = Some(value);
 	}
-	pub fn set_port(&mut self, value: i32)
+	pub fn set_port(&mut self, value: u16)
 	{
 		self.contents.port = Some(value);
 	}
@@ -189,7 +189,7 @@ impl Settings
 	{
 		self.overrides.server = Some(value);
 	}
-	pub fn override_port(&mut self, value: i32)
+	pub fn override_port(&mut self, value: u16)
 	{
 		self.overrides.port = Some(value);
 	}
@@ -232,30 +232,6 @@ impl Settings
 
 	fn set_defaults(&mut self)
 	{
-		if cfg!(feature = "version-is-dev")
-		{
-			self.defaults.port = Some(9999);
-		}
-		else if cfg!(debug_assertions)
-		{
-			if cfg!(feature = "candidate")
-			{
-				self.defaults.port = Some(9976);
-				self.defaults.login_server =
-					Some("https://test.epicinium.nl".to_string());
-			}
-			else
-			{
-				self.defaults.port = Some(9999);
-			}
-		}
-		else
-		{
-			self.defaults.port = Some(9975);
-			self.defaults.login_server =
-				Some("https://login.epicinium.nl".to_string());
-		}
-
 		self.defaults.allow_discord_login = Some(false);
 	}
 
