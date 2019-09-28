@@ -6,7 +6,7 @@ use server::client::*;
 use server::killer;
 use server::limits;
 use server::login;
-use server::login::RegistrationResponse;
+use server::portal;
 use server::settings::*;
 
 use std::error;
@@ -40,44 +40,35 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let server = settings.get_server()?;
 	let ipaddress = server.to_string();
 
-	let login = login::connect(settings)?;
+	let login_server = login::connect(settings)?;
+	let login = sync::Arc::new(login_server);
 
 	let privatekey = get_private_key()?;
 
-	start_running(ipaddress, login, privatekey);
+	let server = portal::bind(settings).and_then(|binding| {
+		start_running(binding, ipaddress, login, privatekey)
+	});
+
+	tokio::run(server);
 	Ok(())
 }
 
 fn start_running(
+	binding: portal::Binding,
 	ipaddress: String,
-	login: login::Server,
+	login: sync::Arc<login::Server>,
 	privatekey: sync::Arc<PrivateKey>,
-)
+) -> impl Future<Item = (), Error = ()> + Send
 {
-	let server = login
-		.register_server()
-		.map_err(|error| eprintln!("Failed to register server: {}", error))
-		.and_then(move |response| {
-			let port = response.port;
-			login.set_port(port);
-			start_listening(ipaddress, port)
-				.map_err(|error| {
-					eprintln!("Failed to start listening: {}", error)
-				})
-				.map(move |listener| (listener, login))
-		})
-		.and_then(move |(listener, login_server)| {
-			let login = sync::Arc::new(login);
-			start_server_task(listener, login, privatekey)
-				.map(|()| login_server)
-		})
-		.then(|login| {
-			login.deregister_server().map_err(|error| {
-				eprintln!("Failed to deregister server: {}", error)
-			})
-		});
+	let port = binding.port;
 
-	tokio::run(server);
+	start_listening(ipaddress, port)
+		.map_err(|error| eprintln!("Failed to start listening: {}", error))
+		.into_future()
+		.and_then(move |listener| {
+			start_server_task(listener, login, privatekey)
+		})
+		.then(move |_result| binding.unbind())
 }
 
 fn start_listening(

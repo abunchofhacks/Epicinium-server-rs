@@ -8,6 +8,7 @@ mod login;
 mod message;
 mod notice;
 mod patch;
+mod portal;
 
 pub mod countingtest;
 pub mod settings;
