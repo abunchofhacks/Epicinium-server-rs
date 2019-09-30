@@ -19,6 +19,12 @@ pub struct Binding
 	pub port: u16,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ServerInfo
+{
+	pub online: bool,
+}
+
 struct Connection
 {
 	http: http::async::Client,
@@ -55,6 +61,18 @@ fn dev_bind(settings: &Settings) -> Result<Binding, ()>
 
 impl Binding
 {
+	pub fn update(
+		&self,
+		info: ServerInfo,
+	) -> impl Future<Item = (), Error = ()> + Send
+	{
+		match &self.connection
+		{
+			Some(connection) => Either::A(connection.update(info)),
+			None => Either::B(future::ok(())),
+		}
+	}
+
 	pub fn unbind(self) -> impl Future<Item = (), Error = ()> + Send
 	{
 		match self.connection
@@ -144,6 +162,41 @@ impl Connection
 			.map(|_| ())
 			.map_err(|error: ApiError| {
 				eprintln!("Failed to deregister server: {}", error)
+			})
+	}
+
+	fn update(
+		&self,
+		info: ServerInfo,
+	) -> impl Future<Item = (), Error = ()> + Send
+	{
+		match serde_json::to_string(&info)
+		{
+			Ok(payload) => Either::A(self.update_with_payload(payload)),
+			Err(error) =>
+			{
+				eprintln!("Failed to prepare update payload: {}", error);
+				Either::B(future::err(()))
+			}
+		}
+	}
+
+	fn update_with_payload(
+		&self,
+		payload: String,
+	) -> impl Future<Item = (), Error = ()> + Send
+	{
+		self.http
+			.request(http::Method::PATCH, self.registered_url.clone())
+			.body(payload)
+			.send()
+			.map_err(|error| error.into())
+			.and_then(|response| {
+				response.error_for_status().map_err(|e| e.into())
+			})
+			.map(|_| ())
+			.map_err(|error: ApiError| {
+				eprintln!("Failed to send update to portal: {}", error)
 			})
 	}
 }
