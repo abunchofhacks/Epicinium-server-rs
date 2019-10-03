@@ -64,7 +64,9 @@ fn start_running(
 
 	start_listening(ipaddress, port)
 		.map_err(|error| eprintln!("Failed to start listening: {}", error))
+		.map(|listener| binding.confirm().map(|()| listener))
 		.into_future()
+		.flatten()
 		.and_then(move |listener| {
 			start_server_task(listener, login, privatekey)
 		})

@@ -20,9 +20,9 @@ pub struct Binding
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ServerInfo
+struct ServerConfirmation
 {
-	pub online: bool,
+	online: bool,
 }
 
 struct Connection
@@ -61,14 +61,11 @@ fn dev_bind(settings: &Settings) -> Result<Binding, ()>
 
 impl Binding
 {
-	pub fn update(
-		&self,
-		info: ServerInfo,
-	) -> impl Future<Item = (), Error = ()> + Send
+	pub fn confirm(&self) -> impl Future<Item = (), Error = ()> + Send
 	{
 		match &self.connection
 		{
-			Some(connection) => Either::A(connection.update(info)),
+			Some(connection) => Either::A(connection.confirm()),
 			None => Either::B(future::ok(())),
 		}
 	}
@@ -165,14 +162,12 @@ impl Connection
 			})
 	}
 
-	fn update(
-		&self,
-		info: ServerInfo,
-	) -> impl Future<Item = (), Error = ()> + Send
+	fn confirm(&self) -> impl Future<Item = (), Error = ()> + Send
 	{
+		let info = ServerConfirmation { online: true };
 		match serde_json::to_string(&info)
 		{
-			Ok(payload) => Either::A(self.update_with_payload(payload)),
+			Ok(payload) => Either::A(self.update(payload)),
 			Err(error) =>
 			{
 				eprintln!("Failed to prepare update payload: {}", error);
@@ -181,7 +176,7 @@ impl Connection
 		}
 	}
 
-	fn update_with_payload(
+	fn update(
 		&self,
 		payload: String,
 	) -> impl Future<Item = (), Error = ()> + Send
