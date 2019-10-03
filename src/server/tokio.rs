@@ -46,31 +46,11 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let privatekey = get_private_key()?;
 
 	let server = portal::bind(settings).and_then(|binding| {
-		start_running(binding, ipaddress, login, privatekey)
+		start_server_task(ipaddress, binding, login, privatekey)
 	});
 
 	tokio::run(server);
 	Ok(())
-}
-
-fn start_running(
-	binding: portal::Binding,
-	ipaddress: String,
-	login: sync::Arc<login::Server>,
-	privatekey: sync::Arc<PrivateKey>,
-) -> impl Future<Item = (), Error = ()> + Send
-{
-	let port = binding.port;
-
-	start_listening(ipaddress, port)
-		.map_err(|error| eprintln!("Failed to start listening: {}", error))
-		.map(|listener| binding.confirm().map(|()| listener))
-		.into_future()
-		.flatten()
-		.and_then(move |listener| {
-			start_server_task(listener, login, privatekey)
-		})
-		.then(move |_result| binding.unbind())
 }
 
 fn start_listening(
@@ -98,7 +78,8 @@ fn get_private_key() -> Result<sync::Arc<PrivateKey>, Box<dyn error::Error>>
 }
 
 fn start_server_task(
-	listener: TcpListener,
+	host: String,
+	binding: portal::Binding,
 	login: sync::Arc<login::Server>,
 	privatekey: sync::Arc<PrivateKey>,
 ) -> impl Future<Item = (), Error = ()> + Send
@@ -122,7 +103,7 @@ fn start_server_task(
 	let chat_task = chat::start_task(general_out, closing_out, closed_in);
 
 	let client_task = start_acceptance_task(
-		listener, login, general_in, state_out, live_count, privatekey,
+		host, binding, login, general_in, state_out, live_count, privatekey,
 	);
 
 	client_task
@@ -134,7 +115,8 @@ fn start_server_task(
 }
 
 fn start_acceptance_task(
-	listener: TcpListener,
+	host: String,
+	binding: portal::Binding,
 	login: sync::Arc<login::Server>,
 	chat: mpsc::Sender<chat::Update>,
 	server_state: watch::Receiver<State>,
@@ -142,10 +124,22 @@ fn start_acceptance_task(
 	privatekey: sync::Arc<PrivateKey>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
+	let port = binding.port;
 	let mut ticker: u64 = rand::random();
 
-	listener
-		.incoming()
+	start_listening(host, port)
+		.map_err(|error| {
+			eprintln!("Failed to start listening on port {}: {}", port, error)
+		})
+		.map(|listener| binding.confirm().map(|()| listener))
+		.into_future()
+		.flatten()
+		.map(|listener| {
+			listener.incoming().map_err(|e| {
+				eprintln!("Incoming connection failed: {:?}", e);
+			})
+		})
+		.flatten_stream()
 		.for_each(move |socket| {
 			println!("Incoming connection: {:?}", socket);
 
@@ -163,11 +157,12 @@ fn start_acceptance_task(
 				live_count.clone(),
 				privatekey.clone(),
 			)
+			.map_err(|e| {
+				eprintln!("Accepting incoming connection failed: {:?}", e);
+			})
 			.map(|()| println!("Accepted client {}.", id))
 		})
-		.map_err(|e| {
-			eprintln!("Incoming connection failed: {:?}", e);
-		})
+		.then(move |result| binding.unbind().and_then(move |()| result))
 }
 
 fn start_close_task(
