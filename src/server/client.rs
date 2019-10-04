@@ -2,6 +2,7 @@
 
 use common::base32;
 use common::keycode::Keycode;
+use common::platform::*;
 use common::version::*;
 use server::chat;
 use server::limits::*;

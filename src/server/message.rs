@@ -1,6 +1,7 @@
 /* Message */
 
 use common::header::*;
+use common::platform::*;
 use common::version::*;
 
 use enumset::*;
@@ -84,27 +85,6 @@ pub struct PlatformMetadata
 
 	#[serde(default)]
 	pub patchmode: Patchmode,
-}
-
-#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
-#[serde(rename_all = "lowercase")]
-pub enum Platform
-{
-	Unknown,
-	Windows32,
-	Windows64,
-	Osx32,
-	Osx64,
-	Debian32,
-	Debian64,
-}
-
-impl Default for Platform
-{
-	fn default() -> Platform
-	{
-		Platform::Unknown
-	}
 }
 
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]

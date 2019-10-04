@@ -1,5 +1,7 @@
 /* Server::Login */
 
+use common::platform::*;
+use common::version::*;
 use server::settings::*;
 
 use std::error;
@@ -28,6 +30,7 @@ struct ServerConfirmation
 struct Connection
 {
 	http: http::async::Client,
+	user_agent: http::header::HeaderValue,
 	registered_url: http::Url,
 }
 
@@ -80,9 +83,9 @@ impl Binding
 	}
 }
 
-fn build_registration_url(
+fn build_headers_and_urls(
 	settings: &Settings,
-) -> Result<http::Url, Box<dyn error::Error>>
+) -> Result<(http::header::HeaderValue, http::Url), Box<dyn error::Error>>
 {
 	let url = settings.get_login_server()?;
 	let base_url = http::Url::parse(url)?;
@@ -90,7 +93,16 @@ fn build_registration_url(
 	let mut registration_url = base_url;
 	registration_url.set_path("api/v1/servers");
 
-	Ok(registration_url)
+	let platform = Platform::current();
+	let platformstring = serde_plain::to_string(&platform)?;
+	let uastring = format!(
+		"epicinium-server/{} ({}; rust)",
+		Version::current().to_string(),
+		platformstring,
+	);
+	let user_agent = uastring.parse()?;
+
+	Ok((user_agent, registration_url))
 }
 
 impl Connection
@@ -99,21 +111,23 @@ impl Connection
 		settings: &Settings,
 	) -> impl Future<Item = Binding, Error = ()> + Send
 	{
-		build_registration_url(settings)
+		build_headers_and_urls(settings)
 			.map_err(|error| eprintln!("Failed to build url: {}", error))
 			.into_future()
-			.and_then(|url| Connection::resolve(url))
+			.and_then(|(ua, url)| Connection::resolve(ua, url))
 	}
 
 	fn resolve(
+		user_agent: http::header::HeaderValue,
 		registration_url: http::Url,
 	) -> impl Future<Item = Binding, Error = ()> + Send
 	{
 		let http = http::async::Client::new();
-		Connection::register(&http, registration_url).map(
+		Connection::register(&http, &user_agent, registration_url).map(
 			move |(port, registered_url)| Binding {
 				connection: Some(Connection {
 					http,
+					user_agent,
 					registered_url,
 				}),
 				port,
@@ -123,10 +137,12 @@ impl Connection
 
 	fn register(
 		http: &http::async::Client,
+		user_agent: &http::header::HeaderValue,
 		registration_url: http::Url,
 	) -> impl Future<Item = (u16, http::Url), Error = ()> + Send
 	{
 		http.request(http::Method::POST, registration_url.clone())
+			.header(http::header::USER_AGENT, user_agent.clone())
 			.send()
 			.map_err(|error| error.into())
 			.and_then(|response| {
@@ -151,6 +167,7 @@ impl Connection
 	{
 		self.http
 			.request(http::Method::DELETE, self.registered_url.clone())
+			.header(http::header::USER_AGENT, self.user_agent.clone())
 			.send()
 			.map_err(|error| error.into())
 			.and_then(|response| {
@@ -183,6 +200,7 @@ impl Connection
 	{
 		self.http
 			.request(http::Method::PATCH, self.registered_url.clone())
+			.header(http::header::USER_AGENT, self.user_agent.clone())
 			.body(payload)
 			.send()
 			.map_err(|error| error.into())

@@ -1,6 +1,8 @@
 /* Server::Login */
 
 use common::keycode::*;
+use common::platform::*;
+use common::version::*;
 use server::message::*;
 use server::settings::*;
 
@@ -106,6 +108,7 @@ impl Server
 struct Connection
 {
 	http: http::async::Client,
+	user_agent: http::header::HeaderValue,
 	validate_session_url: http::Url,
 }
 
@@ -119,8 +122,18 @@ impl Connection
 		let mut validate_session_url = base_url;
 		validate_session_url.set_path("validate_session.php");
 
+		let platform = Platform::current();
+		let platformstring = serde_plain::to_string(&platform)?;
+		let uastring = format!(
+			"epicinium-server/{} ({}; rust)",
+			Version::current().to_string(),
+			platformstring,
+		);
+		let user_agent: http::header::HeaderValue = uastring.parse()?;
+
 		Ok(Connection {
 			http: http::async::Client::new(),
+			user_agent,
 			validate_session_url,
 		})
 	}
@@ -138,6 +151,7 @@ impl Connection
 
 		self.http
 			.post(self.validate_session_url.clone())
+			.header(http::header::USER_AGENT, self.user_agent.clone())
 			.json(&payload)
 			.send()
 			.map_err(|error| {

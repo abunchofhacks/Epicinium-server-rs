@@ -10,6 +10,7 @@ extern crate rand;
 extern crate reqwest;
 extern crate rlimit;
 extern crate serde;
+extern crate serde_plain;
 extern crate serde_urlencoded;
 extern crate signal_hook;
 extern crate tokio;
