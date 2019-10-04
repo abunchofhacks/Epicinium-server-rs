@@ -135,11 +135,27 @@ fn start_acceptance_task(
 		.into_future()
 		.flatten()
 		.map(|listener| {
-			listener.incoming().map_err(|e| {
-				eprintln!("Incoming connection failed: {:?}", e);
-			})
+			listener
+				.incoming()
+				.map_err(|e| {
+					eprintln!("Incoming connection failed: {:?}", e);
+				})
+				.map(|socket| Some(socket))
 		})
 		.flatten_stream()
+		.select(
+			server_state
+				.clone()
+				.filter_map(|state| match state
+				{
+					State::Open => None,
+					State::Closing => Some(None),
+					State::Closed => Some(None),
+				})
+				.map_err(|e| eprintln!("State error while listening: {:?}", e)),
+		)
+		.take_while(|x| future::ok(x.is_some()))
+		.filter_map(|x| x)
 		.for_each(move |socket| {
 			println!("Incoming connection: {:?}", socket);
 
@@ -162,6 +178,7 @@ fn start_acceptance_task(
 			})
 			.map(|()| println!("Accepted client {}.", id))
 		})
+		.map(|()| println!("Stopped listening."))
 		.then(move |result| binding.unbind().and_then(move |()| result))
 }
 
@@ -228,9 +245,8 @@ fn wait_for_close(
 		.map(|((), _other_future)| ())
 		.map_err(|((), _other_future)| ())
 		.and_then(move |()| {
-			server_state.broadcast(State::Closed).map_err(|error| {
-				eprintln!("Broadcast error in close task: {:?}", error)
-			})
+			// There might be a Future waiting for this, or there might not be.
+			server_state.broadcast(State::Closed).or(Ok(()))
 		})
 }
 
