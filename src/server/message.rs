@@ -1,7 +1,6 @@
 /* Message */
 
 use common::header::*;
-use common::platform::*;
 use common::version::*;
 
 use enumset::*;
@@ -17,9 +16,6 @@ pub enum Message
 	Version
 	{
 		version: Version,
-
-		#[serde(default, skip_serializing_if = "is_zero")]
-		metadata: Option<PlatformMetadata>,
 	},
 	JoinServer
 	{
@@ -54,34 +50,6 @@ pub enum Message
 	},
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]
-pub struct PlatformMetadata
-{
-	#[serde(default, skip_serializing_if = "is_zero")]
-	pub platform: Platform,
-
-	#[serde(default)]
-	pub patchmode: Patchmode,
-}
-
-#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
-#[serde(rename_all = "lowercase")]
-pub enum Patchmode
-{
-	None,
-	Server,
-	Itchio,
-	Gamejolt,
-}
-
-impl Default for Patchmode
-{
-	fn default() -> Patchmode
-	{
-		Patchmode::None
-	}
-}
-
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum ChatTarget
@@ -98,49 +66,6 @@ pub struct JoinMetadata
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub guest: bool,
-}
-
-#[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
-pub struct StampMetadata
-{
-	pub image: String,
-
-	#[serde(default, skip_serializing_if = "is_zero")]
-	pub tooltip: Option<String>,
-
-	#[serde(default, skip_serializing_if = "is_zero")]
-	pub url: Option<String>,
-}
-
-#[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
-pub struct DownloadMetadata
-{
-	#[serde(default, skip_serializing_if = "is_zero")]
-	pub name: Option<String>,
-
-	#[serde(default, skip_serializing_if = "is_zero")]
-	pub offset: Option<usize>,
-
-	#[serde(default, skip_serializing_if = "is_zero")]
-	pub signature: Option<String>,
-
-	#[serde(default, skip_serializing_if = "is_zero")]
-	pub compressed: bool,
-
-	#[serde(default, skip_serializing_if = "is_zero")]
-	pub executable: bool,
-
-	#[serde(default, skip_serializing_if = "is_zero")]
-	pub symbolic: bool,
-
-	#[serde(default, skip_serializing_if = "is_zero")]
-	pub progressmask: Option<u16>,
-}
-
-#[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
-pub struct DenyMetadata
-{
-	pub reason: String,
 }
 
 #[derive(

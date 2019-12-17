@@ -1,7 +1,6 @@
 /* Server::Client */
 
 use common::keycode::Keycode;
-use common::platform::*;
 use common::version::*;
 use server::chat;
 use server::login;
@@ -47,8 +46,6 @@ struct Client
 	pub id: Keycode,
 	pub username: String,
 	pub version: Version,
-	pub platform: Platform,
-	pub patchmode: Patchmode,
 	pub unlocks: EnumSet<Unlock>,
 
 	closing: bool,
@@ -116,8 +113,6 @@ pub fn accept_client(
 		id: id,
 		username: String::new(),
 		version: Version::undefined(),
-		platform: Platform::Unknown,
-		patchmode: Patchmode::None,
 		unlocks: EnumSet::empty(),
 
 		closing: false,
@@ -845,9 +840,9 @@ fn handle_message(
 			// There might be a Future waiting for this, or there might not be.
 			let _ = client.pong_receive_time.broadcast(());
 		}
-		Message::Version { version, metadata } =>
+		Message::Version { version } =>
 		{
-			greet_client(client, version, metadata)?;
+			greet_client(client, version)?;
 		}
 		Message::Quit =>
 		{
@@ -991,31 +986,14 @@ fn handle_message(
 fn greet_client(
 	client: &mut Client,
 	version: Version,
-	metadata: Option<PlatformMetadata>,
 ) -> Result<(), ReceiveTaskError>
 {
 	client.version = version;
 	/*verbose*/
 	println!("Client {} has version {}.", client.id, version.to_string());
 
-	if let Some(PlatformMetadata {
-		platform,
-		patchmode,
-	}) = metadata
-	{
-		client.platform = platform;
-		/*verbose*/
-		println!("Client {} has platform {:?}.", client.id, platform);
-		client.patchmode = patchmode;
-		/*verbose*/
-		println!("Client {} has patchmode {:?}.", client.id, patchmode);
-	}
-
 	let myversion = Version::current();
-	let response = Message::Version {
-		version: myversion,
-		metadata: None,
-	};
+	let response = Message::Version { version: myversion };
 	client.sendbuffer.try_send(response)?;
 
 	if version.major != myversion.major || version == Version::undefined()
