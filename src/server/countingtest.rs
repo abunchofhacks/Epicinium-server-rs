@@ -6,6 +6,9 @@ use server::settings::*;
 
 use std::error;
 
+use rand::seq::SliceRandom;
+use tokio::prelude::*;
+
 pub fn run(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 {
 	coredump::enable_coredumps()?;
@@ -29,12 +32,46 @@ pub fn run(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 		}
 	}
 
+	let server = settings.get_server()?;
+	let port = settings.get_port()?;
+
 	println!(
-		"ntests = {}, fakeversion = v{}, port = {}",
+		"ntests = {}, fakeversion = v{}, server = {}, port = {}",
 		ntests,
 		fakeversion.to_string(),
-		settings.get_port()?,
+		server,
+		port,
 	);
 
+	// TODO seed
+
+	let mut numbers: Vec<usize> = (0..ntests).collect();
+	let mut rng = rand::thread_rng();
+	numbers.shuffle(&mut rng);
+
+	let tests = numbers
+		.iter()
+		.map(|&number| start_test(number, fakeversion, server, port));
+	let all_tests = stream::futures_unordered(tests).fold((), |(), ()| Ok(()));
+
+	tokio::run(all_tests);
 	Ok(())
+}
+
+fn start_test(
+	number: usize,
+	fakeversion: Version,
+	server: &str,
+	port: u16,
+) -> impl Future<Item = (), Error = ()> + Send
+{
+	println!("[{}] Connecting to {}:{}...", number, server, port);
+	println!(
+		"[{}] Pretending to be version {}...",
+		number,
+		fakeversion.to_string()
+	);
+
+	// TODO
+	future::ok(())
 }
