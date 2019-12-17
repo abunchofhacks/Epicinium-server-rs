@@ -10,7 +10,6 @@ use server::portal;
 use server::settings::*;
 
 use std::error;
-use std::io::Read;
 use std::net::SocketAddr;
 use std::sync;
 use std::sync::atomic;
@@ -43,11 +42,8 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let login_server = login::connect(settings)?;
 	let login = sync::Arc::new(login_server);
 
-	let privatekey = get_private_key()?;
-
-	let server = portal::bind(settings).and_then(|binding| {
-		start_server_task(ipaddress, binding, login, privatekey)
-	});
+	let server = portal::bind(settings)
+		.and_then(|binding| start_server_task(ipaddress, binding, login));
 
 	tokio::run(server);
 	Ok(())
@@ -66,22 +62,10 @@ fn start_listening(
 	Ok(listener)
 }
 
-fn get_private_key() -> Result<sync::Arc<PrivateKey>, Box<dyn error::Error>>
-{
-	let mut pem: Vec<u8> = Vec::new();
-	let mut file = std::fs::File::open("keys/dummy_private.pem")?;
-	file.read_to_end(&mut pem)?;
-	let pkey: PrivateKey = openssl::pkey::PKey::private_key_from_pem(&pem)?;
-	let privatekey = sync::Arc::new(pkey);
-
-	Ok(privatekey)
-}
-
 fn start_server_task(
 	host: String,
 	binding: portal::Binding,
 	login: sync::Arc<login::Server>,
-	privatekey: sync::Arc<PrivateKey>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
 	let (killcount_in, killcount_out) = watch::channel(0u8);
@@ -103,7 +87,7 @@ fn start_server_task(
 	let chat_task = chat::start_task(general_out, closing_out, closed_in);
 
 	let client_task = start_acceptance_task(
-		host, binding, login, general_in, state_out, live_count, privatekey,
+		host, binding, login, general_in, state_out, live_count,
 	);
 
 	client_task
@@ -121,7 +105,6 @@ fn start_acceptance_task(
 	chat: mpsc::Sender<chat::Update>,
 	server_state: watch::Receiver<State>,
 	live_count: sync::Arc<atomic::AtomicUsize>,
-	privatekey: sync::Arc<PrivateKey>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
 	let port = binding.port;
@@ -171,7 +154,6 @@ fn start_acceptance_task(
 				chat.clone(),
 				server_state.clone(),
 				live_count.clone(),
-				privatekey.clone(),
 			)
 			.map_err(|e| {
 				eprintln!("Accepting incoming connection failed: {:?}", e);

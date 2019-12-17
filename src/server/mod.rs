@@ -6,8 +6,6 @@ mod killer;
 mod limits;
 mod login;
 mod message;
-mod notice;
-mod patch;
 mod portal;
 
 pub mod countingtest;

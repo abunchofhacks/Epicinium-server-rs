@@ -52,29 +52,6 @@ pub enum Message
 
 		target: ChatTarget,
 	},
-	Stamp
-	{
-		metadata: StampMetadata,
-	},
-	Download
-	{
-		content: String,
-		metadata: DownloadMetadata,
-	},
-	Request
-	{
-		content: String,
-	},
-	RequestDenied
-	{
-		content: String,
-		metadata: DenyMetadata,
-	},
-	RequestFulfilled
-	{
-		content: String,
-		metadata: DownloadMetadata,
-	},
 }
 
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]
