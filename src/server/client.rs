@@ -4,7 +4,6 @@ use common::keycode::Keycode;
 use common::platform::*;
 use common::version::*;
 use server::chat;
-use server::limits::*;
 use server::login;
 use server::message::*;
 use server::tokio::State as ServerState;
@@ -28,6 +27,10 @@ use futures::stream;
 use futures::{Future, Stream};
 
 use enumset::EnumSet;
+
+const MESSAGE_SIZE_LIMIT: usize = 524288;
+const MESSAGE_SIZE_UNVERSIONED_LIMIT: usize = 201;
+const MESSAGE_SIZE_WARNING_LIMIT: usize = 65537;
 
 struct Client
 {

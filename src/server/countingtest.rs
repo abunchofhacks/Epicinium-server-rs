@@ -1,14 +1,14 @@
 /* Server::Test::Counting */
 
+use common::coredump;
 use common::version::*;
-use server::limits;
 use server::settings::*;
 
 use std::error;
 
 pub fn run(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 {
-	limits::enable_coredumps()?;
+	coredump::enable_coredumps()?;
 
 	let mut ntests: usize = 2;
 	let mut fakeversion: Version = Version::current();

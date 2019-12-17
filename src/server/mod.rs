@@ -3,7 +3,6 @@
 mod chat;
 mod client;
 mod killer;
-mod limits;
 mod login;
 mod message;
 mod portal;

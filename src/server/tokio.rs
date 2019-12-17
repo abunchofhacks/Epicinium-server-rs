@@ -1,10 +1,10 @@
 /* Server::Tokio */
 
+use common::coredump::enable_coredumps;
 use common::keycode::*;
 use server::chat;
 use server::client::*;
 use server::killer;
-use server::limits;
 use server::login;
 use server::portal;
 use server::settings::*;
@@ -33,8 +33,8 @@ pub enum State
 
 pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 {
-	limits::enable_coredumps()?;
-	limits::increase_sockets()?;
+	enable_coredumps()?;
+	increase_sockets()?;
 
 	let server = settings.get_server()?;
 	let ipaddress = server.to_string();
@@ -245,4 +245,10 @@ fn wait_for_disconnect(
 		.map_err(|(error, _interval)| error)
 		.timeout(Duration::from_secs(5))
 		.map_err(|error| eprintln!("Timer error in close task: {:?}", error))
+}
+
+fn increase_sockets() -> std::io::Result<()>
+{
+	const MAX_SOCKETS: rlimit::rlim = 16384;
+	rlimit::Resource::NOFILE.set(MAX_SOCKETS, MAX_SOCKETS)
 }

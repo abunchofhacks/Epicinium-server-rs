@@ -3,6 +3,7 @@
 pub mod header;
 
 pub mod base32;
+pub mod coredump;
 pub mod keycode;
 pub mod platform;
 pub mod version;
