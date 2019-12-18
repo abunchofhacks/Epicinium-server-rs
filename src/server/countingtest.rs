@@ -78,7 +78,7 @@ fn start_test(
 
 	TcpStream::connect(&serveraddress)
 		.map_err(move |error| {
-			println!("[{}] Failed to connect: {}", number, error)
+			eprintln!("[{}] Failed to connect: {:?}", number, error)
 		})
 		.and_then(move |connection| run_test(connection, number, fakeversion))
 }
@@ -106,7 +106,9 @@ fn run_test(
 
 		Some(future_length)
 	})
-	.map_err(move |error| println!("[{}] Failed to receive: {}", number, error))
+	.map_err(move |error| {
+		eprintln!("[{}] Failed to receive: {:?}", number, error)
+	})
 	.and_then(move |message| handle_message(number, message))
 	.map(|responses| stream::iter_ok(responses))
 	.flatten()
@@ -194,7 +196,7 @@ fn handle_message(number: usize, message: Message) -> Result<Vec<Message>, ()>
 			// TODO send number 0
 
 			// TODO remove this
-			Ok(vec![Message::LeaveServer { content: None }, Message::Quit])
+			Ok(vec![Message::Quit])
 		}
 		Message::Chat {
 			content: _,
