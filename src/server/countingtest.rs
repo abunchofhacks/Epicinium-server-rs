@@ -9,6 +9,8 @@ use std::error;
 use std::io;
 use std::io::ErrorKind;
 use std::net::SocketAddr;
+use std::sync;
+use std::sync::atomic;
 
 use futures::future::Either;
 
@@ -95,8 +97,17 @@ fn run_test(
 		version: fakeversion,
 	}];
 
+	let has_quit = sync::Arc::new(atomic::AtomicBool::new(false));
+
 	let (reader, writer) = socket.split();
 	stream::unfold(reader, move |socket| {
+		if has_quit.load(atomic::Ordering::Relaxed)
+		{
+			let future_finish = tokio_io::io::read_to_end(socket, Vec::new())
+				.map(|_garbage| None);
+			return Either::A(future_finish);
+		}
+
 		let lengthbuffer = [0u8; 4];
 		let future_length = tokio_io::io::read_exact(socket, lengthbuffer)
 			.and_then(move |(socket, lengthbuffer)| {
@@ -104,12 +115,12 @@ fn run_test(
 				receive_message(socket, number, length)
 			});
 
-		Some(future_length)
+		Either::B(Some(future_length))
 	})
 	.map_err(move |error| {
 		eprintln!("[{}] Failed to receive: {:?}", number, error)
 	})
-	.and_then(move |message| handle_message(number, message))
+	.and_then(move |message| handle_message(number, has_quit, message))
 	.map(|responses| stream::iter_ok(responses))
 	.flatten()
 	.select(stream::iter_ok(initialmessages))
@@ -170,7 +181,11 @@ fn parse_message(number: usize, buffer: Vec<u8>) -> io::Result<Message>
 	Ok(message)
 }
 
-fn handle_message(number: usize, message: Message) -> Result<Vec<Message>, ()>
+fn handle_message(
+	number: usize,
+	has_quit: sync::Arc<atomic::AtomicBool>,
+	message: Message,
+) -> Result<Vec<Message>, ()>
 {
 	match message
 	{
@@ -196,6 +211,7 @@ fn handle_message(number: usize, message: Message) -> Result<Vec<Message>, ()>
 			// TODO send number 0
 
 			// TODO remove this
+			has_quit.store(true, atomic::Ordering::Relaxed);
 			Ok(vec![Message::Quit])
 		}
 		Message::Chat {
