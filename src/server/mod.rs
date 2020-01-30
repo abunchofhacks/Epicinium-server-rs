@@ -4,10 +4,10 @@ mod chat;
 mod client;
 mod killer;
 mod login;
-mod message;
 mod portal;
 
 pub mod countingtest;
+pub mod message;
 pub mod settings;
 pub mod tokio;
 
