@@ -175,7 +175,7 @@ fn start_receive_task(
 		{
 			ServerState::Open => None,
 			ServerState::Closing => Some(Update::Closing),
-			ServerState::Closed => Some(Update::Quit),
+			ServerState::Closed => Some(Update::Closed),
 		})
 		.map_err(|error| ReceiveTaskError::Killcount { error });
 
@@ -592,7 +592,7 @@ enum Update
 		general_chat: mpsc::Sender<chat::Update>,
 	},
 	Closing,
-	Quit,
+	Closed,
 	Msg(Message),
 }
 
@@ -804,10 +804,10 @@ fn handle_update(
 			client.sendbuffer.try_send(Message::Closing)?;
 			Ok(())
 		}
-		Update::Quit =>
+		Update::Closed =>
 		{
 			client.closing = true;
-			client.sendbuffer.try_send(Message::Quit)?;
+			client.sendbuffer.try_send(Message::Closed)?;
 			Ok(())
 		}
 
@@ -847,6 +847,7 @@ fn handle_message(
 		Message::Quit =>
 		{
 			println!("Client {} gracefully disconnected.", client.id);
+			client.sendbuffer.try_send(Message::Quit)?;
 			return Err(ReceiveTaskError::Quit);
 		}
 		Message::JoinServer { .. } if client.general_chat.is_some() =>
@@ -973,7 +974,7 @@ fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
-		Message::Closing =>
+		Message::Closing | Message::Closed =>
 		{
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
@@ -1015,7 +1016,7 @@ fn greet_client(
 	}
 	else if client.closing
 	{
-		client.sendbuffer.try_send(Message::Quit)?;
+		client.sendbuffer.try_send(Message::Closed)?;
 
 		// We treat the client as if they do not have a proper version,
 		// because we do not want to receive any more messages.

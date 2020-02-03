@@ -102,11 +102,6 @@ fn run_test(
 
 	let (reader, writer) = socket.split();
 	stream::unfold(reader, move |socket| {
-		if has_quit_get.load(atomic::Ordering::Relaxed)
-		{
-			return None;
-		}
-
 		let lengthbuffer = [0u8; 4];
 		let future_length = tokio_io::io::read_exact(socket, lengthbuffer)
 			.and_then(move |(socket, lengthbuffer)| {
@@ -118,6 +113,13 @@ fn run_test(
 	})
 	.map_err(move |error| {
 		eprintln!("[{}] Failed to receive: {:?}", number, error)
+	})
+	.take_while(move |message| {
+		future::ok(match message
+		{
+			Message::Quit => !has_quit_get.load(atomic::Ordering::Relaxed),
+			_ => true,
+		})
 	})
 	.and_then(move |message| handle_message(number, &mut has_quit, message))
 	.map(|responses| stream::iter_ok(responses))
@@ -226,6 +228,11 @@ fn handle_message(
 		Message::Closing =>
 		{
 			eprintln!("[{}] Server closing unexpectedly", number);
+			Err(())
+		}
+		Message::Closed =>
+		{
+			eprintln!("[{}] Server closed unexpectedly", number);
 			Err(())
 		}
 		Message::Quit =>

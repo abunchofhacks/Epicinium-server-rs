@@ -38,6 +38,7 @@ pub enum Message
 	},
 	Init,
 	Closing,
+	Closed,
 	Quit,
 	Chat
 	{
