@@ -184,7 +184,7 @@ fn start_receive_task(
 		let lengthbuffer = [0u8; 4];
 		let future_length = tokio_io::io::read_exact(socket, lengthbuffer)
 			.and_then(move |(socket, lengthbuffer)| {
-				let length = u32::from_le_bytes(lengthbuffer);
+				let length = u32::from_be_bytes(lengthbuffer);
 				receive_message(socket, length, versioned)
 			});
 
@@ -329,7 +329,7 @@ fn prepare_message(message: Message) -> Vec<u8>
 
 	let (jsonstr, length) = prepare_message_data(message);
 
-	let mut buffer = length.to_le_bytes().to_vec();
+	let mut buffer = length.to_be_bytes().to_vec();
 	buffer.append(&mut jsonstr.into_bytes());
 
 	buffer
