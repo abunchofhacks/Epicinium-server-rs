@@ -97,15 +97,14 @@ fn run_test(
 		version: fakeversion,
 	}];
 
-	let has_quit = sync::Arc::new(atomic::AtomicBool::new(false));
+	let mut has_quit = sync::Arc::new(atomic::AtomicBool::new(false));
+	let has_quit_get = has_quit.clone();
 
 	let (reader, writer) = socket.split();
 	stream::unfold(reader, move |socket| {
-		if has_quit.load(atomic::Ordering::Relaxed)
+		if has_quit_get.load(atomic::Ordering::Relaxed)
 		{
-			let future_finish = tokio_io::io::read_to_end(socket, Vec::new())
-				.map(|_garbage| None);
-			return Either::A(future_finish);
+			return None;
 		}
 
 		let lengthbuffer = [0u8; 4];
@@ -115,12 +114,12 @@ fn run_test(
 				receive_message(socket, number, length)
 			});
 
-		Either::B(Some(future_length))
+		Some(future_length)
 	})
 	.map_err(move |error| {
 		eprintln!("[{}] Failed to receive: {:?}", number, error)
 	})
-	.and_then(move |message| handle_message(number, has_quit, message))
+	.and_then(move |message| handle_message(number, &mut has_quit, message))
 	.map(|responses| stream::iter_ok(responses))
 	.flatten()
 	.select(stream::iter_ok(initialmessages))
@@ -183,7 +182,7 @@ fn parse_message(number: usize, buffer: Vec<u8>) -> io::Result<Message>
 
 fn handle_message(
 	number: usize,
-	has_quit: sync::Arc<atomic::AtomicBool>,
+	has_quit: &mut sync::Arc<atomic::AtomicBool>,
 	message: Message,
 ) -> Result<Vec<Message>, ()>
 {
