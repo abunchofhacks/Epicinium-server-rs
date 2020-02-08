@@ -12,7 +12,9 @@ extern crate rlimit;
 extern crate serde;
 extern crate serde_plain;
 extern crate serde_urlencoded;
+extern crate signal_hook;
 extern crate tokio;
+extern crate tokio_io;
 extern crate vec_drain_where;
 
 #[macro_use]
