@@ -3,16 +3,17 @@
 use crate::common::keycode::*;
 use crate::server::message::*;
 
-use futures::future;
-use futures::future::Either;
-use futures::future::Future;
-use futures::stream::Stream;
+use futures::future::FutureExt;
+use futures::future::TryFutureExt;
+use futures::stream::StreamExt;
 
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 use enumset::*;
 use vec_drain_where::VecDrainWhereExt;
+
+use std::error;
 
 #[derive(Debug)]
 pub enum Update
@@ -37,11 +38,11 @@ pub enum Update
 	Msg(Message),
 }
 
-pub fn start_task(
+pub async fn run_task(
 	updates: mpsc::Receiver<Update>,
 	closing: oneshot::Receiver<()>,
 	closed: oneshot::Sender<()>,
-) -> impl Future<Item = (), Error = ()> + Send
+) -> Result<(), Box<dyn error::Error>>
 {
 	let mut clients: Vec<Client> = Vec::new();
 	let mut close = Close {
@@ -51,14 +52,16 @@ pub fn start_task(
 	};
 
 	let closing_updates = closing
-		.map(|()| Update::Closing)
-		.map_err(|error| eprintln!("Closing error in chat_task: {:?}", error))
+		.map_ok(|()| Update::Closing)
 		.into_stream();
+	// TODO use closing_updates
 
-	updates
-		.map_err(|error| eprintln!("Recv error in chat_task: {:?}", error))
-		.select(closing_updates)
-		.for_each(move |update| handle_update(update, &mut clients, &mut close))
+	while let Some(update) = updates.recv().await
+	{
+		handle_update(update, &mut clients, &mut close)
+	}
+
+	Ok(())
 }
 
 struct Close
@@ -72,7 +75,7 @@ fn handle_update(
 	update: Update,
 	clients: &mut Vec<Client>,
 	close: &mut Close,
-) -> impl Future<Item = (), Error = ()> + Send
+) -> ()
 {
 	match update
 	{
@@ -86,9 +89,9 @@ fn handle_update(
 			sendbuffer,
 		} =>
 		{
-			return Either::A(handle_join(
+			handle_join(
 				client_id, username, unlocks, sendbuffer, clients,
-			));
+			)
 		}
 		Update::Init { sendbuffer } => handle_init(sendbuffer, clients),
 		Update::Leave { client_id } => handle_leave(client_id, clients, close),
@@ -109,8 +112,6 @@ fn handle_update(
 			}
 		}
 	}
-
-	Either::B(future::ok(()))
 }
 
 struct Client
@@ -141,7 +142,7 @@ fn handle_join(
 	unlocks: EnumSet<Unlock>,
 	sendbuffer: mpsc::Sender<Message>,
 	clients: &mut Vec<Client>,
-) -> impl Future<Item = (), Error = ()> + Send
+) -> ()
 {
 	// TODO ghostbusting
 
@@ -211,8 +212,6 @@ fn handle_join(
 	welcome_client(&mut newcomer);
 
 	clients.push(newcomer);
-
-	future::ok(())
 }
 
 fn welcome_client(_client: &mut Client)

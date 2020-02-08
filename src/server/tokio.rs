@@ -17,11 +17,10 @@ use std::time::Duration;
 
 use futures::{Future, Stream};
 use tokio::net::TcpListener;
-use tokio::prelude::*;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::watch;
-use tokio::timer::Interval;
+use tokio::time::Interval;
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum State
@@ -31,7 +30,8 @@ pub enum State
 	Closed,
 }
 
-pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
+#[tokio::main]
+pub async fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 {
 	enable_coredumps()?;
 	increase_sockets()?;
@@ -42,10 +42,10 @@ pub fn run_server(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let login_server = login::connect(settings)?;
 	let login = sync::Arc::new(login_server);
 
-	let server = portal::bind(settings)
-		.and_then(|binding| start_server_task(ipaddress, binding, login));
+	let binding: portal::Binding = portal::bind(settings).await;
 
-	tokio::run(server);
+	run_server_task(ipaddress, binding, login).await;
+
 	Ok(())
 }
 
@@ -62,11 +62,11 @@ fn start_listening(
 	Ok(listener)
 }
 
-fn start_server_task(
+async fn run_server_task(
 	host: String,
 	binding: portal::Binding,
 	login: sync::Arc<login::Server>,
-) -> impl Future<Item = (), Error = ()> + Send
+) -> ()
 {
 	let (killcount_in, killcount_out) = watch::channel(0u8);
 	let killer_task = killer::start_task(killcount_in);
