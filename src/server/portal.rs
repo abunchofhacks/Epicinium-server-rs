@@ -1,8 +1,8 @@
 /* Server::Login */
 
-use common::platform::*;
-use common::version::*;
-use server::settings::*;
+use crate::common::platform::*;
+use crate::common::version::*;
+use crate::server::settings::*;
 
 use std::error;
 use std::fmt;
@@ -29,7 +29,7 @@ struct ServerConfirmation
 
 struct Connection
 {
-	http: http::async::Client,
+	http: http::r#async::Client,
 	user_agent: http::header::HeaderValue,
 	registered_url: http::Url,
 }
@@ -122,7 +122,7 @@ impl Connection
 		registration_url: http::Url,
 	) -> impl Future<Item = Binding, Error = ()> + Send
 	{
-		let http = http::async::Client::new();
+		let http = http::r#async::Client::new();
 		Connection::register(&http, &user_agent, registration_url).map(
 			move |(port, registered_url)| Binding {
 				connection: Some(Connection {
@@ -136,7 +136,7 @@ impl Connection
 	}
 
 	fn register(
-		http: &http::async::Client,
+		http: &http::r#async::Client,
 		user_agent: &http::header::HeaderValue,
 		registration_url: http::Url,
 	) -> impl Future<Item = (u16, http::Url), Error = ()> + Send

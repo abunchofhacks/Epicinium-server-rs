@@ -1,7 +1,7 @@
 /* Server::Chat */
 
-use common::keycode::*;
-use server::message::*;
+use crate::common::keycode::*;
+use crate::server::message::*;
 
 use futures::future;
 use futures::future::Either;

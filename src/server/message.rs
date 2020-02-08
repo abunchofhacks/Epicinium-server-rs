@@ -1,7 +1,7 @@
 /* Message */
 
-use common::header::*;
-use common::version::*;
+use crate::common::header::*;
+use crate::common::version::*;
 
 use enumset::*;
 

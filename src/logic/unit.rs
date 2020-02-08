@@ -1,7 +1,7 @@
 /* Unit */
 
-use common::header::*;
-use logic::player::Player;
+use crate::common::header::*;
+use crate::logic::player::Player;
 use std;
 
 #[derive(

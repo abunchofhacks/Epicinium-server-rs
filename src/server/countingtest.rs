@@ -1,9 +1,9 @@
 /* Server::Test::Counting */
 
-use common::coredump;
-use common::version::*;
-use server::message::*;
-use server::settings::*;
+use crate::common::coredump;
+use crate::common::version::*;
+use crate::server::message::*;
+use crate::server::settings::*;
 
 use std::error;
 use std::io;

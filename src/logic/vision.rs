@@ -1,6 +1,6 @@
 /* Order */
 
-use logic::player::Player;
+use crate::logic::player::Player;
 
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug)]

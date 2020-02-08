@@ -1,10 +1,10 @@
 /* Server::Login */
 
-use common::keycode::*;
-use common::platform::*;
-use common::version::*;
-use server::message::*;
-use server::settings::*;
+use crate::common::keycode::*;
+use crate::common::platform::*;
+use crate::common::version::*;
+use crate::server::message::*;
+use crate::server::settings::*;
 
 use std::error;
 
@@ -107,7 +107,7 @@ impl Server
 
 struct Connection
 {
-	http: http::async::Client,
+	http: http::r#async::Client,
 	user_agent: http::header::HeaderValue,
 	validate_session_url: http::Url,
 }
@@ -132,7 +132,7 @@ impl Connection
 		let user_agent: http::header::HeaderValue = uastring.parse()?;
 
 		Ok(Connection {
-			http: http::async::Client::new(),
+			http: http::r#async::Client::new(),
 			user_agent,
 			validate_session_url,
 		})

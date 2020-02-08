@@ -1,8 +1,8 @@
 /* Order */
 
-use logic::descriptor::Descriptor;
-use logic::tile::TileType;
-use logic::unit::UnitType;
+use crate::logic::descriptor::Descriptor;
+use crate::logic::tile::TileType;
+use crate::logic::unit::UnitType;
 
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug)]

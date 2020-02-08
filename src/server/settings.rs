@@ -1,6 +1,6 @@
 /* Settings */
 
-use common::header::*;
+use crate::common::header::*;
 
 use std::error;
 use std::fmt;

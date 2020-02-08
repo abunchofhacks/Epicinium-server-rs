@@ -1,6 +1,6 @@
 /* Descriptor */
 
-use logic::position::*;
+use crate::logic::position::*;
 
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]

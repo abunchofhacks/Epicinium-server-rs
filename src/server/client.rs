@@ -1,11 +1,11 @@
 /* Server::Client */
 
-use common::keycode::Keycode;
-use common::version::*;
-use server::chat;
-use server::login;
-use server::message::*;
-use server::tokio::State as ServerState;
+use crate::common::keycode::Keycode;
+use crate::common::version::*;
+use crate::server::chat;
+use crate::server::login;
+use crate::server::message::*;
+use crate::server::tokio::State as ServerState;
 
 use std::io;
 use std::io::ErrorKind;

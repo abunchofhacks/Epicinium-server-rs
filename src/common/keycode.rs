@@ -1,6 +1,6 @@
 /* Keycode */
 
-use common::base32;
+use crate::common::base32;
 
 use std::fmt;
 

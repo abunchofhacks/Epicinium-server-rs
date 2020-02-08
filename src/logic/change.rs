@@ -1,14 +1,14 @@
 /* Change */
 
-use common::header::*;
-use logic::player::*;
-use logic::position::*;
-use logic::descriptor::*;
-use logic::tile::*;
-use logic::unit::*;
-use logic::cycle::*;
-use logic::order::*;
-use logic::vision::*;
+use crate::common::header::*;
+use crate::logic::player::*;
+use crate::logic::position::*;
+use crate::logic::descriptor::*;
+use crate::logic::tile::*;
+use crate::logic::unit::*;
+use crate::logic::cycle::*;
+use crate::logic::order::*;
+use crate::logic::vision::*;
 
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

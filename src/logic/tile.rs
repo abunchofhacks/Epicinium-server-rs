@@ -1,7 +1,7 @@
 /* Tile */
 
-use common::header::*;
-use logic::player::Player;
+use crate::common::header::*;
+use crate::logic::player::Player;
 
 #[derive(
 	Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug, Enum,
