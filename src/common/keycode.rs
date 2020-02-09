@@ -2,6 +2,11 @@
 
 use crate::common::base32;
 
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
+use serde::Serializer;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Keycode(pub u64);
 
@@ -70,7 +75,28 @@ impl std::str::FromStr for Keycode
 
 	fn from_str(s: &str) -> Result<Keycode, base32::DecodeError>
 	{
-		let bytes = base32::decode(s)?;
+		let _bytes = base32::decode(s)?;
 		unimplemented!();
+	}
+}
+
+impl Serialize for Keycode
+{
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+	where
+		S: Serializer,
+	{
+		self.to_string().serialize(serializer)
+	}
+}
+
+impl<'de> Deserialize<'de> for Keycode
+{
+	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+	where
+		D: Deserializer<'de>,
+	{
+		let s = String::deserialize(deserializer)?;
+		std::str::FromStr::from_str(&s).map_err(::serde::de::Error::custom)
 	}
 }

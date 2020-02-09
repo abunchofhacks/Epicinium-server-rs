@@ -179,7 +179,7 @@ pub fn decode(word: &str) -> Result<Vec<u8>, DecodeError>
 	// If necessary, we can drop bits from the front of the representation.
 	// E.g. if we had encoded a single uint8_t, we are now decoding two
 	// characters, which is 10 bits, but the first two bits should be zero.
-	let mut discarded = (wordlength * 5) % 8;
+	let discarded = (wordlength * 5) % 8;
 	debug_assert!(discarded < 5);
 
 	// We have a buffer of between 0 and 12 bits to draw from; we use the
@@ -196,7 +196,7 @@ pub fn decode(word: &str) -> Result<Vec<u8>, DecodeError>
 		let value: u8 = nickel_from_char(c)?;
 		debug_assert!(value <= 31);
 
-		let freshbits = value as u16;
+		let mut freshbits = value as u16;
 		if i == 0 && discarded > 0
 		{
 			// The leading bits should be zero.
@@ -260,5 +260,42 @@ impl std::fmt::Display for DecodeError
 				write!(f, "non-zero leading bits in '{}'", source)
 			}
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests
+{
+	use super::*;
+
+	#[test]
+	fn test_inverse() -> Result<(), DecodeError>
+	{
+		for nickel in 0..=31
+		{
+			assert_eq!(nickel, nickel_from_letter(letter_from_nickel(nickel))?);
+		}
+		Ok(())
+	}
+
+	#[test]
+	fn test_case_insensitivity() -> Result<(), DecodeError>
+	{
+		for letter in b'a'..=b'z'
+		{
+			let upper = letter.to_ascii_uppercase();
+			assert_eq!(nickel_from_letter(letter)?, nickel_from_letter(upper)?);
+		}
+		Ok(())
+	}
+
+	#[test]
+	fn test_confusion() -> Result<(), DecodeError>
+	{
+		assert_eq!(nickel_from_letter(b'i')?, nickel_from_letter(b'1')?);
+		assert_eq!(nickel_from_letter(b'l')?, nickel_from_letter(b'1')?);
+		assert_eq!(nickel_from_letter(b'o')?, nickel_from_letter(b'0')?);
+		assert_eq!(nickel_from_letter(b'u')?, nickel_from_letter(b'v')?);
+		Ok(())
 	}
 }
