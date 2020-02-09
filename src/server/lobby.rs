@@ -3,15 +3,12 @@
 use crate::common::keycode::*;
 use crate::server::message::*;
 
-use futures::future;
-use futures::future::Either;
 use futures::future::Future;
 use futures::stream::Stream;
 
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
-use enumset::*;
 use vec_drain_where::VecDrainWhereExt;
 
 #[derive(Debug)]
@@ -48,18 +45,19 @@ pub fn start_task(
 
 	let closing_updates = closing
 		.map(|()| Update::Closing)
-		.map_err(|error| {
+		.map_err(move |error| {
 			eprintln!("Closing error in lobby {}: {:?}", lobby_id, error)
 		})
 		.into_stream();
 
 	updates
-		.map_err(|error| {
+		.map_err(move |error| {
 			eprintln!("Recv error in lobby {}: {:?}", lobby_id, error)
 		})
 		.select(closing_updates)
 		.for_each(move |update| {
-			handle_update(update, lobby_id, &mut clients, &mut close)
+			handle_update(update, lobby_id, &mut clients, &mut close);
+			Ok(())
 		})
 }
 
@@ -75,7 +73,7 @@ fn handle_update(
 	lobby_id: Keycode,
 	clients: &mut Vec<Client>,
 	close: &mut Close,
-) -> impl Future<Item = (), Error = ()> + Send
+)
 {
 	match update
 	{
@@ -85,12 +83,7 @@ fn handle_update(
 			client_id,
 			username,
 			sendbuffer,
-		} =>
-		{
-			return Either::A(handle_join(
-				client_id, username, sendbuffer, clients,
-			));
-		}
+		} => handle_join(lobby_id, client_id, username, sendbuffer, clients),
 		Update::Leave { client_id } =>
 		{
 			handle_leave(lobby_id, client_id, clients, close)
@@ -112,8 +105,6 @@ fn handle_update(
 			}
 		}
 	}
-
-	Either::B(future::ok(()))
 }
 
 struct Client
@@ -137,24 +128,47 @@ impl Client
 }
 
 fn handle_join(
-	id: Keycode,
+	lobby_id: Keycode,
+	client_id: Keycode,
 	username: String,
 	sendbuffer: mpsc::Sender<Message>,
 	clients: &mut Vec<Client>,
-) -> impl Future<Item = (), Error = ()> + Send
+)
 {
+	// TODO joining might fail because it is full or locked etcetera
+
 	let mut newcomer = Client {
-		id: id,
+		id: client_id,
 		username,
 		sendbuffer,
 		dead: false,
 	};
 
-	// TODO implement
+	// TODO max players
+	newcomer.send(Message::MaxPlayers { lobby_id, value: 2 });
+
+	for other in clients.into_iter()
+	{
+		newcomer.send(Message::JoinLobby {
+			lobby_id: Some(lobby_id),
+			username: Some(other.username.clone()),
+			metadata: None,
+		});
+
+		// TODO roles
+		// TODO colors
+		// TODO vision types
+	}
+
+	// TODO AI pool
+	// TODO bots
+
+	// TODO map pool if this is not a replay lobby
+	// TODO other map settings
+	// TODO list all recordings if this is a replay lobby
+	// TODO other replay settings
 
 	clients.push(newcomer);
-
-	future::ok(())
 }
 
 fn handle_leave(
