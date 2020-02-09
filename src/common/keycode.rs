@@ -43,6 +43,7 @@ pub fn keycode(key: u16, data: u64) -> Keycode
 		result = (result << 5) | r_bits;
 	}
 
+	debug_assert!(result < (1 << 60));
 	Keycode(result)
 }
 
@@ -75,8 +76,41 @@ impl std::str::FromStr for Keycode
 
 	fn from_str(s: &str) -> Result<Keycode, base32::DecodeError>
 	{
-		let _bytes = base32::decode(s)?;
-		unimplemented!();
+		let mut bits: u64 = 0;
+
+		if !s.is_ascii()
+		{
+			return Err(base32::DecodeError::NonAscii {
+				source: s.to_string(),
+			});
+		}
+		else if s.len() < 12
+		{
+			return Err(base32::DecodeError::WordTooShort {
+				source: s.to_string(),
+				min_length_in_bits: 60,
+			});
+		}
+		else if s.len() > 12
+		{
+			return Err(base32::DecodeError::WordTooLong {
+				source: s.to_string(),
+				max_length_in_bits: 60,
+			});
+		}
+
+		// We parse the word from left (most-significant) to right (least).
+		for x in s.bytes()
+		{
+			let nickel: u8 = base32::nickel_from_letter(x)?;
+			debug_assert!(nickel <= 31);
+
+			// Push in 5 bits.
+			bits <<= 5;
+			bits |= nickel as u64;
+		}
+
+		Ok(Keycode(bits))
 	}
 }
 
@@ -98,5 +132,30 @@ impl<'de> Deserialize<'de> for Keycode
 	{
 		let s = String::deserialize(deserializer)?;
 		std::str::FromStr::from_str(&s).map_err(::serde::de::Error::custom)
+	}
+}
+
+#[cfg(test)]
+mod tests
+{
+	use super::*;
+
+	#[test]
+	fn test_inverse() -> Result<(), base32::DecodeError>
+	{
+		for _ in 0..1000
+		{
+			let key: u16 = rand::random();
+			let data: u64 = rand::random();
+			let keycode = keycode(key, data);
+			let repr = keycode.to_string();
+			let base32_word = base32::encode(&keycode.0.to_be_bytes());
+			assert_eq!(base32_word, format!("0{}", repr));
+			assert_eq!(base32::decode(&base32_word)?, keycode.0.to_be_bytes());
+			let decoded: Keycode = repr.parse()?;
+			assert_eq!(decoded, keycode, "(repr = {})", repr);
+			assert_eq!(decoded.to_string(), repr);
+		}
+		Ok(())
 	}
 }

@@ -20,7 +20,7 @@ pub fn letter_from_nickel(value: u8) -> u8
 
 // Convert a (case insensitive) letter in the Crockform Base32 alphabet
 // to a 5-bit nickel, i.e. a value between 0 and 31 (inclusive).
-fn nickel_from_letter(x: u8) -> Result<u8, DecodeError>
+pub fn nickel_from_letter(x: u8) -> Result<u8, DecodeError>
 {
 	if x >= b'0' && x <= b'9'
 	{
@@ -98,19 +98,7 @@ fn nickel_from_letter(x: u8) -> Result<u8, DecodeError>
 	}
 	else
 	{
-		Err(DecodeError::InvalidLetter { letter: x as char })
-	}
-}
-
-fn nickel_from_char(c: char) -> Result<u8, DecodeError>
-{
-	if c >= ' ' && c <= '~'
-	{
-		nickel_from_letter(c as u8)
-	}
-	else
-	{
-		Err(DecodeError::InvalidLetter { letter: c })
+		Err(DecodeError::InvalidLetter { letter: x })
 	}
 }
 
@@ -169,6 +157,13 @@ pub fn encode(data: &[u8]) -> String
 // surjective, so we can determine the size S of a byte array given l(S).
 pub fn decode(word: &str) -> Result<Vec<u8>, DecodeError>
 {
+	if !word.is_ascii()
+	{
+		return Err(DecodeError::NonAscii {
+			source: word.to_string(),
+		});
+	}
+
 	// Because decode is the inverse of encode, we want to determine how long
 	// the original data array was, and we will drop the first few bits of this
 	// word; we round down.
@@ -186,17 +181,16 @@ pub fn decode(word: &str) -> Result<Vec<u8>, DecodeError>
 	// most significant bits, so bitpositions 12, ..., 15 will always be zero.
 	// We add five bits each time and we take the eight most significant bits
 	// whenever have less than eight bits remaining.
-	let mut nbits = 0;
+	let mut nbits: i8 = 0;
 	let mut buffer: u16 = 0;
 
 	// Decode the word one character at a time.
 	let mut datapos = 0;
-	for (i, c) in word.chars().enumerate()
+	for (i, x) in word.bytes().enumerate()
 	{
-		let value: u8 = nickel_from_char(c)?;
+		let value: u8 = nickel_from_letter(x)?;
 		debug_assert!(value <= 31);
 
-		let mut freshbits = value as u16;
 		if i == 0 && discarded > 0
 		{
 			// The leading bits should be zero.
@@ -208,11 +202,11 @@ pub fn decode(word: &str) -> Result<Vec<u8>, DecodeError>
 			}
 
 			// The leading zeroes are non-significant.
-			freshbits <<= discarded;
+			nbits -= discarded as i8;
 		}
 
 		// Add the fresh bits.
-		buffer |= freshbits << (11 - nbits);
+		buffer |= (value as u16) << (11 - nbits);
 		nbits += 5;
 
 		// Can we consume eight bits?
@@ -235,9 +229,23 @@ pub enum DecodeError
 {
 	InvalidLetter
 	{
-		letter: char
+		letter: u8
 	},
 	NonZeroLeadingBits
+	{
+		source: String
+	},
+	WordTooLong
+	{
+		source: String,
+		max_length_in_bits: usize,
+	},
+	WordTooShort
+	{
+		source: String,
+		min_length_in_bits: usize,
+	},
+	NonAscii
 	{
 		source: String
 	},
@@ -259,6 +267,26 @@ impl std::fmt::Display for DecodeError
 			{
 				write!(f, "non-zero leading bits in '{}'", source)
 			}
+			DecodeError::WordTooLong {
+				source,
+				max_length_in_bits,
+			} => write!(
+				f,
+				"too many characters in '{}' for {} bits of data",
+				source, max_length_in_bits
+			),
+			DecodeError::WordTooShort {
+				source,
+				min_length_in_bits,
+			} => write!(
+				f,
+				"not enough characters in '{}' for {} bits of data",
+				source, min_length_in_bits
+			),
+			DecodeError::NonAscii { source } =>
+			{
+				write!(f, "non-ASCII characters in '{}'", source)
+			}
 		}
 	}
 }
@@ -273,7 +301,7 @@ mod tests
 	{
 		for nickel in 0..=31
 		{
-			assert_eq!(nickel, nickel_from_letter(letter_from_nickel(nickel))?);
+			assert_eq!(nickel_from_letter(letter_from_nickel(nickel))?, nickel);
 		}
 		Ok(())
 	}
@@ -284,7 +312,7 @@ mod tests
 		for letter in b'a'..=b'z'
 		{
 			let upper = letter.to_ascii_uppercase();
-			assert_eq!(nickel_from_letter(letter)?, nickel_from_letter(upper)?);
+			assert_eq!(nickel_from_letter(upper)?, nickel_from_letter(letter)?);
 		}
 		Ok(())
 	}
@@ -296,6 +324,34 @@ mod tests
 		assert_eq!(nickel_from_letter(b'l')?, nickel_from_letter(b'1')?);
 		assert_eq!(nickel_from_letter(b'o')?, nickel_from_letter(b'0')?);
 		assert_eq!(nickel_from_letter(b'u')?, nickel_from_letter(b'v')?);
+		Ok(())
+	}
+
+	#[test]
+	fn test_empty() -> Result<(), DecodeError>
+	{
+		let encoded = encode(&[]);
+		assert_eq!(encoded.len(), 0);
+		let decoded = decode(&encoded)?;
+		assert_eq!(decoded.len(), 0);
+		Ok(())
+	}
+
+	#[test]
+	fn test_len() -> Result<(), DecodeError>
+	{
+		for len in 1..=20
+		{
+			let mut data = vec![0u8; len];
+			for x in 0..=255
+			{
+				data[0] = x;
+				let encoded = encode(&data);
+				let decoded = decode(&encoded)?;
+				assert_eq!(decoded, data, "(encoded = {})", encoded);
+				assert_eq!(encode(&decoded), encoded,);
+			}
+		}
 		Ok(())
 	}
 }
