@@ -286,6 +286,20 @@ fn handle_message(
 			eprintln!("[{}] Server closed unexpectedly", number);
 			Err(())
 		}
+		Message::JoinLobby { .. }
+		| Message::LeaveLobby { .. }
+		| Message::MakeLobby { .. }
+		| Message::DisbandLobby { .. }
+		| Message::EditLobby { .. }
+		| Message::SaveLobby { .. }
+		| Message::LockLobby { .. }
+		| Message::UnlockLobby { .. }
+		| Message::NameLobby { .. }
+		| Message::MaxPlayers { .. }
+		| Message::NumPlayers { .. } =>
+		{
+			unreachable!();
+		}
 	}
 }
 

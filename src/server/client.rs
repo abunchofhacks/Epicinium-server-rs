@@ -916,6 +916,103 @@ fn handle_message(
 				return Err(ReceiveTaskError::Illegal);
 			}
 		},
+		Message::JoinLobby {
+			lobbyid: _,
+			username: None,
+			metadata: _,
+		} =>
+		{
+			if client.closing
+			{
+				client.sendbuffer.try_send(Message::Closing)?;
+			}
+			else
+			{
+				unimplemented!();
+			}
+		}
+		Message::JoinLobby { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(ReceiveTaskError::Illegal);
+		}
+		Message::LeaveLobby {
+			lobbyid: None,
+			username: None,
+		} =>
+		{
+			if client.closing
+			{
+				client.sendbuffer.try_send(Message::Closing)?;
+			}
+			else
+			{
+				unimplemented!();
+			}
+		}
+		Message::LeaveLobby { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(ReceiveTaskError::Illegal);
+		}
+		Message::MakeLobby {
+			lobbyid: None,
+			username: None,
+		} =>
+		{
+			if client.closing
+			{
+				client.sendbuffer.try_send(Message::Closing)?;
+			}
+			else
+			{
+				unimplemented!();
+			}
+		}
+		Message::MakeLobby { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(ReceiveTaskError::Illegal);
+		}
+		Message::SaveLobby { lobbyid: None } =>
+		{
+			unimplemented!();
+		}
+		Message::SaveLobby { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(ReceiveTaskError::Illegal);
+		}
+		Message::LockLobby { lobbyid: None } =>
+		{
+			unimplemented!();
+		}
+		Message::LockLobby { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(ReceiveTaskError::Illegal);
+		}
+		Message::UnlockLobby { lobbyid: None } =>
+		{
+			unimplemented!();
+		}
+		Message::UnlockLobby { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(ReceiveTaskError::Illegal);
+		}
+		Message::NameLobby {
+			lobbyname: _,
+			lobbyid: None,
+		} =>
+		{
+			unimplemented!();
+		}
+		Message::NameLobby { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(ReceiveTaskError::Illegal);
+		}
 		Message::Init => match client.general_chat
 		{
 			Some(ref mut general_chat) =>
@@ -974,7 +1071,12 @@ fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
-		Message::Closing | Message::Closed =>
+		Message::DisbandLobby { .. }
+		| Message::EditLobby { .. }
+		| Message::MaxPlayers { .. }
+		| Message::NumPlayers { .. }
+		| Message::Closing
+		| Message::Closed =>
 		{
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);

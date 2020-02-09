@@ -36,6 +36,82 @@ pub enum Message
 		#[serde(default, skip_serializing_if = "is_zero")]
 		content: Option<String>,
 	},
+	JoinLobby
+	{
+		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
+		lobbyid: Option<String>,
+
+		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
+		username: Option<String>,
+
+		#[serde(default, skip_serializing_if = "is_zero")]
+		metadata: Option<JoinMetadata>,
+	},
+	LeaveLobby
+	{
+		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
+		lobbyid: Option<String>,
+
+		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
+		username: Option<String>,
+	},
+	MakeLobby
+	{
+		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
+		lobbyid: Option<String>,
+
+		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
+		username: Option<String>,
+	},
+	DisbandLobby
+	{
+		#[serde(rename = "content")]
+		lobbyid: String,
+	},
+	EditLobby
+	{
+		#[serde(rename = "content")]
+		lobbyid: String,
+	},
+	SaveLobby
+	{
+		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
+		lobbyid: Option<String>,
+	},
+	LockLobby
+	{
+		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
+		lobbyid: Option<String>,
+	},
+	UnlockLobby
+	{
+		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
+		lobbyid: Option<String>,
+	},
+	NameLobby
+	{
+		#[serde(rename = "content")]
+		lobbyname: String,
+
+		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
+		lobbyid: Option<String>,
+	},
+	MaxPlayers
+	{
+		#[serde(rename = "content")]
+		lobbyid: String,
+
+		#[serde(rename = "time")]
+		value: i32,
+	},
+	NumPlayers
+	{
+		#[serde(rename = "content")]
+		lobbyid: String,
+
+		#[serde(rename = "time")]
+		value: i32,
+	},
 	Init,
 	Closing,
 	Closed,
