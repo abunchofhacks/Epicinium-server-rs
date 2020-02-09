@@ -55,15 +55,13 @@ pub fn run(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 
 	let serveraddress: SocketAddr = format!("{}:{}", server, port).parse()?;
 
-	// TODO seed
-
 	let mut numbers: Vec<usize> = (0..ntests).collect();
 	let mut rng = rand::thread_rng();
 	numbers.shuffle(&mut rng);
 
 	let tests = numbers
 		.iter()
-		.map(|&number| start_test(number, fakeversion, &serveraddress));
+		.map(|&number| start_test(number, ntests, fakeversion, &serveraddress));
 	let all_tests = stream::futures_unordered(tests).fold((), |(), ()| Ok(()));
 
 	tokio::run(all_tests);
@@ -72,6 +70,7 @@ pub fn run(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 
 fn start_test(
 	number: usize,
+	count: usize,
 	fakeversion: Version,
 	serveraddress: &SocketAddr,
 ) -> impl Future<Item = (), Error = ()> + Send
@@ -82,12 +81,15 @@ fn start_test(
 		.map_err(move |error| {
 			eprintln!("[{}] Failed to connect: {:?}", number, error)
 		})
-		.and_then(move |connection| run_test(connection, number, fakeversion))
+		.and_then(move |connection| {
+			run_test(connection, number, count, fakeversion)
+		})
 }
 
 fn run_test(
 	socket: TcpStream,
 	number: usize,
+	count: usize,
 	fakeversion: Version,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
@@ -99,6 +101,8 @@ fn run_test(
 
 	let mut has_quit = sync::Arc::new(atomic::AtomicBool::new(false));
 	let has_quit_get = has_quit.clone();
+
+	let mut waiting = if number == 0 { count } else { 0 };
 
 	let (reader, writer) = socket.split();
 	stream::unfold(reader, move |socket| {
@@ -121,7 +125,9 @@ fn run_test(
 			_ => true,
 		})
 	})
-	.and_then(move |message| handle_message(number, &mut has_quit, message))
+	.and_then(move |message| {
+		handle_message(number, &mut waiting, &mut has_quit, message)
+	})
 	.map(|responses| stream::iter_ok(responses))
 	.flatten()
 	.select(stream::iter_ok(initialmessages))
@@ -184,6 +190,7 @@ fn parse_message(number: usize, buffer: Vec<u8>) -> io::Result<Message>
 
 fn handle_message(
 	number: usize,
+	waiting: &mut usize,
 	has_quit: &mut sync::Arc<atomic::AtomicBool>,
 	message: Message,
 ) -> Result<Vec<Message>, ()>
@@ -206,22 +213,61 @@ fn handle_message(
 		Message::JoinServer {
 			content: Some(_name),
 			..
-		} => Ok(Vec::new()),
-		Message::Init =>
+		} =>
 		{
-			// TODO send number 0
+			if number == 0
+			{
+				println!("{}...", waiting);
 
-			// TODO remove this
-			has_quit.store(true, atomic::Ordering::Relaxed);
-			Ok(vec![Message::Quit])
+				if *waiting > 1
+				{
+					*waiting -= 1;
+				}
+				else if *waiting == 1
+				{
+					println!("{}!", number);
+					has_quit.store(true, atomic::Ordering::Relaxed);
+					return Ok(vec![
+						Message::Chat {
+							content: number.to_string(),
+							sender: None,
+							target: ChatTarget::General,
+						},
+						Message::Quit,
+					]);
+				}
+			}
+
+			Ok(Vec::new())
 		}
+		Message::Init => Ok(Vec::new()),
 		Message::Chat {
-			content: _,
+			content,
 			sender: _,
 			target: _,
 		} =>
 		{
-			// TODO send other numbers
+			let x: usize = content.parse().map_err(|error| {
+				eprintln!(
+					"[{}] Failed to parse {}: {}",
+					number, content, error
+				);
+			})?;
+
+			if x + 1 == number
+			{
+				println!("{}!", number);
+				has_quit.store(true, atomic::Ordering::Relaxed);
+				return Ok(vec![
+					Message::Chat {
+						content: number.to_string(),
+						sender: None,
+						target: ChatTarget::General,
+					},
+					Message::Quit,
+				]);
+			}
+
 			Ok(Vec::new())
 		}
 		Message::LeaveServer { .. } => Ok(Vec::new()),
