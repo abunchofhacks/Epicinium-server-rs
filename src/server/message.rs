@@ -1,6 +1,7 @@
 /* Message */
 
 use crate::common::header::*;
+use crate::common::keycode::*;
 use crate::common::version::*;
 
 use enumset::*;
@@ -39,7 +40,7 @@ pub enum Message
 	JoinLobby
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
-		lobbyid: Option<String>,
+		lobby_id: Option<Keycode>,
 
 		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
 		username: Option<String>,
@@ -50,7 +51,7 @@ pub enum Message
 	LeaveLobby
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
-		lobbyid: Option<String>,
+		lobby_id: Option<Keycode>,
 
 		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
 		username: Option<String>,
@@ -58,7 +59,7 @@ pub enum Message
 	MakeLobby
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
-		lobbyid: Option<String>,
+		lobby_id: Option<Keycode>,
 
 		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
 		username: Option<String>,
@@ -66,27 +67,27 @@ pub enum Message
 	DisbandLobby
 	{
 		#[serde(rename = "content")]
-		lobbyid: String,
+		lobby_id: Keycode,
 	},
 	EditLobby
 	{
 		#[serde(rename = "content")]
-		lobbyid: String,
+		lobby_id: Keycode,
 	},
 	SaveLobby
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
-		lobbyid: Option<String>,
+		lobby_id: Option<Keycode>,
 	},
 	LockLobby
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
-		lobbyid: Option<String>,
+		lobby_id: Option<Keycode>,
 	},
 	UnlockLobby
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
-		lobbyid: Option<String>,
+		lobby_id: Option<Keycode>,
 	},
 	NameLobby
 	{
@@ -94,12 +95,12 @@ pub enum Message
 		lobbyname: String,
 
 		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
-		lobbyid: Option<String>,
+		lobby_id: Option<Keycode>,
 	},
 	MaxPlayers
 	{
 		#[serde(rename = "content")]
-		lobbyid: String,
+		lobby_id: Keycode,
 
 		#[serde(rename = "time")]
 		value: i32,
@@ -107,7 +108,7 @@ pub enum Message
 	NumPlayers
 	{
 		#[serde(rename = "content")]
-		lobbyid: String,
+		lobby_id: Keycode,
 
 		#[serde(rename = "time")]
 		value: i32,

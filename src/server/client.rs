@@ -917,7 +917,7 @@ fn handle_message(
 			}
 		},
 		Message::JoinLobby {
-			lobbyid: _,
+			lobby_id: _,
 			username: None,
 			metadata: _,
 		} =>
@@ -937,7 +937,7 @@ fn handle_message(
 			return Err(ReceiveTaskError::Illegal);
 		}
 		Message::LeaveLobby {
-			lobbyid: None,
+			lobby_id: None,
 			username: None,
 		} =>
 		{
@@ -956,7 +956,7 @@ fn handle_message(
 			return Err(ReceiveTaskError::Illegal);
 		}
 		Message::MakeLobby {
-			lobbyid: None,
+			lobby_id: None,
 			username: None,
 		} =>
 		{
@@ -974,7 +974,7 @@ fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
-		Message::SaveLobby { lobbyid: None } =>
+		Message::SaveLobby { lobby_id: None } =>
 		{
 			unimplemented!();
 		}
@@ -983,7 +983,7 @@ fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
-		Message::LockLobby { lobbyid: None } =>
+		Message::LockLobby { lobby_id: None } =>
 		{
 			unimplemented!();
 		}
@@ -992,7 +992,7 @@ fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
-		Message::UnlockLobby { lobbyid: None } =>
+		Message::UnlockLobby { lobby_id: None } =>
 		{
 			unimplemented!();
 		}
@@ -1003,7 +1003,7 @@ fn handle_message(
 		}
 		Message::NameLobby {
 			lobbyname: _,
-			lobbyid: None,
+			lobby_id: None,
 		} =>
 		{
 			unimplemented!();

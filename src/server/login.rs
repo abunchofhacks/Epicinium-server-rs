@@ -155,7 +155,7 @@ impl Connection
 			.json(&payload)
 			.send()
 			.map_err(|error| {
-				eprintln!("Login failed: {}", error);
+				eprintln!("Login failed: {:?}", error);
 
 				ResponseStatus::ConnectionFailed
 			})

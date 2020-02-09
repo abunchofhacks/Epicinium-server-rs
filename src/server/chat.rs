@@ -52,11 +52,13 @@ pub fn start_task(
 
 	let closing_updates = closing
 		.map(|()| Update::Closing)
-		.map_err(|error| eprintln!("Closing error in chat_task: {:?}", error))
+		.map_err(|error| {
+			eprintln!("Closing error in general chat: {:?}", error)
+		})
 		.into_stream();
 
 	updates
-		.map_err(|error| eprintln!("Recv error in chat_task: {:?}", error))
+		.map_err(|error| eprintln!("Recv error in general chat: {:?}", error))
 		.select(closing_updates)
 		.for_each(move |update| handle_update(update, &mut clients, &mut close))
 }
@@ -127,7 +129,7 @@ impl Client
 {
 	fn send(&mut self, message: Message)
 	{
-		match self.sendbuffer.try_send(message.clone())
+		match self.sendbuffer.try_send(message)
 		{
 			Ok(()) => (),
 			Err(_error) => self.dead = true,

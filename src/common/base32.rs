@@ -2,7 +2,7 @@
 
 // Convert a 5-bit nickel, i.e. a value between 0 and 31 (inclusive), to
 // a letter in the Base32 alphabet, which is an alphanumeric 8-bit character.
-pub fn char_from_nickel(value: u8) -> u8
+pub fn letter_from_nickel(value: u8) -> u8
 {
 	// Crockford Base32 alphabet where a = 10 and i, l, o and u are skipped.
 	const ALPHABET: [u8; 32] = [
@@ -15,7 +15,103 @@ pub fn char_from_nickel(value: u8) -> u8
 	];
 
 	debug_assert!(value <= 31);
-	return ALPHABET[value as usize];
+	ALPHABET[value as usize]
+}
+
+// Convert a (case insensitive) letter in the Crockform Base32 alphabet
+// to a 5-bit nickel, i.e. a value between 0 and 31 (inclusive).
+fn nickel_from_letter(x: u8) -> Result<u8, DecodeError>
+{
+	if x >= b'0' && x <= b'9'
+	{
+		Ok(x - b'0')
+	}
+	// a = 10
+	else if x >= b'a' && x <= b'h'
+	{
+		Ok(x - b'a' + 10)
+	}
+	// skip i
+	else if x >= b'j' && x <= b'k'
+	{
+		Ok(x - b'j' + 18)
+	}
+	// skip l
+	else if x >= b'm' && x <= b'n'
+	{
+		Ok(x - b'm' + 20)
+	}
+	// skip o
+	else if x >= b'p' && x <= b't'
+	{
+		Ok(x - b'p' + 22)
+	}
+	// skip u
+	else if x >= b'v' && x <= b'z'
+	{
+		Ok(x - b'v' + 27)
+	}
+	// continue with capitals
+	else if x >= b'A' && x <= b'H'
+	{
+		Ok(x - b'A' + 10)
+	}
+	// skip I
+	else if x >= b'J' && x <= b'K'
+	{
+		Ok(x - b'J' + 18)
+	}
+	// skip L
+	else if x >= b'M' && x <= b'N'
+	{
+		Ok(x - b'M' + 20)
+	}
+	// skip O
+	else if x >= b'P' && x <= b'T'
+	{
+		Ok(x - b'P' + 22)
+	}
+	// skip U
+	else if x >= b'V' && x <= b'Z'
+	{
+		Ok(x - b'V' + 27)
+	}
+	// i and I are confused with 1
+	else if x == b'i' || x == b'I'
+	{
+		Ok(1)
+	}
+	// l and L are confused with 1
+	else if x == b'l' || x == b'L'
+	{
+		Ok(1)
+	}
+	// o and O are confused with 0
+	else if x == b'o' || x == b'O'
+	{
+		Ok(0)
+	}
+	// u and U are confused with v
+	else if x == b'u' || x == b'U'
+	{
+		Ok(27)
+	}
+	else
+	{
+		Err(DecodeError::InvalidLetter { letter: x as char })
+	}
+}
+
+fn nickel_from_char(c: char) -> Result<u8, DecodeError>
+{
+	if c >= ' ' && c <= '~'
+	{
+		nickel_from_letter(c as u8)
+	}
+	else
+	{
+		Err(DecodeError::InvalidLetter { letter: c })
+	}
 }
 
 // Convert a big-endian bitstring to a big-endian base32 alphanumeric string.
@@ -60,8 +156,109 @@ pub fn encode(data: &[u8]) -> String
 		nbits -= 5;
 
 		// Turn those five bits into the next character.
-		word[wordpos] = char_from_nickel(nickel);
+		word[wordpos] = letter_from_nickel(nickel);
 	}
 
-	return String::from_utf8(word).unwrap();
+	debug_assert!(datapos == datalength);
+	String::from_utf8(word).unwrap()
+}
+
+// Convert a big-endian base32 string back into a big-endian base256 number. A
+// byte array of size S=5N+K is encoded as a word of length l(S)=8N+f(K), where
+// f(0) = 0, f(1) = 2, f(2) = 4, f(3) = 5 and f(4) = 7. Note that l() is
+// surjective, so we can determine the size S of a byte array given l(S).
+pub fn decode(word: &str) -> Result<Vec<u8>, DecodeError>
+{
+	// Because decode is the inverse of encode, we want to determine how long
+	// the original data array was, and we will drop the first few bits of this
+	// word; we round down.
+	let wordlength = word.len();
+	let datalength = (wordlength * 5) / 8;
+	let mut data = vec![0u8; datalength];
+
+	// If necessary, we can drop bits from the front of the representation.
+	// E.g. if we had encoded a single uint8_t, we are now decoding two
+	// characters, which is 10 bits, but the first two bits should be zero.
+	let mut discarded = (wordlength * 5) % 8;
+	debug_assert!(discarded < 5);
+
+	// We have a buffer of between 0 and 12 bits to draw from; we use the
+	// most significant bits, so bitpositions 12, ..., 15 will always be zero.
+	// We add five bits each time and we take the eight most significant bits
+	// whenever have less than eight bits remaining.
+	let mut nbits = 0;
+	let mut buffer: u16 = 0;
+
+	// Decode the word one character at a time.
+	let mut datapos = 0;
+	for (i, c) in word.chars().enumerate()
+	{
+		let value: u8 = nickel_from_char(c)?;
+		debug_assert!(value <= 31);
+
+		let freshbits = value as u16;
+		if i == 0 && discarded > 0
+		{
+			// The leading bits should be zero.
+			if value >= 1 << (5 - discarded)
+			{
+				return Err(DecodeError::NonZeroLeadingBits {
+					source: word.to_string(),
+				});
+			}
+
+			// The leading zeroes are non-significant.
+			freshbits <<= discarded;
+		}
+
+		// Add the fresh bits.
+		buffer |= freshbits << (11 - nbits);
+		nbits += 5;
+
+		// Can we consume eight bits?
+		if nbits >= 8
+		{
+			// Consume the eight left-most bits.
+			data[datapos] = (buffer >> 8) as u8;
+			datapos += 1;
+			buffer <<= 8;
+			nbits -= 8;
+		}
+	}
+
+	debug_assert!(datapos == datalength);
+	Ok(data)
+}
+
+#[derive(Debug)]
+pub enum DecodeError
+{
+	InvalidLetter
+	{
+		letter: char
+	},
+	NonZeroLeadingBits
+	{
+		source: String
+	},
+}
+
+impl std::error::Error for DecodeError {}
+
+impl std::fmt::Display for DecodeError
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
+	{
+		match self
+		{
+			DecodeError::InvalidLetter { letter } =>
+			{
+				write!(f, "invalid non-Base32 character '{}'", letter)
+			}
+			DecodeError::NonZeroLeadingBits { source } =>
+			{
+				write!(f, "non-zero leading bits in '{}'", source)
+			}
+		}
+	}
 }

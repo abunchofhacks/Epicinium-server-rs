@@ -112,7 +112,7 @@ fn start_acceptance_task(
 
 	start_listening(host, port)
 		.map_err(|error| {
-			eprintln!("Failed to start listening on port {}: {}", port, error)
+			eprintln!("Failed to start listening on port {}: {:?}", port, error)
 		})
 		.map(|listener| binding.confirm().map(|()| listener))
 		.into_future()

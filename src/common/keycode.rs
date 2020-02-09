@@ -2,8 +2,6 @@
 
 use crate::common::base32;
 
-use std::fmt;
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Keycode(pub u64);
 
@@ -43,9 +41,9 @@ pub fn keycode(key: u16, data: u64) -> Keycode
 	Keycode(result)
 }
 
-impl fmt::Display for Keycode
+impl std::fmt::Display for Keycode
 {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 	{
 		let mut bits = self.0;
 		let mut word = vec![0u8; 12];
@@ -58,10 +56,21 @@ impl fmt::Display for Keycode
 			let nickel = (bits & 0x1F) as u8;
 			bits >>= 5;
 			// Then convert the 5-bit index to Base32.
-			word[i] = base32::char_from_nickel(nickel);
+			word[i] = base32::letter_from_nickel(nickel);
 		}
 
 		let x = String::from_utf8(word).unwrap();
 		write!(f, "{}", x)
+	}
+}
+
+impl std::str::FromStr for Keycode
+{
+	type Err = base32::DecodeError;
+
+	fn from_str(s: &str) -> Result<Keycode, base32::DecodeError>
+	{
+		let bytes = base32::decode(s)?;
+		unimplemented!();
 	}
 }

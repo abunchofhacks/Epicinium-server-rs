@@ -112,7 +112,7 @@ impl Connection
 	) -> impl Future<Item = Binding, Error = ()> + Send
 	{
 		build_headers_and_urls(settings)
-			.map_err(|error| eprintln!("Failed to build url: {}", error))
+			.map_err(|error| eprintln!("Failed to build url: {:?}", error))
 			.into_future()
 			.and_then(|(ua, url)| Connection::resolve(ua, url))
 	}
@@ -159,7 +159,7 @@ impl Connection
 				(port, url)
 			})
 			.map_err(|error: ApiError| {
-				eprintln!("Failed to register server: {}", error)
+				eprintln!("Failed to register server: {:?}", error)
 			})
 	}
 
@@ -175,7 +175,7 @@ impl Connection
 			})
 			.map(|_| ())
 			.map_err(|error: ApiError| {
-				eprintln!("Failed to deregister server: {}", error)
+				eprintln!("Failed to deregister server: {:?}", error)
 			})
 	}
 
@@ -187,7 +187,7 @@ impl Connection
 			Ok(payload) => Either::A(self.update(payload)),
 			Err(error) =>
 			{
-				eprintln!("Failed to prepare update payload: {}", error);
+				eprintln!("Failed to prepare update payload: {:?}", error);
 				Either::B(future::err(()))
 			}
 		}
@@ -209,7 +209,7 @@ impl Connection
 			})
 			.map(|_| ())
 			.map_err(|error: ApiError| {
-				eprintln!("Failed to send update to portal: {}", error)
+				eprintln!("Failed to send update to portal: {:?}", error)
 			})
 	}
 }

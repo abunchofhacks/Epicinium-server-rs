@@ -4,11 +4,7 @@ use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
-use std::fmt::Display;
-use std::fmt::Formatter;
-use std::num::ParseIntError;
 use std::result::Result;
-use std::str::FromStr;
 
 #[derive(PartialEq, Eq, PartialOrd, Debug, Copy, Clone)]
 pub struct Version
@@ -95,17 +91,18 @@ impl Version
 	}
 }
 
-impl ToString for Version
+impl std::fmt::Display for Version
 {
-	fn to_string(&self) -> String
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
 	{
 		if self.release == 0
 		{
-			format!("{}.{}.{}", self.major, self.minor, self.patch)
+			write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
 		}
 		else
 		{
-			format!(
+			write!(
+				f,
 				"{}.{}.{}-rc{}",
 				self.major, self.minor, self.patch, self.release
 			)
@@ -114,45 +111,49 @@ impl ToString for Version
 }
 
 #[derive(Debug)]
-pub enum VersionParseError
+pub enum ParseError
 {
-	IntError
+	Int
 	{
-		error: ParseIntError
+		error: std::num::ParseIntError
 	},
-	ParseError
+	Separator
 	{
-		message: String
+		source: String
 	},
 }
 
-impl std::error::Error for VersionParseError {}
+impl std::error::Error for ParseError {}
 
-impl Display for VersionParseError
+impl std::fmt::Display for ParseError
 {
-	fn fmt(&self, f: &mut Formatter) -> std::fmt::Result
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
 	{
 		match self
 		{
-			&VersionParseError::IntError { ref error } => error.fmt(f),
-			&VersionParseError::ParseError { ref message } => message.fmt(f),
+			&ParseError::Int { ref error } => error.fmt(f),
+			&ParseError::Separator { ref source } => write!(
+				f,
+				"failed to parse '{}' as a dot-separated version",
+				source
+			),
 		}
 	}
 }
 
-impl From<ParseIntError> for VersionParseError
+impl From<std::num::ParseIntError> for ParseError
 {
-	fn from(err: ParseIntError) -> VersionParseError
+	fn from(err: std::num::ParseIntError) -> ParseError
 	{
-		VersionParseError::IntError { error: err }
+		ParseError::Int { error: err }
 	}
 }
 
-impl FromStr for Version
+impl std::str::FromStr for Version
 {
-	type Err = VersionParseError;
+	type Err = ParseError;
 
-	fn from_str(s: &str) -> Result<Version, VersionParseError>
+	fn from_str(s: &str) -> Result<Version, ParseError>
 	{
 		let parts: Vec<&str> = s
 			.trim_matches(|p| p == 'v')
@@ -180,8 +181,8 @@ impl FromStr for Version
 		}
 		else
 		{
-			Err(VersionParseError::ParseError {
-				message: "Cannot parse ".to_owned() + s,
+			Err(ParseError::Separator {
+				source: s.to_string(),
 			})
 		}
 	}
@@ -204,6 +205,6 @@ impl<'de> Deserialize<'de> for Version
 		D: Deserializer<'de>,
 	{
 		let s = String::deserialize(deserializer)?;
-		FromStr::from_str(&s).map_err(::serde::de::Error::custom)
+		std::str::FromStr::from_str(&s).map_err(::serde::de::Error::custom)
 	}
 }
