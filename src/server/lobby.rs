@@ -29,7 +29,24 @@ pub enum Update
 	Msg(Message),
 }
 
-pub fn start_task(
+pub fn create(
+	creator_id: Keycode,
+	updates: mpsc::Receiver<Update>,
+	closing: oneshot::Receiver<()>,
+	closed: oneshot::Sender<()>,
+) -> Keycode
+{
+	let key = rand::random();
+	let data = rand::random();
+	let lobby_id = keycode(key, data);
+
+	let task = start_task(lobby_id, updates, closing, closed);
+	tokio::spawn(task);
+
+	lobby_id
+}
+
+fn start_task(
 	lobby_id: Keycode,
 	updates: mpsc::Receiver<Update>,
 	closing: oneshot::Receiver<()>,

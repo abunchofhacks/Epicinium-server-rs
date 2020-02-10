@@ -3,6 +3,7 @@
 use crate::common::keycode::Keycode;
 use crate::common::version::*;
 use crate::server::chat;
+use crate::server::lobby;
 use crate::server::login;
 use crate::server::message::*;
 use crate::server::tokio::State as ServerState;
@@ -966,7 +967,7 @@ fn handle_message(
 			}
 			else
 			{
-				unimplemented!();
+				let lobby_id = lobby::create(client.id);
 			}
 		}
 		Message::MakeLobby { .. } =>
