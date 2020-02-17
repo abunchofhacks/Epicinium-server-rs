@@ -36,6 +36,7 @@ pub fn create(
 	closed: oneshot::Sender<()>,
 ) -> Keycode
 {
+	// TODO data from timestamp
 	let key = rand::random();
 	let data = rand::random();
 	let lobby_id = keycode(key, data);
