@@ -19,7 +19,6 @@ use futures::{Future, Stream};
 use tokio::net::TcpListener;
 use tokio::prelude::*;
 use tokio::sync::mpsc;
-use tokio::sync::oneshot;
 use tokio::sync::watch;
 use tokio::timer::Interval;
 
@@ -73,18 +72,11 @@ fn start_server_task(
 
 	let (state_in, state_out) = watch::channel(State::Open);
 	let live_count = sync::Arc::new(atomic::AtomicUsize::new(0));
-	let (closing_in, closing_out) = oneshot::channel::<()>();
-	let (closed_in, closed_out) = oneshot::channel::<()>();
-	let close_task = start_close_task(
-		killcount_out,
-		live_count.clone(),
-		closed_out,
-		closing_in,
-		state_in,
-	);
+	let close_task =
+		start_close_task(killcount_out, live_count.clone(), state_in);
 
 	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
-	let chat_task = chat::start_task(general_out, closing_out, closed_in);
+	let chat_task = chat::start_task(general_out);
 
 	let client_task = start_acceptance_task(
 		host, binding, login, general_in, state_out, live_count,
@@ -167,19 +159,18 @@ fn start_acceptance_task(
 fn start_close_task(
 	killcount: watch::Receiver<u8>,
 	live_count: sync::Arc<atomic::AtomicUsize>,
-	chat_closed: oneshot::Receiver<()>,
-	chat_closing: oneshot::Sender<()>,
 	server_state: watch::Sender<State>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
-	wait_for_kill(killcount.clone(), chat_closing, server_state)
-		.and_then(move |state| wait_for_close(killcount, chat_closed, state))
+	let live_count1 = live_count.clone();
+
+	wait_for_kill(killcount.clone(), server_state)
+		.and_then(move |state| wait_for_close(killcount, live_count1, state))
 		.and_then(move |()| wait_for_disconnect(live_count))
 }
 
 fn wait_for_kill(
 	killcount: watch::Receiver<u8>,
-	chat_closing: oneshot::Sender<()>,
 	mut server_state: watch::Sender<State>,
 ) -> impl Future<Item = watch::Sender<State>, Error = ()> + Send
 {
@@ -189,12 +180,7 @@ fn wait_for_kill(
 		.map_err(|(error, _killcount)| {
 			eprintln!("Killcount error in close task: {:?}", error)
 		})
-		.and_then(move |(_current, _killcount)| {
-			chat_closing.send(()).map_err(|error| {
-				eprintln!("Chat send error in close task: {:?}", error)
-			})
-		})
-		.inspect(|()| println!("Closing..."))
+		.map(|(_current, _killcount)| println!("Closing..."))
 		.and_then(move |()| {
 			server_state
 				.broadcast(State::Closing)
@@ -207,10 +193,20 @@ fn wait_for_kill(
 
 fn wait_for_close(
 	killcount: watch::Receiver<u8>,
-	chat_closed: oneshot::Receiver<()>,
+	live_count: sync::Arc<atomic::AtomicUsize>,
 	mut server_state: watch::Sender<State>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
+	let wait_future = Interval::new_interval(Duration::from_millis(25))
+		.skip_while(move |_instant| {
+			Ok(live_count.load(atomic::Ordering::Relaxed) > 0)
+		})
+		.into_future()
+		.map(|(_instant, _interval)| println!("All clients have disconnected."))
+		.map_err(|(error, _interval)| {
+			eprintln!("Timer error in wait_for_close: {:?}", error)
+		});
+
 	killcount
 		.skip_while(|&x| Ok(x < 2))
 		.into_future()
@@ -221,9 +217,7 @@ fn wait_for_close(
 			x.ok_or_else(|| eprintln!("No killcount in close task"))
 		})
 		.map(|_x| println!("Closing forcefully..."))
-		.select(chat_closed.map_err(|error| {
-			eprintln!("Chat recv error in close task: {:?}", error)
-		}))
+		.select(wait_future)
 		.map(|((), _other_future)| ())
 		.map_err(|((), _other_future)| ())
 		.and_then(move |()| {
@@ -244,7 +238,9 @@ fn wait_for_disconnect(
 		.map(|(_instant, _interval)| println!("All clients have disconnected."))
 		.map_err(|(error, _interval)| error)
 		.timeout(Duration::from_secs(5))
-		.map_err(|error| eprintln!("Timer error in close task: {:?}", error))
+		.map_err(|error| {
+			eprintln!("Timer error in wait_for_disconnect: {:?}", error)
+		})
 }
 
 fn increase_sockets() -> std::io::Result<()>

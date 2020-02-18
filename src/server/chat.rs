@@ -7,7 +7,6 @@ use futures::future::Future;
 use futures::stream::Stream;
 
 use tokio::sync::mpsc;
-use tokio::sync::oneshot;
 
 use enumset::*;
 use vec_drain_where::VecDrainWhereExt;
@@ -30,53 +29,33 @@ pub enum Update
 	{
 		client_id: Keycode,
 	},
-	Closing,
 
 	Msg(Message),
 }
 
 pub fn start_task(
 	updates: mpsc::Receiver<Update>,
-	closing: oneshot::Receiver<()>,
-	closed: oneshot::Sender<()>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
 	let mut clients: Vec<Client> = Vec::new();
-	let mut close = Close {
-		is_closing: false,
-		is_closed: false,
-		watcher: Some(closed),
-	};
-
-	let closing_updates = closing
-		.map(|()| Update::Closing)
-		.map_err(|error| {
-			eprintln!("Closing error in general chat: {:?}", error)
-		})
-		.into_stream();
 
 	updates
 		.map_err(|error| eprintln!("Recv error in general chat: {:?}", error))
-		.select(closing_updates)
 		.for_each(move |update| {
-			handle_update(update, &mut clients, &mut close);
+			handle_update(update, &mut clients);
 			Ok(())
 		})
 }
 
-struct Close
+fn handle_update(update: Update, clients: &mut Vec<Client>)
 {
-	is_closing: bool,
-	is_closed: bool,
-	watcher: Option<oneshot::Sender<()>>,
-}
+	// TODO is_closed (necessary?)
+	let is_closed = false;
 
-fn handle_update(update: Update, clients: &mut Vec<Client>, close: &mut Close)
-{
 	match update
 	{
 		Update::Join { .. } | Update::Init { .. } | Update::Leave { .. }
-			if close.is_closed =>
+			if is_closed =>
 		{}
 		Update::Join {
 			client_id,
@@ -85,15 +64,7 @@ fn handle_update(update: Update, clients: &mut Vec<Client>, close: &mut Close)
 			sendbuffer,
 		} => handle_join(client_id, username, unlocks, sendbuffer, clients),
 		Update::Init { sendbuffer } => handle_init(sendbuffer, clients),
-		Update::Leave { client_id } => handle_leave(client_id, clients, close),
-		Update::Closing =>
-		{
-			close.is_closing = true;
-			if clients.is_empty()
-			{
-				do_close(close);
-			}
-		}
+		Update::Leave { client_id } => handle_leave(client_id, clients),
 
 		Update::Msg(message) =>
 		{
@@ -272,34 +243,7 @@ fn do_init(
 	sendbuffer.try_send(Message::Init)
 }
 
-fn handle_leave(
-	client_id: Keycode,
-	clients: &mut Vec<Client>,
-	close: &mut Close,
-)
-{
-	do_leave(client_id, clients);
-
-	if close.is_closing && clients.is_empty()
-	{
-		do_close(close);
-	}
-}
-
-fn do_close(close: &mut Close)
-{
-	if let Some(watcher) = close.watcher.take()
-	{
-		match watcher.send(())
-		{
-			Ok(()) => (),
-			Err(_error) => println!("Chat force-closed."),
-		}
-	}
-	close.is_closed = true;
-}
-
-fn do_leave(client_id: Keycode, clients: &mut Vec<Client>)
+fn handle_leave(client_id: Keycode, clients: &mut Vec<Client>)
 {
 	let removed: Vec<Client> = clients
 		.e_drain_where(|client| client.id == client_id)

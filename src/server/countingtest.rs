@@ -102,7 +102,10 @@ fn run_test(
 	let mut has_quit = sync::Arc::new(atomic::AtomicBool::new(false));
 	let has_quit_get = has_quit.clone();
 
-	let mut waiting = if number == 0 { count } else { 0 };
+	// Wait for count + 1 JoinServer messages because the first JoinServer is
+	// information about us successfully joining.
+	// TODO separate these message types and remove this hack
+	let mut waiting = if number == 0 { count + 1 } else { 0 };
 
 	let (reader, writer) = socket.split();
 	stream::unfold(reader, move |socket| {
