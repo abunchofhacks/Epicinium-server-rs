@@ -60,9 +60,6 @@ pub enum Message
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
 		lobby_id: Option<Keycode>,
-
-		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
-		username: Option<String>,
 	},
 	DisbandLobby
 	{

@@ -1,6 +1,7 @@
 /* Server::Lobby */
 
 use crate::common::keycode::*;
+use crate::server::chat;
 use crate::server::message::*;
 
 use std::sync;
@@ -16,6 +17,8 @@ use vec_drain_where::VecDrainWhereExt;
 #[derive(Debug)]
 pub enum Update
 {
+	Save,
+
 	Join
 	{
 		client_id: Keycode,
@@ -30,31 +33,25 @@ pub enum Update
 	Msg(Message),
 }
 
-#[derive(Debug, Clone)]
-pub struct Lobby
-{
-	pub id: Keycode,
-	pub updates: mpsc::Sender<Update>,
-}
-
-pub fn create(ticker: &mut sync::Arc<atomic::AtomicU64>) -> Lobby
+pub fn create(
+	ticker: &mut sync::Arc<atomic::AtomicU64>,
+	general_chat: mpsc::Sender<chat::Update>,
+) -> mpsc::Sender<Update>
 {
 	let key = rand::random();
 	let data = ticker.fetch_add(1, atomic::Ordering::Relaxed);
 	let lobby_id = keycode(key, data);
 
 	let (updates_in, updates_out) = mpsc::channel::<Update>(1000);
-	let task = start_task(lobby_id, updates_out);
+	let task = start_task(lobby_id, general_chat, updates_out);
 	tokio::spawn(task);
 
-	Lobby {
-		id: lobby_id,
-		updates: updates_in,
-	}
+	updates_in
 }
 
 fn start_task(
 	lobby_id: Keycode,
+	general_chat: mpsc::Sender<chat::Update>,
 	updates: mpsc::Receiver<Update>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
@@ -65,15 +62,26 @@ fn start_task(
 			eprintln!("Recv error in lobby {}: {:?}", lobby_id, error)
 		})
 		.for_each(move |update| {
-			handle_update(update, lobby_id, &mut clients);
+			handle_update(update, lobby_id, general_chat, &mut clients);
 			Ok(())
 		})
 }
 
-fn handle_update(update: Update, lobby_id: Keycode, clients: &mut Vec<Client>)
+fn handle_update(
+	update: Update,
+	lobby_id: Keycode,
+	general_chat: mpsc::Sender<chat::Update>,
+	clients: &mut Vec<Client>,
+)
 {
 	match update
 	{
+		Update::Save =>
+		{
+			// TODO send vector of Messages that describe the lobby?
+			general_chat.try_send(chat::Update::MakeLobby { lobby_id });
+		}
+
 		Update::Join {
 			client_id,
 			username,

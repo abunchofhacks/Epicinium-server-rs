@@ -33,8 +33,7 @@ pub enum Update
 
 	MakeLobby
 	{
-		creator_id: Keycode,
-		lobby: lobby::Lobby,
+		lobby: Lobby,
 	},
 
 	Msg(Message),
@@ -45,16 +44,21 @@ pub fn start_task(
 ) -> impl Future<Item = (), Error = ()> + Send
 {
 	let mut clients: Vec<Client> = Vec::new();
+	let mut lobbies: Vec<Lobby> = Vec::new();
 
 	updates
 		.map_err(|error| eprintln!("Recv error in general chat: {:?}", error))
 		.for_each(move |update| {
-			handle_update(update, &mut clients);
+			handle_update(update, &mut clients, &mut lobbies);
 			Ok(())
 		})
 }
 
-fn handle_update(update: Update, clients: &mut Vec<Client>)
+fn handle_update(
+	update: Update,
+	clients: &mut Vec<Client>,
+	lobbies: &mut Vec<Lobby>,
+)
 {
 	match update
 	{
@@ -63,13 +67,18 @@ fn handle_update(update: Update, clients: &mut Vec<Client>)
 			username,
 			unlocks,
 			sendbuffer,
-		} => handle_join(client_id, username, unlocks, sendbuffer, clients),
-		Update::Init { sendbuffer } => handle_init(sendbuffer, clients),
+		} => handle_join(
+			client_id, username, unlocks, sendbuffer, clients, lobbies,
+		),
+		Update::Init { sendbuffer } =>
+		{
+			handle_init(sendbuffer, clients, lobbies)
+		}
 		Update::Leave { client_id } => handle_leave(client_id, clients),
 
-		Update::MakeLobby { .. } =>
+		Update::MakeLobby { lobby } =>
 		{
-			unimplemented!();
+			handle_make_lobby(lobby, clients, lobbies)
 		}
 
 		Update::Msg(message) =>
@@ -99,9 +108,21 @@ impl Client
 		match self.sendbuffer.try_send(message)
 		{
 			Ok(()) => (),
+			// TODO filter dead clients somehow
 			Err(_error) => self.dead = true,
 		}
 	}
+}
+
+#[derive(Debug, Clone)]
+struct Lobby
+{
+	id: Keycode,
+	name: String,
+	num_players: i32,
+	max_players: i32,
+	public: bool,
+	sendbuffer: mpsc::Sender<lobby::Update>,
 }
 
 fn handle_join(
@@ -110,6 +131,7 @@ fn handle_join(
 	unlocks: EnumSet<Unlock>,
 	sendbuffer: mpsc::Sender<Message>,
 	clients: &mut Vec<Client>,
+	lobbies: &Vec<Lobby>,
 )
 {
 	// TODO ghostbusting
@@ -148,7 +170,34 @@ fn handle_join(
 	}
 
 	// Let the client know which lobbies there are.
-	// TODO lobbies
+	for lobby in lobbies.iter()
+	{
+		newcomer.send(Message::EditLobby { lobby_id: lobby.id });
+		newcomer.send(Message::MakeLobby {
+			lobby_id: Some(lobby.id),
+		});
+		newcomer.send(Message::NameLobby {
+			lobby_id: Some(lobby.id),
+			lobbyname: lobby.name,
+		});
+		newcomer.send(Message::MaxPlayers {
+			lobby_id: lobby.id,
+			value: lobby.max_players,
+		});
+		newcomer.send(Message::NumPlayers {
+			lobby_id: lobby.id,
+			value: lobby.num_players,
+		});
+		if !lobby.public
+		{
+			newcomer.send(Message::LockLobby {
+				lobby_id: Some(lobby.id),
+			});
+		}
+		newcomer.send(Message::SaveLobby {
+			lobby_id: Some(lobby.id),
+		});
+	}
 
 	// Let the client know who else is online.
 	for other in clients.iter()
@@ -209,9 +258,13 @@ fn generate_join_metadata(unlocks: &EnumSet<Unlock>) -> Option<JoinMetadata>
 	}
 }
 
-fn handle_init(sendbuffer: mpsc::Sender<Message>, clients: &Vec<Client>)
+fn handle_init(
+	sendbuffer: mpsc::Sender<Message>,
+	clients: &Vec<Client>,
+	lobbies: &Vec<Lobby>,
+)
 {
-	match do_init(sendbuffer, clients)
+	match do_init(sendbuffer, clients, lobbies)
 	{
 		Ok(()) => (),
 		Err(e) => eprintln!("Send error while processing init: {:?}", e),
@@ -221,10 +274,38 @@ fn handle_init(sendbuffer: mpsc::Sender<Message>, clients: &Vec<Client>)
 fn do_init(
 	mut sendbuffer: mpsc::Sender<Message>,
 	clients: &Vec<Client>,
+	lobbies: &Vec<Lobby>,
 ) -> Result<(), mpsc::error::TrySendError<Message>>
 {
 	// Let the client know which lobbies there are.
-	// TODO lobbies
+	for lobby in lobbies.iter()
+	{
+		sendbuffer.try_send(Message::EditLobby { lobby_id: lobby.id })?;
+		sendbuffer.try_send(Message::MakeLobby {
+			lobby_id: Some(lobby.id),
+		})?;
+		sendbuffer.try_send(Message::NameLobby {
+			lobby_id: Some(lobby.id),
+			lobbyname: lobby.name,
+		})?;
+		sendbuffer.try_send(Message::MaxPlayers {
+			lobby_id: lobby.id,
+			value: lobby.max_players,
+		})?;
+		sendbuffer.try_send(Message::NumPlayers {
+			lobby_id: lobby.id,
+			value: lobby.num_players,
+		})?;
+		if !lobby.public
+		{
+			sendbuffer.try_send(Message::LockLobby {
+				lobby_id: Some(lobby.id),
+			})?;
+		}
+		sendbuffer.try_send(Message::SaveLobby {
+			lobby_id: Some(lobby.id),
+		})?;
+	}
 
 	// Let the client know who else is online.
 	for client in clients
@@ -284,4 +365,42 @@ fn handle_leave(client_id: Keycode, clients: &mut Vec<Client>)
 			Err(e) => eprintln!("Send error while processing leave: {:?}", e),
 		}
 	}
+}
+
+fn handle_make_lobby(
+	lobby: Lobby,
+	clients: &mut Vec<Client>,
+	lobbies: &Vec<Lobby>,
+)
+{
+	for client in clients.iter()
+	{
+		client.send(Message::EditLobby { lobby_id: lobby.id });
+		client.send(Message::MakeLobby {
+			lobby_id: Some(lobby.id),
+		});
+		client.send(Message::NameLobby {
+			lobby_id: Some(lobby.id),
+			lobbyname: lobby.name,
+		});
+		client.send(Message::MaxPlayers {
+			lobby_id: lobby.id,
+			value: lobby.max_players,
+		});
+		client.send(Message::NumPlayers {
+			lobby_id: lobby.id,
+			value: lobby.num_players,
+		});
+		if !lobby.public
+		{
+			client.send(Message::LockLobby {
+				lobby_id: Some(lobby.id),
+			});
+		}
+		client.send(Message::SaveLobby {
+			lobby_id: Some(lobby.id),
+		});
+	}
+
+	lobbies.push(lobby);
 }

@@ -968,17 +968,28 @@ fn handle_message(
 		Message::MakeLobby { .. } if client.lobby.is_some() =>
 		{
 			println!("Invalid message from lobbied client: {:?}", message);
-			client.sendbuffer.try_send(Message::MakeLobby {
-				lobby_id: None,
-				username: None,
-			})?;
+			client
+				.sendbuffer
+				.try_send(Message::MakeLobby { lobby_id: None })?;
 		}
-		Message::MakeLobby {
-			lobby_id: None,
-			username: None,
-		} =>
+		Message::MakeLobby { lobby_id: None } =>
 		{
-			client.lobby = Some(lobby::create(&mut client.lobby_authority));
+			match client.general_chat
+			{
+				Some(ref general_chat) =>
+				{
+					client.lobby = Some(lobby::create(&mut client.lobby_authority,
+						general_chat.clone()));
+				}
+				None =>
+				{
+					println!(
+						"Invalid message from offline client: {:?}",
+						message
+					);
+					return Err(ReceiveTaskError::Illegal);
+				}
+			}
 		}
 		Message::MakeLobby { .. } =>
 		{
@@ -991,24 +1002,7 @@ fn handle_message(
 		}
 		Message::SaveLobby { lobby_id: None } => match client.lobby
 		{
-			Some(ref lobby) => match client.general_chat
-			{
-				Some(ref mut general_chat) =>
-				{
-					general_chat.try_send(chat::Update::MakeLobby {
-						creator_id: client.id,
-						lobby: lobby.clone(),
-					})?;
-				}
-				None =>
-				{
-					println!(
-						"Invalid message from offline client: {:?}",
-						message
-					);
-					return Err(ReceiveTaskError::Illegal);
-				}
-			},
+			Some(ref lobby) => ,
 			None =>
 			{
 				println!(
