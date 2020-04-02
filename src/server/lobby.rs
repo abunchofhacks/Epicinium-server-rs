@@ -3,6 +3,9 @@
 use crate::common::keycode::*;
 use crate::server::message::*;
 
+use std::sync;
+use std::sync::atomic;
+
 use futures::future::Future;
 use futures::stream::Stream;
 
@@ -27,17 +30,27 @@ pub enum Update
 	Msg(Message),
 }
 
-pub fn create(creator_id: Keycode, updates: mpsc::Receiver<Update>) -> Keycode
+#[derive(Debug, Clone)]
+pub struct Lobby
 {
-	// TODO data from timestamp
+	pub id: Keycode,
+	pub updates: mpsc::Sender<Update>,
+}
+
+pub fn create(ticker: &mut sync::Arc<atomic::AtomicU64>) -> Lobby
+{
 	let key = rand::random();
-	let data = rand::random();
+	let data = ticker.fetch_add(1, atomic::Ordering::Relaxed);
 	let lobby_id = keycode(key, data);
 
-	let task = start_task(lobby_id, updates);
+	let (updates_in, updates_out) = mpsc::channel::<Update>(1000);
+	let task = start_task(lobby_id, updates_out);
 	tokio::spawn(task);
 
-	lobby_id
+	Lobby {
+		id: lobby_id,
+		updates: updates_in,
+	}
 }
 
 fn start_task(

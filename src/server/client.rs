@@ -3,7 +3,7 @@
 use crate::common::keycode::Keycode;
 use crate::common::version::*;
 use crate::server::chat;
-//use crate::server::lobby;
+use crate::server::lobby;
 use crate::server::login;
 use crate::server::message::*;
 use crate::server::tokio::State as ServerState;
@@ -40,6 +40,8 @@ struct Client
 	pong_receive_time: watch::Sender<()>,
 	login: mpsc::Sender<login::Request>,
 	general_chat: Option<mpsc::Sender<chat::Update>>,
+	lobby_authority: sync::Arc<atomic::AtomicU64>,
+	lobby: Option<lobby::Lobby>,
 	has_proper_version: bool,
 	has_proper_version_a: sync::Arc<atomic::AtomicBool>,
 	supports_empty_pulses: mpsc::Sender<bool>,
@@ -84,6 +86,7 @@ pub fn accept_client(
 	chat_server: mpsc::Sender<chat::Update>,
 	server_state: watch::Receiver<ServerState>,
 	live_count: sync::Arc<atomic::AtomicUsize>,
+	lobby_authority: sync::Arc<atomic::AtomicU64>,
 ) -> io::Result<()>
 {
 	live_count.fetch_add(1, atomic::Ordering::Relaxed);
@@ -107,6 +110,8 @@ pub fn accept_client(
 		pong_receive_time: pongbuffer_in,
 		login: loginbuffer_in,
 		general_chat: None,
+		lobby_authority: lobby_authority,
+		lobby: None,
 		has_proper_version: false,
 		has_proper_version_a: sync::Arc::new(atomic::AtomicBool::new(false)),
 		supports_empty_pulses: supports_empty_in,
@@ -956,29 +961,63 @@ fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
+		Message::MakeLobby { .. } if client.closing =>
+		{
+			client.sendbuffer.try_send(Message::Closing)?;
+		}
+		Message::MakeLobby { .. } if client.lobby.is_some() =>
+		{
+			println!("Invalid message from lobbied client: {:?}", message);
+			client.sendbuffer.try_send(Message::MakeLobby {
+				lobby_id: None,
+				username: None,
+			})?;
+		}
 		Message::MakeLobby {
 			lobby_id: None,
 			username: None,
 		} =>
 		{
-			if client.closing
-			{
-				client.sendbuffer.try_send(Message::Closing)?;
-			}
-			else
-			{
-				unimplemented!();
-			}
+			client.lobby = Some(lobby::create(&mut client.lobby_authority));
 		}
 		Message::MakeLobby { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
-		Message::SaveLobby { lobby_id: None } =>
+		Message::SaveLobby { .. } if client.closing =>
 		{
-			unimplemented!();
+			client.sendbuffer.try_send(Message::Closing)?;
 		}
+		Message::SaveLobby { lobby_id: None } => match client.lobby
+		{
+			Some(ref lobby) => match client.general_chat
+			{
+				Some(ref mut general_chat) =>
+				{
+					general_chat.try_send(chat::Update::MakeLobby {
+						creator_id: client.id,
+						lobby: lobby.clone(),
+					})?;
+				}
+				None =>
+				{
+					println!(
+						"Invalid message from offline client: {:?}",
+						message
+					);
+					return Err(ReceiveTaskError::Illegal);
+				}
+			},
+			None =>
+			{
+				println!(
+					"Invalid message from unlobbied client: {:?}",
+					message
+				);
+				return Err(ReceiveTaskError::Illegal);
+			}
+		},
 		Message::SaveLobby { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);

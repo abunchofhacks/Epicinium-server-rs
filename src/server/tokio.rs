@@ -101,6 +101,7 @@ fn start_acceptance_task(
 {
 	let port = binding.port;
 	let mut ticker: u64 = rand::random();
+	let lobbyticker = sync::Arc::new(atomic::AtomicU64::new(rand::random()));
 
 	start_listening(host, port)
 		.map_err(|error| {
@@ -146,6 +147,7 @@ fn start_acceptance_task(
 				chat.clone(),
 				server_state.clone(),
 				live_count.clone(),
+				lobbyticker.clone(),
 			)
 			.map_err(|e| {
 				eprintln!("Accepting incoming connection failed: {:?}", e);

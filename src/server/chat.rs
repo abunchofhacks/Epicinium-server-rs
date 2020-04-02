@@ -1,6 +1,7 @@
 /* Server::Chat */
 
 use crate::common::keycode::*;
+use crate::server::lobby;
 use crate::server::message::*;
 
 use futures::future::Future;
@@ -28,6 +29,12 @@ pub enum Update
 	Leave
 	{
 		client_id: Keycode,
+	},
+
+	MakeLobby
+	{
+		creator_id: Keycode,
+		lobby: lobby::Lobby,
 	},
 
 	Msg(Message),
@@ -59,6 +66,11 @@ fn handle_update(update: Update, clients: &mut Vec<Client>)
 		} => handle_join(client_id, username, unlocks, sendbuffer, clients),
 		Update::Init { sendbuffer } => handle_init(sendbuffer, clients),
 		Update::Leave { client_id } => handle_leave(client_id, clients),
+
+		Update::MakeLobby { .. } =>
+		{
+			unimplemented!();
+		}
 
 		Update::Msg(message) =>
 		{
