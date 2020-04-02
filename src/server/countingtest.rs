@@ -22,6 +22,7 @@ use tokio::prelude::*;
 pub fn run(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 {
 	coredump::enable_coredumps()?;
+	increase_sockets()?;
 
 	let mut ntests: usize = 2;
 	let mut fakeversion: Version = Version::current();
@@ -362,4 +363,10 @@ fn send_bytes(
 		.map_err(move |error| {
 			eprintln!("[{}] Failed to send: {:?}", number, error);
 		})
+}
+
+fn increase_sockets() -> std::io::Result<()>
+{
+	const MAX_SOCKETS: rlimit::rlim = 16384;
+	rlimit::Resource::NOFILE.set(MAX_SOCKETS, MAX_SOCKETS)
 }
