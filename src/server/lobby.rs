@@ -59,13 +59,8 @@ fn start_task(
 
 fn handle_update(update: Update, lobby_id: Keycode, clients: &mut Vec<Client>)
 {
-	// TODO is_closed (necessary?)
-	let is_closed = false;
-
 	match update
 	{
-		Update::Join { .. } | Update::Leave { .. } if is_closed =>
-		{}
 		Update::Join {
 			client_id,
 			username,

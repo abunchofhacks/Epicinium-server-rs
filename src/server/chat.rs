@@ -49,14 +49,8 @@ pub fn start_task(
 
 fn handle_update(update: Update, clients: &mut Vec<Client>)
 {
-	// TODO is_closed (necessary?)
-	let is_closed = false;
-
 	match update
 	{
-		Update::Join { .. } | Update::Init { .. } | Update::Leave { .. }
-			if is_closed =>
-		{}
 		Update::Join {
 			client_id,
 			username,
