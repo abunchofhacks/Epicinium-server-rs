@@ -43,18 +43,40 @@ pub fn create(
 	let lobby_id = keycode(key, data);
 
 	let (updates_in, updates_out) = mpsc::channel::<Update>(1000);
-	let task = start_task(lobby_id, general_chat, updates_out);
+
+	let lobby = Lobby {
+		id: lobby_id,
+		name: format!("Unnamed lobby ({})", lobby_id),
+		num_players: 0,
+		max_players: 2,
+		public: true,
+		sendbuffer: updates_in.clone(),
+	};
+
+	let task = start_task(lobby, general_chat, updates_out);
 	tokio::spawn(task);
 
 	updates_in
 }
 
+#[derive(Debug, Clone)]
+struct Lobby
+{
+	id: Keycode,
+	name: String,
+	num_players: i32,
+	max_players: i32,
+	public: bool,
+	sendbuffer: mpsc::Sender<Update>,
+}
+
 fn start_task(
-	lobby_id: Keycode,
-	general_chat: mpsc::Sender<chat::Update>,
+	mut lobby: Lobby,
+	mut general_chat: mpsc::Sender<chat::Update>,
 	updates: mpsc::Receiver<Update>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
+	let lobby_id = lobby.id;
 	let mut clients: Vec<Client> = Vec::new();
 
 	updates
@@ -62,35 +84,40 @@ fn start_task(
 			eprintln!("Recv error in lobby {}: {:?}", lobby_id, error)
 		})
 		.for_each(move |update| {
-			handle_update(update, lobby_id, general_chat, &mut clients);
-			Ok(())
+			handle_update(update, &mut lobby, &mut general_chat, &mut clients)
 		})
 }
 
 fn handle_update(
 	update: Update,
-	lobby_id: Keycode,
-	general_chat: mpsc::Sender<chat::Update>,
+	lobby: &mut Lobby,
+	general_chat: &mut mpsc::Sender<chat::Update>,
 	clients: &mut Vec<Client>,
-)
+) -> Result<(), ()>
 {
+	let lobby_id = lobby.id;
+
 	match update
 	{
 		Update::Save =>
 		{
-			// TODO send vector of Messages that describe the lobby?
-			general_chat.try_send(chat::Update::MakeLobby { lobby_id });
+			general_chat
+				.try_send(chat::Update::ListLobby {
+					lobby_id: lobby.id,
+					description_messages: make_listing_messages(&lobby),
+					sendbuffer: lobby.sendbuffer.clone(),
+				})
+				.map_err(|error| {
+					eprintln!("Chat error in lobby {}: {:?}", lobby_id, error)
+				})?;
 		}
 
 		Update::Join {
 			client_id,
 			username,
 			sendbuffer,
-		} => handle_join(lobby_id, client_id, username, sendbuffer, clients),
-		Update::Leave { client_id } =>
-		{
-			handle_leave(lobby_id, client_id, clients)
-		}
+		} => handle_join(lobby, client_id, username, sendbuffer, clients),
+		Update::Leave { client_id } => handle_leave(lobby, client_id, clients),
 
 		Update::Msg(message) =>
 		{
@@ -100,6 +127,45 @@ fn handle_update(
 			}
 		}
 	}
+
+	Ok(())
+}
+
+fn make_listing_messages(lobby: &Lobby) -> Vec<Message>
+{
+	vec![
+		Message::EditLobby { lobby_id: lobby.id },
+		Message::MakeLobby {
+			lobby_id: Some(lobby.id),
+		},
+		Message::NameLobby {
+			lobby_id: Some(lobby.id),
+			lobbyname: lobby.name.clone(),
+		},
+		Message::MaxPlayers {
+			lobby_id: lobby.id,
+			value: lobby.max_players,
+		},
+		Message::NumPlayers {
+			lobby_id: lobby.id,
+			value: lobby.num_players,
+		},
+		if lobby.public
+		{
+			Message::UnlockLobby {
+				lobby_id: Some(lobby.id),
+			}
+		}
+		else
+		{
+			Message::LockLobby {
+				lobby_id: Some(lobby.id),
+			}
+		},
+		Message::SaveLobby {
+			lobby_id: Some(lobby.id),
+		},
+	]
 }
 
 struct Client
@@ -123,7 +189,7 @@ impl Client
 }
 
 fn handle_join(
-	lobby_id: Keycode,
+	lobby: &mut Lobby,
 	client_id: Keycode,
 	username: String,
 	sendbuffer: mpsc::Sender<Message>,
@@ -139,13 +205,18 @@ fn handle_join(
 		dead: false,
 	};
 
-	// TODO max players
-	newcomer.send(Message::MaxPlayers { lobby_id, value: 2 });
+	// Tell the newcomer the maximum player count in advance,
+	// so they can reserve the necessary slots in the UI.
+	newcomer.send(Message::MaxPlayers {
+		lobby_id: lobby.id,
+		value: lobby.max_players,
+	});
 
+	// Tell the newcomer which users are already in the lobby.
 	for other in clients.into_iter()
 	{
 		newcomer.send(Message::JoinLobby {
-			lobby_id: Some(lobby_id),
+			lobby_id: Some(lobby.id),
 			username: Some(other.username.clone()),
 			metadata: None,
 		});
@@ -167,7 +238,7 @@ fn handle_join(
 }
 
 fn handle_leave(
-	lobby_id: Keycode,
+	lobby: &mut Lobby,
 	client_id: Keycode,
 	clients: &mut Vec<Client>,
 )
@@ -186,7 +257,7 @@ fn handle_leave(
 		} = removed_client;
 
 		let message = Message::LeaveLobby {
-			lobby_id: Some(lobby_id),
+			lobby_id: Some(lobby.id),
 			username: Some(username),
 		};
 

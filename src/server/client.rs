@@ -41,7 +41,7 @@ struct Client
 	login: mpsc::Sender<login::Request>,
 	general_chat: Option<mpsc::Sender<chat::Update>>,
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
-	lobby: Option<lobby::Lobby>,
+	lobby: Option<mpsc::Sender<lobby::Update>>,
 	has_proper_version: bool,
 	has_proper_version_a: sync::Arc<atomic::AtomicBool>,
 	supports_empty_pulses: mpsc::Sender<bool>,
@@ -618,6 +618,10 @@ enum ReceiveTaskError
 	{
 		error: mpsc::error::TrySendError<chat::Update>,
 	},
+	Lobby
+	{
+		error: mpsc::error::TrySendError<lobby::Update>,
+	},
 	Server
 	{
 		error: mpsc::error::RecvError,
@@ -648,6 +652,14 @@ impl From<mpsc::error::TrySendError<chat::Update>> for ReceiveTaskError
 	}
 }
 
+impl From<mpsc::error::TrySendError<lobby::Update>> for ReceiveTaskError
+{
+	fn from(error: mpsc::error::TrySendError<lobby::Update>) -> Self
+	{
+		ReceiveTaskError::Lobby { error }
+	}
+}
+
 impl Into<io::Result<()>> for ReceiveTaskError
 {
 	fn into(self) -> io::Result<()>
@@ -672,6 +684,11 @@ impl Into<io::Result<()>> for ReceiveTaskError
 			ReceiveTaskError::Chat { error } =>
 			{
 				eprintln!("Chat error in receive_task: {:?}", error);
+				Err(io::Error::new(ErrorKind::ConnectionReset, error))
+			}
+			ReceiveTaskError::Lobby { error } =>
+			{
+				eprintln!("Lobby error in receive_task: {:?}", error);
 				Err(io::Error::new(ErrorKind::ConnectionReset, error))
 			}
 			ReceiveTaskError::Server { error } =>
@@ -972,25 +989,21 @@ fn handle_message(
 				.sendbuffer
 				.try_send(Message::MakeLobby { lobby_id: None })?;
 		}
-		Message::MakeLobby { lobby_id: None } =>
+		Message::MakeLobby { lobby_id: None } => match client.general_chat
 		{
-			match client.general_chat
+			Some(ref general_chat) =>
 			{
-				Some(ref general_chat) =>
-				{
-					client.lobby = Some(lobby::create(&mut client.lobby_authority,
-						general_chat.clone()));
-				}
-				None =>
-				{
-					println!(
-						"Invalid message from offline client: {:?}",
-						message
-					);
-					return Err(ReceiveTaskError::Illegal);
-				}
+				client.lobby = Some(lobby::create(
+					&mut client.lobby_authority,
+					general_chat.clone(),
+				));
 			}
-		}
+			None =>
+			{
+				println!("Invalid message from offline client: {:?}", message);
+				return Err(ReceiveTaskError::Illegal);
+			}
+		},
 		Message::MakeLobby { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
@@ -1002,7 +1015,7 @@ fn handle_message(
 		}
 		Message::SaveLobby { lobby_id: None } => match client.lobby
 		{
-			Some(ref lobby) => ,
+			Some(ref mut lobby) => lobby.try_send(lobby::Update::Save)?,
 			None =>
 			{
 				println!(

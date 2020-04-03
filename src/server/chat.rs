@@ -31,9 +31,11 @@ pub enum Update
 		client_id: Keycode,
 	},
 
-	MakeLobby
+	ListLobby
 	{
-		lobby: Lobby,
+		lobby_id: Keycode,
+		description_messages: Vec<Message>,
+		sendbuffer: mpsc::Sender<lobby::Update>,
 	},
 
 	Msg(Message),
@@ -76,9 +78,18 @@ fn handle_update(
 		}
 		Update::Leave { client_id } => handle_leave(client_id, clients),
 
-		Update::MakeLobby { lobby } =>
+		Update::ListLobby {
+			lobby_id,
+			description_messages,
+			sendbuffer,
+		} =>
 		{
-			handle_make_lobby(lobby, clients, lobbies)
+			let lobby = Lobby {
+				id: lobby_id,
+				description_messages,
+				sendbuffer,
+			};
+			handle_list_lobby(lobby, clients, lobbies)
 		}
 
 		Update::Msg(message) =>
@@ -118,10 +129,7 @@ impl Client
 struct Lobby
 {
 	id: Keycode,
-	name: String,
-	num_players: i32,
-	max_players: i32,
-	public: bool,
+	description_messages: Vec<Message>,
 	sendbuffer: mpsc::Sender<lobby::Update>,
 }
 
@@ -172,31 +180,10 @@ fn handle_join(
 	// Let the client know which lobbies there are.
 	for lobby in lobbies.iter()
 	{
-		newcomer.send(Message::EditLobby { lobby_id: lobby.id });
-		newcomer.send(Message::MakeLobby {
-			lobby_id: Some(lobby.id),
-		});
-		newcomer.send(Message::NameLobby {
-			lobby_id: Some(lobby.id),
-			lobbyname: lobby.name,
-		});
-		newcomer.send(Message::MaxPlayers {
-			lobby_id: lobby.id,
-			value: lobby.max_players,
-		});
-		newcomer.send(Message::NumPlayers {
-			lobby_id: lobby.id,
-			value: lobby.num_players,
-		});
-		if !lobby.public
+		for message in lobby.description_messages.iter()
 		{
-			newcomer.send(Message::LockLobby {
-				lobby_id: Some(lobby.id),
-			});
+			newcomer.send(message.clone())
 		}
-		newcomer.send(Message::SaveLobby {
-			lobby_id: Some(lobby.id),
-		});
 	}
 
 	// Let the client know who else is online.
@@ -280,31 +267,10 @@ fn do_init(
 	// Let the client know which lobbies there are.
 	for lobby in lobbies.iter()
 	{
-		sendbuffer.try_send(Message::EditLobby { lobby_id: lobby.id })?;
-		sendbuffer.try_send(Message::MakeLobby {
-			lobby_id: Some(lobby.id),
-		})?;
-		sendbuffer.try_send(Message::NameLobby {
-			lobby_id: Some(lobby.id),
-			lobbyname: lobby.name,
-		})?;
-		sendbuffer.try_send(Message::MaxPlayers {
-			lobby_id: lobby.id,
-			value: lobby.max_players,
-		})?;
-		sendbuffer.try_send(Message::NumPlayers {
-			lobby_id: lobby.id,
-			value: lobby.num_players,
-		})?;
-		if !lobby.public
+		for message in lobby.description_messages.iter()
 		{
-			sendbuffer.try_send(Message::LockLobby {
-				lobby_id: Some(lobby.id),
-			})?;
+			sendbuffer.try_send(message.clone())?;
 		}
-		sendbuffer.try_send(Message::SaveLobby {
-			lobby_id: Some(lobby.id),
-		})?;
 	}
 
 	// Let the client know who else is online.
@@ -367,40 +333,21 @@ fn handle_leave(client_id: Keycode, clients: &mut Vec<Client>)
 	}
 }
 
-fn handle_make_lobby(
-	lobby: Lobby,
+fn handle_list_lobby(
+	newlobby: Lobby,
 	clients: &mut Vec<Client>,
-	lobbies: &Vec<Lobby>,
+	lobbies: &mut Vec<Lobby>,
 )
 {
-	for client in clients.iter()
+	lobbies.retain(|lobby| lobby.id != newlobby.id);
+
+	for client in clients.iter_mut()
 	{
-		client.send(Message::EditLobby { lobby_id: lobby.id });
-		client.send(Message::MakeLobby {
-			lobby_id: Some(lobby.id),
-		});
-		client.send(Message::NameLobby {
-			lobby_id: Some(lobby.id),
-			lobbyname: lobby.name,
-		});
-		client.send(Message::MaxPlayers {
-			lobby_id: lobby.id,
-			value: lobby.max_players,
-		});
-		client.send(Message::NumPlayers {
-			lobby_id: lobby.id,
-			value: lobby.num_players,
-		});
-		if !lobby.public
+		for message in newlobby.description_messages.iter()
 		{
-			client.send(Message::LockLobby {
-				lobby_id: Some(lobby.id),
-			});
+			client.send(message.clone())
 		}
-		client.send(Message::SaveLobby {
-			lobby_id: Some(lobby.id),
-		});
 	}
 
-	lobbies.push(lobby);
+	lobbies.push(newlobby);
 }
