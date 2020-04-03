@@ -89,6 +89,7 @@ fn start_task(
 		.for_each(move |update| {
 			handle_update(update, &mut lobby, &mut general_chat, &mut clients)
 		})
+		.map(move |()| println!("Lobby {} has disbanded.", lobby_id))
 }
 
 fn handle_update(
@@ -258,6 +259,12 @@ fn handle_join(
 	// TODO other map settings
 	// TODO list all recordings if this is a replay lobby
 	// TODO other replay settings
+
+	newcomer.send(Message::JoinLobby {
+		lobby_id: Some(lobby.id),
+		username: Some(newcomer.username.clone()),
+		metadata: None,
+	});
 
 	clients.push(newcomer);
 }

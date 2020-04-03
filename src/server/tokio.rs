@@ -226,6 +226,7 @@ fn wait_for_close(
 			// There might be a Future waiting for this, or there might not be.
 			server_state.broadcast(State::Closed).or(Ok(()))
 		})
+		.map(|()| println!("Closed."))
 }
 
 fn wait_for_disconnect(

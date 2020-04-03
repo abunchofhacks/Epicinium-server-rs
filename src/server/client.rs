@@ -168,6 +168,7 @@ pub fn accept_client(
 		.map(|((), ())| ())
 		.map_err(move |e| eprintln!("Error in client {}: {:?}", id, e))
 		.then(move |result| {
+			println!("Client {} done.", id);
 			live_count.fetch_sub(1, atomic::Ordering::Relaxed);
 			result
 		});
@@ -980,14 +981,10 @@ fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
-		Message::LeaveLobby { .. } if client.closing =>
-		{
-			client.sendbuffer.try_send(Message::Closing)?;
-		}
 		Message::LeaveLobby {
 			lobby_id: None,
 			username: None,
-		} => match client.lobby
+		} => match client.lobby.take()
 		{
 			Some(ref mut lobby) => lobby.try_send(lobby::Update::Leave {
 				client_id: client.id,
@@ -1021,10 +1018,16 @@ fn handle_message(
 		{
 			Some(ref general_chat) =>
 			{
-				client.lobby = Some(lobby::create(
+				let mut lobby = lobby::create(
 					&mut client.lobby_authority,
 					general_chat.clone(),
-				));
+				);
+				lobby.try_send(lobby::Update::Join {
+					client_id: client.id,
+					username: client.username.clone(),
+					sendbuffer: client.sendbuffer.clone(),
+				})?;
+				client.lobby = Some(lobby);
 			}
 			None =>
 			{

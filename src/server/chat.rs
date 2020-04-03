@@ -66,6 +66,7 @@ pub fn start_task(
 			handle_update(update, &mut clients, &mut lobbies);
 			Ok(())
 		})
+		.map(move |()| println!("General chat has disbanded."))
 }
 
 fn handle_update(
