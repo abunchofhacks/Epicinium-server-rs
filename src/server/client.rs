@@ -58,24 +58,35 @@ impl Drop for Client
 {
 	fn drop(&mut self)
 	{
-		match leave_general_chat(self)
+		match self.general_chat.take()
 		{
-			Ok(()) => (),
-			Err(e) => eprintln!("Error while dropping client: {:?}", e),
+			Some(mut general_chat) =>
+			{
+				match general_chat
+					.try_send(chat::Update::Leave { client_id: self.id })
+				{
+					Ok(()) => (),
+					Err(e) => eprintln!("Error while dropping client: {:?}", e),
+				}
+			}
+			None =>
+			{}
 		}
-	}
-}
 
-fn leave_general_chat(
-	client: &mut Client,
-) -> Result<(), mpsc::error::TrySendError<chat::Update>>
-{
-	match client.general_chat.take()
-	{
-		Some(mut general_chat) => general_chat.try_send(chat::Update::Leave {
-			client_id: client.id,
-		}),
-		None => Ok(()),
+		match self.lobby.take()
+		{
+			Some(mut lobby) =>
+			{
+				match lobby
+					.try_send(lobby::Update::Leave { client_id: self.id })
+				{
+					Ok(()) => (),
+					Err(e) => eprintln!("Error while dropping client: {:?}", e),
+				}
+			}
+			None =>
+			{}
+		}
 	}
 }
 
@@ -939,40 +950,57 @@ fn handle_message(
 				return Err(ReceiveTaskError::Illegal);
 			}
 		},
+		Message::JoinLobby { .. } if client.closing =>
+		{
+			client.sendbuffer.try_send(Message::Closing)?;
+		}
 		Message::JoinLobby {
-			lobby_id: _,
+			lobby_id: Some(lobby_id),
 			username: None,
 			metadata: _,
-		} =>
+		} => match client.general_chat
 		{
-			if client.closing
+			Some(ref mut general_chat) =>
 			{
-				client.sendbuffer.try_send(Message::Closing)?;
+				general_chat.try_send(chat::Update::JoinLobby {
+					lobby_id,
+					client_id: client.id,
+					username: client.username.clone(),
+					sendbuffer: client.sendbuffer.clone(),
+				})?;
 			}
-			else
+			None =>
 			{
-				unimplemented!();
+				println!("Invalid message from offline client: {:?}", message);
+				return Err(ReceiveTaskError::Illegal);
 			}
-		}
+		},
 		Message::JoinLobby { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
+		Message::LeaveLobby { .. } if client.closing =>
+		{
+			client.sendbuffer.try_send(Message::Closing)?;
+		}
 		Message::LeaveLobby {
 			lobby_id: None,
 			username: None,
-		} =>
+		} => match client.lobby
 		{
-			if client.closing
+			Some(ref mut lobby) => lobby.try_send(lobby::Update::Leave {
+				client_id: client.id,
+			})?,
+			None =>
 			{
-				client.sendbuffer.try_send(Message::Closing)?;
+				println!(
+					"Invalid message from unlobbied client: {:?}",
+					message
+				);
+				return Err(ReceiveTaskError::Illegal);
 			}
-			else
-			{
-				unimplemented!();
-			}
-		}
+		},
 		Message::LeaveLobby { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
@@ -1030,19 +1058,35 @@ fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
-		Message::LockLobby { lobby_id: None } =>
+		Message::LockLobby { lobby_id: None } => match client.lobby
 		{
-			unimplemented!();
-		}
+			Some(ref mut lobby) => lobby.try_send(lobby::Update::Lock)?,
+			None =>
+			{
+				println!(
+					"Invalid message from unlobbied client: {:?}",
+					message
+				);
+				return Err(ReceiveTaskError::Illegal);
+			}
+		},
 		Message::LockLobby { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
 			return Err(ReceiveTaskError::Illegal);
 		}
-		Message::UnlockLobby { lobby_id: None } =>
+		Message::UnlockLobby { lobby_id: None } => match client.lobby
 		{
-			unimplemented!();
-		}
+			Some(ref mut lobby) => lobby.try_send(lobby::Update::Unlock)?,
+			None =>
+			{
+				println!(
+					"Invalid message from unlobbied client: {:?}",
+					message
+				);
+				return Err(ReceiveTaskError::Illegal);
+			}
+		},
 		Message::UnlockLobby { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
@@ -1112,7 +1156,38 @@ fn handle_message(
 				return Err(ReceiveTaskError::Illegal);
 			}
 		},
-		// TODO lobby chat
+		Message::Chat {
+			content,
+			sender: None,
+			target: ChatTarget::Lobby,
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				println!(
+					"Client {} '{}' sent lobby chat message: {}",
+					client.id, client.username, content
+				);
+				lobby.try_send(lobby::Update::Msg(Message::Chat {
+					content: content,
+					sender: Some(client.username.clone()),
+					target: ChatTarget::Lobby,
+				}))?
+			}
+			None =>
+			{
+				let message = Message::Chat {
+					content,
+					sender: None,
+					target: ChatTarget::Lobby,
+				};
+				println!(
+					"Invalid message from unlobbied client: {:?}",
+					message
+				);
+				return Err(ReceiveTaskError::Illegal);
+			}
+		},
 		Message::Chat { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);

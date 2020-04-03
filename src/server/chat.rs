@@ -37,6 +37,18 @@ pub enum Update
 		description_messages: Vec<Message>,
 		sendbuffer: mpsc::Sender<lobby::Update>,
 	},
+	DisbandLobby
+	{
+		lobby_id: Keycode,
+	},
+
+	JoinLobby
+	{
+		lobby_id: Keycode,
+		client_id: Keycode,
+		username: String,
+		sendbuffer: mpsc::Sender<Message>,
+	},
 
 	Msg(Message),
 }
@@ -88,8 +100,31 @@ fn handle_update(
 				id: lobby_id,
 				description_messages,
 				sendbuffer,
+				dead: false,
 			};
 			handle_list_lobby(lobby, clients, lobbies)
+		}
+		Update::DisbandLobby { lobby_id } =>
+		{
+			handle_disband_lobby(lobby_id, clients, lobbies)
+		}
+
+		Update::JoinLobby {
+			lobby_id,
+			client_id,
+			username,
+			sendbuffer,
+		} =>
+		{
+			forward_to_lobby(
+				lobbies,
+				lobby_id,
+				lobby::Update::Join {
+					client_id,
+					username,
+					sendbuffer,
+				},
+			);
 		}
 
 		Update::Msg(message) =>
@@ -131,6 +166,20 @@ struct Lobby
 	id: Keycode,
 	description_messages: Vec<Message>,
 	sendbuffer: mpsc::Sender<lobby::Update>,
+	dead: bool,
+}
+
+impl Lobby
+{
+	fn send(&mut self, update: lobby::Update)
+	{
+		match self.sendbuffer.try_send(update)
+		{
+			Ok(()) => (),
+			// TODO filter dead clients somehow
+			Err(_error) => self.dead = true,
+		}
+	}
 }
 
 fn handle_join(
@@ -350,4 +399,35 @@ fn handle_list_lobby(
 	}
 
 	lobbies.push(newlobby);
+}
+
+fn handle_disband_lobby(
+	lobby_id: Keycode,
+	clients: &mut Vec<Client>,
+	lobbies: &mut Vec<Lobby>,
+)
+{
+	lobbies.retain(|lobby| lobby.id != lobby_id);
+
+	let message = Message::DisbandLobby { lobby_id };
+	for client in clients.iter_mut()
+	{
+		client.send(message.clone())
+	}
+}
+
+fn forward_to_lobby(
+	lobbies: &mut Vec<Lobby>,
+	lobby_id: Keycode,
+	update: lobby::Update,
+)
+{
+	for lobby in lobbies.iter_mut()
+	{
+		if lobby.id == lobby_id
+		{
+			lobby.send(update);
+			return;
+		}
+	}
 }

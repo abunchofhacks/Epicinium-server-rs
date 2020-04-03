@@ -30,6 +30,9 @@ pub enum Update
 		client_id: Keycode,
 	},
 
+	Lock,
+	Unlock,
+
 	Msg(Message),
 }
 
@@ -95,21 +98,11 @@ fn handle_update(
 	clients: &mut Vec<Client>,
 ) -> Result<(), ()>
 {
-	let lobby_id = lobby.id;
-
 	match update
 	{
 		Update::Save =>
 		{
-			general_chat
-				.try_send(chat::Update::ListLobby {
-					lobby_id: lobby.id,
-					description_messages: make_listing_messages(&lobby),
-					sendbuffer: lobby.sendbuffer.clone(),
-				})
-				.map_err(|error| {
-					eprintln!("Chat error in lobby {}: {:?}", lobby_id, error)
-				})?;
+			list_lobby(lobby, general_chat)?;
 		}
 
 		Update::Join {
@@ -117,7 +110,21 @@ fn handle_update(
 			username,
 			sendbuffer,
 		} => handle_join(lobby, client_id, username, sendbuffer, clients),
-		Update::Leave { client_id } => handle_leave(lobby, client_id, clients),
+		Update::Leave { client_id } =>
+		{
+			handle_leave(lobby, client_id, clients, general_chat)?;
+		}
+
+		Update::Lock =>
+		{
+			lobby.public = false;
+			list_lobby(lobby, general_chat)?;
+		}
+		Update::Unlock =>
+		{
+			lobby.public = true;
+			list_lobby(lobby, general_chat)?;
+		}
 
 		Update::Msg(message) =>
 		{
@@ -129,6 +136,24 @@ fn handle_update(
 	}
 
 	Ok(())
+}
+
+fn list_lobby(
+	lobby: &Lobby,
+	general_chat: &mut mpsc::Sender<chat::Update>,
+) -> Result<(), ()>
+{
+	let lobby_id = lobby.id;
+
+	general_chat
+		.try_send(chat::Update::ListLobby {
+			lobby_id: lobby.id,
+			description_messages: make_listing_messages(&lobby),
+			sendbuffer: lobby.sendbuffer.clone(),
+		})
+		.map_err(|error| {
+			eprintln!("Chat error in lobby {}: {:?}", lobby_id, error)
+		})
 }
 
 fn make_listing_messages(lobby: &Lobby) -> Vec<Message>
@@ -241,7 +266,8 @@ fn handle_leave(
 	lobby: &mut Lobby,
 	client_id: Keycode,
 	clients: &mut Vec<Client>,
-)
+	general_chat: &mut mpsc::Sender<chat::Update>,
+) -> Result<(), ()>
 {
 	let removed: Vec<Client> = clients
 		.e_drain_where(|client| client.id == client_id)
@@ -272,4 +298,16 @@ fn handle_leave(
 			Err(e) => eprintln!("Send error while processing leave: {:?}", e),
 		}
 	}
+
+	// TODO dont disband if rejoinable etcetera
+	if clients.is_empty()
+	{
+		general_chat
+			.try_send(chat::Update::DisbandLobby { lobby_id: lobby.id })
+			.map_err(|error| {
+				eprintln!("Chat error in lobby {}: {:?}", lobby.id, error)
+			})?;
+	}
+
+	Ok(())
 }
