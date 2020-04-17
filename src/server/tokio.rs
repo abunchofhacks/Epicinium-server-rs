@@ -20,7 +20,6 @@ use tokio::net::TcpListener;
 use tokio::prelude::*;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
-use tokio::timer::Interval;
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum State
@@ -71,15 +70,25 @@ fn start_server_task(
 	let killer_task = killer::start_task(killcount_in);
 
 	let (state_in, state_out) = watch::channel(State::Open);
-	let live_count = sync::Arc::new(atomic::AtomicUsize::new(0));
-	let close_task =
-		start_close_task(killcount_out, live_count.clone(), state_in);
+	let (client_canary_in, client_canary_out) = mpsc::channel::<()>(1);
+	let (general_canary_in, general_canary_out) = mpsc::channel::<()>(1);
+	let close_task = start_close_task(
+		killcount_out,
+		general_canary_out,
+		client_canary_out,
+		state_in,
+	);
 
 	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
-	let chat_task = chat::start_task(general_out);
+	let chat_task = chat::start_task(general_out, general_canary_in);
 
 	let client_task = start_acceptance_task(
-		host, binding, login, general_in, state_out, live_count,
+		host,
+		binding,
+		login,
+		general_in,
+		state_out,
+		client_canary_in,
 	);
 
 	client_task
@@ -96,7 +105,7 @@ fn start_acceptance_task(
 	login: sync::Arc<login::Server>,
 	chat: mpsc::Sender<chat::Update>,
 	server_state: watch::Receiver<State>,
-	live_count: sync::Arc<atomic::AtomicUsize>,
+	client_canary: mpsc::Sender<()>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
 	let port = binding.port;
@@ -146,7 +155,7 @@ fn start_acceptance_task(
 				login.clone(),
 				chat.clone(),
 				server_state.clone(),
-				live_count.clone(),
+				client_canary.clone(),
 				lobbyticker.clone(),
 			)
 			.map_err(|e| {
@@ -160,15 +169,14 @@ fn start_acceptance_task(
 
 fn start_close_task(
 	killcount: watch::Receiver<u8>,
-	live_count: sync::Arc<atomic::AtomicUsize>,
+	chat_canary: mpsc::Receiver<()>,
+	client_canary: mpsc::Receiver<()>,
 	server_state: watch::Sender<State>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
-	let live_count1 = live_count.clone();
-
 	wait_for_kill(killcount.clone(), server_state)
-		.and_then(move |state| wait_for_close(killcount, live_count1, state))
-		.and_then(move |()| wait_for_disconnect(live_count))
+		.and_then(move |state| wait_for_close(killcount, chat_canary, state))
+		.and_then(move |()| wait_for_disconnect(client_canary))
 }
 
 fn wait_for_kill(
@@ -195,18 +203,15 @@ fn wait_for_kill(
 
 fn wait_for_close(
 	killcount: watch::Receiver<u8>,
-	live_count: sync::Arc<atomic::AtomicUsize>,
+	chat_canary: mpsc::Receiver<()>,
 	mut server_state: watch::Sender<State>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
-	let wait_future = Interval::new_interval(Duration::from_millis(25))
-		.skip_while(move |_instant| {
-			Ok(live_count.load(atomic::Ordering::Relaxed) > 0)
-		})
-		.into_future()
-		.map(|(_instant, _interval)| println!("All clients have disconnected."))
-		.map_err(|(error, _interval)| {
-			eprintln!("Timer error in wait_for_close: {:?}", error)
+	let wait_future = chat_canary
+		.for_each(|()| Ok(()))
+		.map(|()| println!("All clients have left chat, closing now..."))
+		.map_err(|error| {
+			eprintln!("Canary error in wait_for_close: {:?}", error)
 		});
 
 	killcount
@@ -230,16 +235,15 @@ fn wait_for_close(
 }
 
 fn wait_for_disconnect(
-	live_count: sync::Arc<atomic::AtomicUsize>,
+	client_canary: mpsc::Receiver<()>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
-	Interval::new_interval(Duration::from_millis(25))
-		.skip_while(move |_instant| {
-			Ok(live_count.load(atomic::Ordering::Relaxed) > 0)
+	client_canary
+		.for_each(|()| Ok(()))
+		.map(|()| println!("All clients have disconnected."))
+		.map_err(|error| {
+			eprintln!("Canary error in wait_for_close: {:?}", error)
 		})
-		.into_future()
-		.map(|(_instant, _interval)| println!("All clients have disconnected."))
-		.map_err(|(error, _interval)| error)
 		.timeout(Duration::from_secs(5))
 		.map_err(|error| {
 			eprintln!("Timer error in wait_for_disconnect: {:?}", error)

@@ -55,6 +55,7 @@ pub enum Update
 
 pub fn start_task(
 	updates: mpsc::Receiver<Update>,
+	canary: mpsc::Sender<()>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
 	let mut clients: Vec<Client> = Vec::new();
@@ -66,7 +67,10 @@ pub fn start_task(
 			handle_update(update, &mut clients, &mut lobbies);
 			Ok(())
 		})
-		.map(move |()| println!("General chat has disbanded."))
+		.map(move |()| {
+			let _discard = canary;
+			println!("General chat has disbanded.");
+		})
 }
 
 fn handle_update(

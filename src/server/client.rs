@@ -97,12 +97,10 @@ pub fn accept_client(
 	login_server: sync::Arc<login::Server>,
 	chat_server: mpsc::Sender<chat::Update>,
 	server_state: watch::Receiver<ServerState>,
-	live_count: sync::Arc<atomic::AtomicUsize>,
+	canary: mpsc::Sender<()>,
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
 ) -> io::Result<()>
 {
-	live_count.fetch_add(1, atomic::Ordering::Relaxed);
-
 	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
 	let sendbuffer_ping = sendbuffer_in.clone();
 	let sendbuffer_pulse = sendbuffer_in.clone();
@@ -168,8 +166,8 @@ pub fn accept_client(
 		.map(|((), ())| ())
 		.map_err(move |e| eprintln!("Error in client {}: {:?}", id, e))
 		.then(move |result| {
+			let _discarded = canary;
 			println!("Client {} done.", id);
-			live_count.fetch_sub(1, atomic::Ordering::Relaxed);
 			result
 		});
 
