@@ -21,3 +21,6 @@
 # private keys
 /keys/*private*
 !/keys/dummy_private.pem
+
+# core dumps
+/*core*
