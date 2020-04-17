@@ -1,6 +1,7 @@
 /* Server::Chat */
 
 use crate::common::keycode::*;
+use crate::server::client;
 use crate::server::lobby;
 use crate::server::message::*;
 
@@ -37,6 +38,11 @@ pub enum Update
 		description_messages: Vec<Message>,
 		sendbuffer: mpsc::Sender<lobby::Update>,
 	},
+	DescribeLobby
+	{
+		lobby_id: Keycode,
+		description_messages: Vec<Message>,
+	},
 	DisbandLobby
 	{
 		lobby_id: Keycode,
@@ -48,6 +54,8 @@ pub enum Update
 		client_id: Keycode,
 		username: String,
 		sendbuffer: mpsc::Sender<Message>,
+		callback: mpsc::Sender<client::Update>,
+		general_chat: mpsc::Sender<Update>,
 	},
 
 	Msg(Message),
@@ -109,6 +117,15 @@ fn handle_update(
 			};
 			handle_list_lobby(lobby, clients, lobbies)
 		}
+		Update::DescribeLobby {
+			lobby_id,
+			description_messages,
+		} => handle_describe_lobby(
+			lobby_id,
+			description_messages,
+			clients,
+			lobbies,
+		),
 		Update::DisbandLobby { lobby_id } =>
 		{
 			handle_disband_lobby(lobby_id, clients, lobbies)
@@ -119,16 +136,18 @@ fn handle_update(
 			client_id,
 			username,
 			sendbuffer,
+			callback,
+			general_chat,
 		} =>
 		{
-			forward_to_lobby(
+			handle_join_lobby(
 				lobbies,
 				lobby_id,
-				lobby::Update::Join {
-					client_id,
-					username,
-					sendbuffer,
-				},
+				client_id,
+				username,
+				sendbuffer,
+				callback,
+				general_chat,
 			);
 		}
 
@@ -406,6 +425,31 @@ fn handle_list_lobby(
 	lobbies.push(newlobby);
 }
 
+fn handle_describe_lobby(
+	lobby_id: Keycode,
+	description_messages: Vec<Message>,
+	clients: &mut Vec<Client>,
+	lobbies: &mut Vec<Lobby>,
+)
+{
+	for client in clients.iter_mut()
+	{
+		for message in description_messages.iter()
+		{
+			client.send(message.clone())
+		}
+	}
+
+	for lobby in lobbies
+	{
+		if lobby.id == lobby_id
+		{
+			lobby.description_messages = description_messages;
+			return;
+		}
+	}
+}
+
 fn handle_disband_lobby(
 	lobby_id: Keycode,
 	clients: &mut Vec<Client>,
@@ -421,17 +465,28 @@ fn handle_disband_lobby(
 	}
 }
 
-fn forward_to_lobby(
+fn handle_join_lobby(
 	lobbies: &mut Vec<Lobby>,
 	lobby_id: Keycode,
-	update: lobby::Update,
+	client_id: Keycode,
+	client_username: String,
+	client_sendbuffer: mpsc::Sender<Message>,
+	client_callback: mpsc::Sender<client::Update>,
+	general_chat: mpsc::Sender<Update>,
 )
 {
 	for lobby in lobbies.iter_mut()
 	{
 		if lobby.id == lobby_id
 		{
-			lobby.send(update);
+			lobby.send(lobby::Update::Join {
+				client_id,
+				client_username,
+				client_sendbuffer,
+				client_callback: client_callback,
+				lobby_sendbuffer: lobby.sendbuffer.clone(),
+				general_chat: general_chat,
+			});
 			return;
 		}
 	}

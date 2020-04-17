@@ -42,6 +42,7 @@ struct Client
 	general_chat_reserve: Option<mpsc::Sender<chat::Update>>,
 	general_chat: Option<mpsc::Sender<chat::Update>>,
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
+	lobby_callback: Option<mpsc::Sender<Update>>,
 	lobby: Option<mpsc::Sender<lobby::Update>>,
 	has_proper_version: bool,
 	has_proper_version_a: sync::Arc<atomic::AtomicBool>,
@@ -59,9 +60,11 @@ impl Drop for Client
 {
 	fn drop(&mut self)
 	{
-		match self.general_chat.take()
+		let mut general_chat = self.general_chat.take();
+
+		match general_chat
 		{
-			Some(mut general_chat) =>
+			Some(ref mut general_chat) =>
 			{
 				match general_chat
 					.try_send(chat::Update::Leave { client_id: self.id })
@@ -76,15 +79,27 @@ impl Drop for Client
 
 		match self.lobby.take()
 		{
-			Some(mut lobby) =>
+			Some(mut lobby) => match general_chat
 			{
-				match lobby
-					.try_send(lobby::Update::Leave { client_id: self.id })
+				Some(ref general_chat) =>
 				{
-					Ok(()) => (),
-					Err(e) => eprintln!("Error while dropping client: {:?}", e),
+					match lobby.try_send(lobby::Update::Leave {
+						client_id: self.id,
+						general_chat: general_chat.clone(),
+					})
+					{
+						Ok(()) => (),
+						Err(e) =>
+						{
+							eprintln!("Error while dropping client: {:?}", e)
+						}
+					}
 				}
-			}
+				None =>
+				{
+					eprintln!("Expected general_chat");
+				}
+			},
 			None =>
 			{}
 		}
@@ -106,6 +121,7 @@ pub fn accept_client(
 	let sendbuffer_pulse = sendbuffer_in.clone();
 	let sendbuffer_login = sendbuffer_in.clone();
 	let (joinedbuffer_in, joinedbuffer_out) = mpsc::channel::<Update>(1);
+	let lobbybuffer_in = joinedbuffer_in.clone();
 	let (pingbuffer_in, pingbuffer_out) = watch::channel(());
 	let (timebuffer_in, timebuffer_out) = watch::channel(());
 	let (pongbuffer_in, pongbuffer_out) = watch::channel(());
@@ -122,6 +138,7 @@ pub fn accept_client(
 		general_chat_reserve: Some(chat_server),
 		general_chat: None,
 		lobby_authority: lobby_authority,
+		lobby_callback: Some(lobbybuffer_in),
 		lobby: None,
 		has_proper_version: false,
 		has_proper_version_a: sync::Arc::new(atomic::AtomicBool::new(false)),
@@ -567,7 +584,7 @@ fn start_login_task(
 					.map(|()| None);
 			}
 
-			Ok(Some(Update::Join {
+			Ok(Some(Update::JoinedServer {
 				username: logindata.username,
 				unlocks,
 			}))
@@ -582,12 +599,16 @@ fn start_login_task(
 }
 
 #[derive(Debug)]
-enum Update
+pub enum Update
 {
-	Join
+	JoinedServer
 	{
 		username: String,
 		unlocks: EnumSet<Unlock>,
+	},
+	JoinedLobby
+	{
+		lobby: mpsc::Sender<lobby::Update>,
 	},
 	Closing,
 	Closed,
@@ -598,6 +619,7 @@ enum ReceiveTaskError
 {
 	Quit,
 	Illegal,
+	Unexpected,
 	Send
 	{
 		error: mpsc::error::TrySendError<Message>,
@@ -662,6 +684,10 @@ impl Into<io::Result<()>> for ReceiveTaskError
 			ReceiveTaskError::Illegal => Err(io::Error::new(
 				ErrorKind::ConnectionReset,
 				"Illegal message received",
+			)),
+			ReceiveTaskError::Unexpected => Err(io::Error::new(
+				ErrorKind::ConnectionReset,
+				"Something unexpected happened",
 			)),
 			ReceiveTaskError::Send { error } =>
 			{
@@ -801,7 +827,7 @@ fn handle_update(
 {
 	match update
 	{
-		Update::Join { username, unlocks } =>
+		Update::JoinedServer { username, unlocks } =>
 		{
 			match client.general_chat_reserve.take()
 			{
@@ -832,10 +858,18 @@ fn handle_update(
 			}
 		}
 
+		Update::JoinedLobby { lobby } =>
+		{
+			// TODO what else to do here?
+			client.lobby = Some(lobby);
+			Ok(())
+		}
+
 		Update::Closing =>
 		{
 			client.closing = true;
 			client.general_chat_reserve.take();
+			client.lobby_callback.take();
 			client.sendbuffer.try_send(Message::Closing)?;
 			Ok(())
 		}
@@ -843,6 +877,7 @@ fn handle_update(
 		{
 			client.closing = true;
 			client.general_chat_reserve.take();
+			client.lobby_callback.take();
 			client.sendbuffer.try_send(Message::Closed)?;
 			Ok(())
 		}
@@ -942,6 +977,19 @@ fn handle_message(
 		{
 			Some(mut general_chat) =>
 			{
+				match client.lobby.take()
+				{
+					Some(ref mut lobby) =>
+					{
+						lobby.try_send(lobby::Update::Leave {
+							client_id: client.id,
+							general_chat: general_chat.clone(),
+						})?
+					}
+					None =>
+					{}
+				}
+
 				general_chat.try_send(chat::Update::Leave {
 					client_id: client.id,
 				})?;
@@ -969,11 +1017,23 @@ fn handle_message(
 		{
 			Some(ref mut general_chat) =>
 			{
+				let lobby_callback = match &client.lobby_callback
+				{
+					Some(callback) => callback.clone(),
+					None =>
+					{
+						eprintln!("Expected lobby_callback");
+						return Err(ReceiveTaskError::Unexpected);
+					}
+				};
+
 				general_chat.try_send(chat::Update::JoinLobby {
 					lobby_id,
 					client_id: client.id,
 					username: client.username.clone(),
 					sendbuffer: client.sendbuffer.clone(),
+					callback: lobby_callback,
+					general_chat: general_chat.clone(),
 				})?;
 			}
 			None =>
@@ -992,9 +1052,23 @@ fn handle_message(
 			username: None,
 		} => match client.lobby.take()
 		{
-			Some(ref mut lobby) => lobby.try_send(lobby::Update::Leave {
-				client_id: client.id,
-			})?,
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(ReceiveTaskError::Unexpected);
+					}
+				};
+
+				lobby.try_send(lobby::Update::Leave {
+					client_id: client.id,
+					general_chat: general_chat,
+				})?
+			}
 			None =>
 			{
 				println!(
@@ -1024,14 +1098,23 @@ fn handle_message(
 		{
 			Some(ref general_chat) =>
 			{
-				let mut lobby = lobby::create(
-					&mut client.lobby_authority,
-					general_chat.clone(),
-				);
+				let lobby_callback = match &client.lobby_callback
+				{
+					Some(callback) => callback.clone(),
+					None =>
+					{
+						eprintln!("Expected lobby_callback");
+						return Err(ReceiveTaskError::Unexpected);
+					}
+				};
+				let mut lobby = lobby::create(&mut client.lobby_authority);
 				lobby.try_send(lobby::Update::Join {
 					client_id: client.id,
-					username: client.username.clone(),
-					sendbuffer: client.sendbuffer.clone(),
+					client_username: client.username.clone(),
+					client_sendbuffer: client.sendbuffer.clone(),
+					client_callback: lobby_callback,
+					lobby_sendbuffer: lobby.clone(),
+					general_chat: general_chat.clone(),
 				})?;
 				client.lobby = Some(lobby);
 			}
@@ -1052,7 +1135,23 @@ fn handle_message(
 		}
 		Message::SaveLobby { lobby_id: None } => match client.lobby
 		{
-			Some(ref mut lobby) => lobby.try_send(lobby::Update::Save)?,
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(ReceiveTaskError::Unexpected);
+					}
+				};
+
+				lobby.try_send(lobby::Update::Save {
+					lobby_sendbuffer: lobby.clone(),
+					general_chat,
+				})?
+			}
 			None =>
 			{
 				println!(
@@ -1069,7 +1168,20 @@ fn handle_message(
 		}
 		Message::LockLobby { lobby_id: None } => match client.lobby
 		{
-			Some(ref mut lobby) => lobby.try_send(lobby::Update::Lock)?,
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(ReceiveTaskError::Unexpected);
+					}
+				};
+
+				lobby.try_send(lobby::Update::Lock { general_chat })?
+			}
 			None =>
 			{
 				println!(
@@ -1086,7 +1198,20 @@ fn handle_message(
 		}
 		Message::UnlockLobby { lobby_id: None } => match client.lobby
 		{
-			Some(ref mut lobby) => lobby.try_send(lobby::Update::Unlock)?,
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(ReceiveTaskError::Unexpected);
+					}
+				};
+
+				lobby.try_send(lobby::Update::Unlock { general_chat })?
+			}
 			None =>
 			{
 				println!(

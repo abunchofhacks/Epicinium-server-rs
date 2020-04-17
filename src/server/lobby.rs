@@ -2,6 +2,7 @@
 
 use crate::common::keycode::*;
 use crate::server::chat;
+use crate::server::client;
 use crate::server::message::*;
 
 use std::sync;
@@ -17,29 +18,41 @@ use vec_drain_where::VecDrainWhereExt;
 #[derive(Debug)]
 pub enum Update
 {
-	Save,
+	Save
+	{
+		lobby_sendbuffer: mpsc::Sender<Update>,
+		general_chat: mpsc::Sender<chat::Update>,
+	},
 
 	Join
 	{
 		client_id: Keycode,
-		username: String,
-		sendbuffer: mpsc::Sender<Message>,
+		client_username: String,
+		client_sendbuffer: mpsc::Sender<Message>,
+		client_callback: mpsc::Sender<client::Update>,
+		lobby_sendbuffer: mpsc::Sender<Update>,
+		general_chat: mpsc::Sender<chat::Update>,
 	},
 	Leave
 	{
 		client_id: Keycode,
+		general_chat: mpsc::Sender<chat::Update>,
 	},
 
-	Lock,
-	Unlock,
+	Lock
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+	},
+	Unlock
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+	},
 
 	Msg(Message),
 }
 
-pub fn create(
-	ticker: &mut sync::Arc<atomic::AtomicU64>,
-	general_chat: mpsc::Sender<chat::Update>,
-) -> mpsc::Sender<Update>
+pub fn create(ticker: &mut sync::Arc<atomic::AtomicU64>)
+	-> mpsc::Sender<Update>
 {
 	let key = rand::random();
 	let data = ticker.fetch_add(1, atomic::Ordering::Relaxed);
@@ -53,10 +66,9 @@ pub fn create(
 		num_players: 0,
 		max_players: 2,
 		public: true,
-		sendbuffer: updates_in.clone(),
 	};
 
-	let task = start_task(lobby, general_chat, updates_out);
+	let task = start_task(lobby, updates_out);
 	tokio::spawn(task);
 
 	updates_in
@@ -70,12 +82,10 @@ struct Lobby
 	num_players: i32,
 	max_players: i32,
 	public: bool,
-	sendbuffer: mpsc::Sender<Update>,
 }
 
 fn start_task(
 	mut lobby: Lobby,
-	mut general_chat: mpsc::Sender<chat::Update>,
 	updates: mpsc::Receiver<Update>,
 ) -> impl Future<Item = (), Error = ()> + Send
 {
@@ -86,45 +96,60 @@ fn start_task(
 		.map_err(move |error| {
 			eprintln!("Recv error in lobby {}: {:?}", lobby_id, error)
 		})
-		.for_each(move |update| {
-			handle_update(update, &mut lobby, &mut general_chat, &mut clients)
-		})
+		.for_each(move |update| handle_update(update, &mut lobby, &mut clients))
 		.map(move |()| println!("Lobby {} has disbanded.", lobby_id))
 }
 
 fn handle_update(
 	update: Update,
 	lobby: &mut Lobby,
-	general_chat: &mut mpsc::Sender<chat::Update>,
 	clients: &mut Vec<Client>,
 ) -> Result<(), ()>
 {
 	match update
 	{
-		Update::Save =>
+		Update::Save {
+			lobby_sendbuffer,
+			mut general_chat,
+		} =>
 		{
-			list_lobby(lobby, general_chat)?;
+			list_lobby(lobby, lobby_sendbuffer, &mut general_chat)?;
 		}
 
 		Update::Join {
 			client_id,
-			username,
-			sendbuffer,
-		} => handle_join(lobby, client_id, username, sendbuffer, clients),
-		Update::Leave { client_id } =>
+			client_username,
+			client_sendbuffer,
+			client_callback,
+			lobby_sendbuffer,
+			mut general_chat,
+		} => handle_join(
+			lobby,
+			client_id,
+			client_username,
+			client_sendbuffer,
+			client_callback,
+			lobby_sendbuffer,
+			&mut general_chat,
+			clients,
+		),
+		Update::Leave {
+			client_id,
+			mut general_chat,
+		} =>
 		{
-			handle_leave(lobby, client_id, clients, general_chat)?;
+			handle_leave(lobby, client_id, clients, &mut general_chat)?;
 		}
 
-		Update::Lock =>
+		Update::Lock { mut general_chat } =>
 		{
 			lobby.public = false;
-			list_lobby(lobby, general_chat)?;
+			describe_lobby(lobby, &mut general_chat)?;
 		}
-		Update::Unlock =>
+		Update::Unlock { mut general_chat } =>
 		{
 			lobby.public = true;
-			list_lobby(lobby, general_chat)?;
+			describe_lobby(lobby, &mut general_chat)?;
 		}
 
 		Update::Msg(message) =>
@@ -141,6 +166,7 @@ fn handle_update(
 
 fn list_lobby(
 	lobby: &Lobby,
+	lobby_sendbuffer: mpsc::Sender<Update>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), ()>
 {
@@ -150,7 +176,24 @@ fn list_lobby(
 		.try_send(chat::Update::ListLobby {
 			lobby_id: lobby.id,
 			description_messages: make_listing_messages(&lobby),
-			sendbuffer: lobby.sendbuffer.clone(),
+			sendbuffer: lobby_sendbuffer,
+		})
+		.map_err(|error| {
+			eprintln!("Chat error in lobby {}: {:?}", lobby_id, error)
+		})
+}
+
+fn describe_lobby(
+	lobby: &Lobby,
+	general_chat: &mut mpsc::Sender<chat::Update>,
+) -> Result<(), ()>
+{
+	let lobby_id = lobby.id;
+
+	general_chat
+		.try_send(chat::Update::DescribeLobby {
+			lobby_id: lobby.id,
+			description_messages: make_listing_messages(&lobby),
 		})
 		.map_err(|error| {
 			eprintln!("Chat error in lobby {}: {:?}", lobby_id, error)
@@ -217,8 +260,11 @@ impl Client
 fn handle_join(
 	lobby: &mut Lobby,
 	client_id: Keycode,
-	username: String,
-	sendbuffer: mpsc::Sender<Message>,
+	client_username: String,
+	client_sendbuffer: mpsc::Sender<Message>,
+	mut client_callback: mpsc::Sender<client::Update>,
+	lobby_sendbuffer: mpsc::Sender<Update>,
+	_general_chat: &mut mpsc::Sender<chat::Update>,
 	clients: &mut Vec<Client>,
 )
 {
@@ -226,8 +272,8 @@ fn handle_join(
 
 	let mut newcomer = Client {
 		id: client_id,
-		username,
-		sendbuffer,
+		username: client_username,
+		sendbuffer: client_sendbuffer,
 		dead: false,
 	};
 
@@ -265,6 +311,14 @@ fn handle_join(
 		username: Some(newcomer.username.clone()),
 		metadata: None,
 	});
+
+	match client_callback.try_send(client::Update::JoinedLobby {
+		lobby: lobby_sendbuffer,
+	})
+	{
+		Ok(()) => (),
+		Err(e) => eprintln!("Send error while processing leave: {:?}", e),
+	};
 
 	clients.push(newcomer);
 }
