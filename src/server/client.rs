@@ -39,6 +39,7 @@ struct Client
 	last_receive_time: watch::Sender<()>,
 	pong_receive_time: watch::Sender<()>,
 	login: mpsc::Sender<login::Request>,
+	general_chat_reserve: Option<mpsc::Sender<chat::Update>>,
 	general_chat: Option<mpsc::Sender<chat::Update>>,
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
 	lobby: Option<mpsc::Sender<lobby::Update>>,
@@ -120,6 +121,7 @@ pub fn accept_client(
 		last_receive_time: timebuffer_in,
 		pong_receive_time: pongbuffer_in,
 		login: loginbuffer_in,
+		general_chat_reserve: Some(chat_server),
 		general_chat: None,
 		lobby_authority: lobby_authority,
 		lobby: None,
@@ -147,12 +149,10 @@ pub fn accept_client(
 	);
 	let pulse_task = start_pulse_task(sendbuffer_pulse, supports_empty_out);
 	let login_task = start_login_task(
-		id,
 		sendbuffer_login,
 		joinedbuffer_in,
 		loginbuffer_out,
 		login_server,
-		chat_server,
 	);
 
 	let support_task = login_task
@@ -503,12 +503,10 @@ fn start_pulse_task(
 }
 
 fn start_login_task(
-	client_id: Keycode,
 	sendbuffer: mpsc::Sender<Message>,
 	mut joinedbuffer: mpsc::Sender<Update>,
 	requestbuffer: mpsc::Receiver<login::Request>,
 	login_server: sync::Arc<login::Server>,
-	mut chat_server: mpsc::Sender<chat::Update>,
 ) -> impl Future<Item = (), Error = io::Error> + Send
 {
 	let mut sendbuffer_for_login_failure = sendbuffer.clone();
@@ -571,27 +569,12 @@ fn start_login_task(
 					.map(|()| None);
 			}
 
-			Ok(Some((logindata.username, unlocks)))
+			Ok(Some(Update::Join {
+				username: logindata.username,
+				unlocks,
+			}))
 		})
 		.filter_map(|x| x)
-		.and_then(move |(username, unlocks)| {
-			chat_server
-				.try_send(chat::Update::Join {
-					client_id,
-					username: username.clone(),
-					unlocks,
-					sendbuffer: sendbuffer.clone(),
-				})
-				.map_err(|error| {
-					eprintln!("Joining chat error in login_task: {:?}", error);
-					io::Error::new(ErrorKind::ConnectionReset, error)
-				})
-				.map(|()| Update::Join {
-					username: username,
-					unlocks: unlocks,
-					general_chat: chat_server.clone(),
-				})
-		})
 		.for_each(move |update| {
 			joinedbuffer.try_send(update).map_err(|error| {
 				eprintln!("Send error in login_task: {:?}", error);
@@ -607,7 +590,6 @@ enum Update
 	{
 		username: String,
 		unlocks: EnumSet<Unlock>,
-		general_chat: mpsc::Sender<chat::Update>,
 	},
 	Closing,
 	Closed,
@@ -821,27 +803,48 @@ fn handle_update(
 {
 	match update
 	{
-		Update::Join {
-			username,
-			unlocks,
-			general_chat,
-		} =>
+		Update::Join { username, unlocks } =>
 		{
-			client.username = username;
-			client.unlocks = unlocks;
-			client.general_chat = Some(general_chat);
-			Ok(())
+			match client.general_chat_reserve.take()
+			{
+				Some(mut chat) => chat
+					.try_send(chat::Update::Join {
+						client_id: client.id,
+						username: username.clone(),
+						unlocks,
+						sendbuffer: client.sendbuffer.clone(),
+					})
+					.map_err(|error| {
+						eprintln!(
+							"Joining chat error in login_task: {:?}",
+							error
+						);
+						ReceiveTaskError::Chat { error }
+					})
+					.map(|()| {
+						client.username = username;
+						client.unlocks = unlocks;
+						client.general_chat = Some(chat);
+					}),
+				None =>
+				{
+					client.sendbuffer.try_send(Message::Closing)?;
+					Ok(())
+				}
+			}
 		}
 
 		Update::Closing =>
 		{
 			client.closing = true;
+			client.general_chat_reserve.take();
 			client.sendbuffer.try_send(Message::Closing)?;
 			Ok(())
 		}
 		Update::Closed =>
 		{
 			client.closing = true;
+			client.general_chat_reserve.take();
 			client.sendbuffer.try_send(Message::Closed)?;
 			Ok(())
 		}
@@ -944,6 +947,11 @@ fn handle_message(
 				general_chat.try_send(chat::Update::Leave {
 					client_id: client.id,
 				})?;
+
+				if !client.closing
+				{
+					client.general_chat_reserve = Some(general_chat);
+				}
 			}
 			None =>
 			{
