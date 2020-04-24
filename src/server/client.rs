@@ -2,29 +2,28 @@
 
 use crate::common::keycode::Keycode;
 use crate::common::version::*;
-use crate::server::chat;
-use crate::server::lobby;
 use crate::server::login;
 use crate::server::message::*;
 use crate::server::tokio::State as ServerState;
 
+use std::fmt;
 use std::io;
 use std::io::ErrorKind;
 use std::sync;
 use std::sync::atomic;
-use std::time::{Duration, Instant};
+
+use futures::future;
+use futures::select;
+use futures::FutureExt;
+use futures::StreamExt;
+use futures::TryFutureExt;
 
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
-use tokio::timer::Interval;
-
-use futures::future;
-use futures::future::Either;
-use futures::stream;
-use futures::{Future, Stream};
+use tokio::time::{Duration, Instant};
 
 use enumset::EnumSet;
 
@@ -39,14 +38,8 @@ struct Client
 	last_receive_time: watch::Sender<()>,
 	pong_receive_time: watch::Sender<()>,
 	login: mpsc::Sender<login::Request>,
-	general_chat_reserve: Option<mpsc::Sender<chat::Update>>,
-	general_chat: Option<mpsc::Sender<chat::Update>>,
-	lobby_authority: sync::Arc<atomic::AtomicU64>,
-	lobby_callback: Option<mpsc::Sender<Update>>,
-	lobby: Option<mpsc::Sender<lobby::Update>>,
 	has_proper_version: bool,
 	has_proper_version_a: sync::Arc<atomic::AtomicBool>,
-	supports_empty_pulses: mpsc::Sender<bool>,
 
 	pub id: Keycode,
 	pub username: String,
@@ -56,78 +49,23 @@ struct Client
 	closing: bool,
 }
 
-impl Drop for Client
-{
-	fn drop(&mut self)
-	{
-		let mut general_chat = self.general_chat.take();
-
-		match general_chat
-		{
-			Some(ref mut general_chat) =>
-			{
-				match general_chat
-					.try_send(chat::Update::Leave { client_id: self.id })
-				{
-					Ok(()) => (),
-					Err(e) => eprintln!("Error while dropping client: {:?}", e),
-				}
-			}
-			None =>
-			{}
-		}
-
-		match self.lobby.take()
-		{
-			Some(mut lobby) => match general_chat
-			{
-				Some(ref general_chat) =>
-				{
-					match lobby.try_send(lobby::Update::Leave {
-						client_id: self.id,
-						general_chat: general_chat.clone(),
-					})
-					{
-						Ok(()) => (),
-						Err(e) =>
-						{
-							eprintln!("Error while dropping client: {:?}", e)
-						}
-					}
-				}
-				None =>
-				{
-					eprintln!("Expected general_chat");
-				}
-			},
-			None =>
-			{}
-		}
-	}
-}
-
-pub fn accept_client(
+pub fn accept(
 	socket: TcpStream,
 	id: Keycode,
 	login_server: sync::Arc<login::Server>,
-	chat_server: mpsc::Sender<chat::Update>,
 	server_state: watch::Receiver<ServerState>,
-	canary: mpsc::Sender<()>,
-	lobby_authority: sync::Arc<atomic::AtomicU64>,
-) -> io::Result<()>
+)
 {
 	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
 	let sendbuffer_ping = sendbuffer_in.clone();
 	let sendbuffer_pulse = sendbuffer_in.clone();
 	let sendbuffer_login = sendbuffer_in.clone();
 	let (joinedbuffer_in, joinedbuffer_out) = mpsc::channel::<Update>(1);
-	let lobbybuffer_in = joinedbuffer_in.clone();
 	let (pingbuffer_in, pingbuffer_out) = watch::channel(());
 	let (timebuffer_in, timebuffer_out) = watch::channel(());
 	let (pongbuffer_in, pongbuffer_out) = watch::channel(());
-	let (supports_empty_in, supports_empty_out) = mpsc::channel::<bool>(1);
 	let (loginbuffer_in, loginbuffer_out) = mpsc::channel::<login::Request>(1);
-	let (reader, writer) = socket.split();
+	let (reader, writer) = tokio::io::split(socket);
 
 	let client = Client {
 		sendbuffer: sendbuffer_in,
@@ -135,14 +73,8 @@ pub fn accept_client(
 		last_receive_time: timebuffer_in,
 		pong_receive_time: pongbuffer_in,
 		login: loginbuffer_in,
-		general_chat_reserve: Some(chat_server),
-		general_chat: None,
-		lobby_authority: lobby_authority,
-		lobby_callback: Some(lobbybuffer_in),
-		lobby: None,
 		has_proper_version: false,
 		has_proper_version_a: sync::Arc::new(atomic::AtomicBool::new(false)),
-		supports_empty_pulses: supports_empty_in,
 
 		id: id,
 		username: String::new(),
@@ -162,7 +94,7 @@ pub fn accept_client(
 		pingbuffer_out,
 		pongbuffer_out,
 	);
-	let pulse_task = start_pulse_task(sendbuffer_pulse, supports_empty_out);
+	let pulse_task = start_pulse_task(sendbuffer_pulse);
 	let login_task = start_login_task(
 		sendbuffer_login,
 		joinedbuffer_in,
@@ -170,83 +102,75 @@ pub fn accept_client(
 		login_server,
 	);
 
-	let support_task = login_task
-		.join3(ping_task, pulse_task)
-		.map(|((), (), ())| ())
-		.map(|()| debug_assert!(false, "All support tasks dropped"));
-
-	let task = receive_task
-		.select(support_task)
-		.map(|((), _other_future)| ())
-		.map_err(|(error, _other_future)| error)
-		.join(send_task)
-		.map(|((), ())| ())
-		.map_err(move |e| eprintln!("Error in client {}: {:?}", id, e))
-		.then(move |result| {
-			let _discarded = canary;
-			println!("Client {} done.", id);
-			result
-		});
+	let task = future::try_join5(
+		receive_task,
+		send_task,
+		ping_task,
+		pulse_task,
+		login_task,
+	)
+	.map_ok(|((), (), (), (), ())| ())
+	.map_err(move |e| eprintln!("Error in client {}: {:?}", id, e))
+	.map(move |_result| {
+		//let _discarded = canary;
+		println!("Client {} done.", id);
+	});
 
 	tokio::spawn(task);
+}
 
+async fn start_receive_task(
+	mut client: Client,
+	mut server_updates: mpsc::Receiver<Update>,
+	server_state: watch::Receiver<ServerState>,
+	mut socket: ReadHalf<TcpStream>,
+) -> Result<(), Error>
+{
+	let mut state_updates = server_state.filter_map(|x| match x
+	{
+		ServerState::Open => future::ready(None),
+		ServerState::Closing => future::ready(Some(Update::Closing)),
+		ServerState::Closed => future::ready(Some(Update::Closed)),
+	});
+
+	let mut has_quit = false;
+	while !has_quit
+	{
+		let versioned: bool = client.has_proper_version;
+		let update = select! {
+			x = receive_message(&mut socket, versioned).fuse() => x?,
+			x = server_updates.next().fuse() =>
+			{
+				x.ok_or_else(|| Error::Unexpected)?
+			}
+			x = state_updates.next().fuse() =>
+			{
+				x.ok_or_else(|| Error::Unexpected)?
+			}
+		};
+		has_quit = handle_update(&mut client, update)?;
+	}
+
+	println!("Client {} stopped receiving.", client.id);
 	Ok(())
 }
 
-fn start_receive_task(
-	mut client: Client,
-	servermessages: mpsc::Receiver<Update>,
-	server_state: watch::Receiver<ServerState>,
-	socket: ReadHalf<TcpStream>,
-) -> impl Future<Item = (), Error = io::Error> + Send
-{
-	let client_id = client.id;
-	let receive_versioned = client.has_proper_version_a.clone();
-
-	let killcount_updates = server_state
-		.filter_map(|x| match x
-		{
-			ServerState::Open => None,
-			ServerState::Closing => Some(Update::Closing),
-			ServerState::Closed => Some(Update::Closed),
-		})
-		.map_err(|error| ReceiveTaskError::Killcount { error });
-
-	stream::unfold(socket, move |socket| {
-		let versioned: bool = receive_versioned.load(atomic::Ordering::Relaxed);
-		let lengthbuffer = [0u8; 4];
-		let future_length = tokio_io::io::read_exact(socket, lengthbuffer)
-			.and_then(move |(socket, lengthbuffer)| {
-				let length = u32::from_be_bytes(lengthbuffer);
-				receive_message(socket, length, versioned)
-			});
-
-		Some(future_length)
-	})
-	.map_err(|error| ReceiveTaskError::Recv { error })
-	.map(|message| Update::Msg(message))
-	.select(servermessages.map_err(|error| ReceiveTaskError::Server { error }))
-	.select(killcount_updates)
-	.for_each(move |update: Update| handle_update(&mut client, update))
-	.or_else(|error| -> io::Result<()> { error.into() })
-	.map(move |()| println!("Client {} stopped receiving.", client_id))
-}
-
-fn receive_message(
-	socket: ReadHalf<TcpStream>,
-	length: u32,
+async fn receive_message(
+	socket: &mut ReadHalf<TcpStream>,
 	versioned: bool,
-) -> impl Future<Item = (Message, ReadHalf<TcpStream>), Error = io::Error>
+) -> Result<Update, Error>
 {
+	let mut lengthbuffer = [0u8; 4];
+	socket.read_exact(&mut lengthbuffer).await?;
+
+	let length = u32::from_be_bytes(lengthbuffer);
 	if length == 0
 	{
 		/*verbose*/
 		println!("Received pulse.");
 
 		// Unfold expects the value first and the state second.
-		let result = Ok((Message::Pulse, socket));
-		let future_data = future::result(result);
-		return Either::A(future_data);
+		return Ok(Update::Msg(Message::Pulse));
 	}
 	else if !versioned && length as usize >= MESSAGE_SIZE_UNVERSIONED_LIMIT
 	{
@@ -256,10 +180,11 @@ fn receive_message(
 			 which is more than MESSAGE_SIZE_UNVERSIONED_LIMIT",
 			length
 		);
-		return Either::A(future::err(io::Error::new(
+		return Err(io::Error::new(
 			ErrorKind::InvalidInput,
 			"Message too large".to_string(),
-		)));
+		)
+		.into());
 	}
 	else if length as usize >= MESSAGE_SIZE_LIMIT
 	{
@@ -268,10 +193,11 @@ fn receive_message(
 			 which is more than MESSAGE_SIZE_LIMIT",
 			length
 		);
-		return Either::A(future::err(io::Error::new(
+		return Err(io::Error::new(
 			ErrorKind::InvalidInput,
 			"Message too large".to_string(),
-		)));
+		)
+		.into());
 	}
 	else if length as usize >= MESSAGE_SIZE_WARNING_LIMIT
 	{
@@ -281,19 +207,15 @@ fn receive_message(
 	/*verbose*/
 	println!("Receiving message of length {}...", length);
 
-	let buffer = vec![0; length as usize];
-	let future_data = tokio_io::io::read_exact(socket, buffer).and_then(
-		|(socket, buffer)| {
-			/*verbose*/
-			println!("Received message of length {}.", buffer.len());
-			let message = parse_message(buffer)?;
+	let mut buffer = vec![0; length as usize];
+	socket.read_exact(&mut buffer).await?;
 
-			// Unfold expects the value first and the state second.
-			Ok((message, socket))
-		},
-	);
+	/*verbose*/
+	println!("Received message of length {}.", buffer.len());
+	let message = parse_message(buffer)?;
 
-	Either::B(future_data)
+	// Unfold expects the value first and the state second.
+	Ok(Update::Msg(message))
 }
 
 fn parse_message(buffer: Vec<u8>) -> io::Result<Message>
@@ -318,35 +240,32 @@ fn parse_message(buffer: Vec<u8>) -> io::Result<Message>
 	Ok(message)
 }
 
-fn start_send_task(
+async fn start_send_task(
 	client_id: Keycode,
-	sendbuffer: mpsc::Receiver<Message>,
-	socket: WriteHalf<TcpStream>,
-) -> impl Future<Item = (), Error = io::Error> + Send
+	mut sendbuffer: mpsc::Receiver<Message>,
+	mut socket: WriteHalf<TcpStream>,
+) -> Result<(), Error>
 {
-	let messages = sendbuffer
-		.map_err(|e| io::Error::new(ErrorKind::ConnectionReset, e))
-		.map(prepare_message);
+	while let Some(message) = sendbuffer.next().await
+	{
+		let buffer = prepare_message(message);
+		send_bytes(&mut socket, buffer).await?;
+	}
 
-	messages
-		.fold(socket, send_bytes)
-		.map_err(|error| {
-			eprintln!("Error in send_task: {:?}", error);
-			error
-		})
-		.map(move |_socket| println!("Client {} stopped sending.", client_id))
+	println!("Client {} stopped sending.", client_id);
+	Ok(())
 }
 
-fn send_bytes(
-	socket: WriteHalf<TcpStream>,
+async fn send_bytes(
+	socket: &mut WriteHalf<TcpStream>,
 	buffer: Vec<u8>,
-) -> impl Future<Item = WriteHalf<TcpStream>, Error = io::Error> + Send
+) -> Result<(), io::Error>
 {
-	tokio_io::io::write_all(socket, buffer).map(move |(socket, buffer)| {
-		/*verbose*/
-		println!("Sent {} bytes.", buffer.len());
-		socket
-	})
+	socket.write_all(&buffer).await?;
+
+	/*verbose*/
+	println!("Sent {} bytes.", buffer.len());
+	Ok(())
 }
 
 fn prepare_message(message: Message) -> Vec<u8>
@@ -407,195 +326,39 @@ fn prepare_message_data(message: Message) -> (String, u32)
 	(jsonstr, length)
 }
 
-fn start_ping_task(
+async fn start_ping_task(
 	client_id: Keycode,
 	mut sendbuffer: mpsc::Sender<Message>,
 	timebuffer: watch::Receiver<()>,
 	pingbuffer: watch::Receiver<()>,
 	pongbuffer: watch::Receiver<()>,
-) -> impl Future<Item = (), Error = io::Error> + Send
+) -> Result<(), Error>
 {
-	// TODO variable ping_tolerance
-	let ping_tolerance = Duration::from_secs(120);
-
-	timebuffer
-		.timeout(Duration::from_secs(5))
-		.filter(|_| false)
-		.or_else(|e| {
-			if e.is_elapsed()
-			{
-				Ok(())
-			}
-			else if e.is_timer()
-			{
-				Err(PingTaskError::Timer {
-					error: e.into_timer().unwrap(),
-				})
-			}
-			else
-			{
-				Err(PingTaskError::Recv {
-					error: e.into_inner().unwrap(),
-				})
-			}
-		})
-		.select(
-			pingbuffer
-				.skip(1)
-				.map_err(|error| PingTaskError::Recv { error }),
-		)
-		.and_then(move |()| {
-			let pingtime = Instant::now();
-			sendbuffer
-				.try_send(Message::Ping)
-				.map(move |()| pingtime)
-				.map_err(|error| PingTaskError::Send { error })
-		})
-		.and_then(move |pingtime| {
-			pongbuffer
-				.clone()
-				.skip(1)
-				.into_future()
-				.map_err(|(error, _)| PingTaskError::Recv { error })
-				.and_then(move |(x, _)| x.ok_or(PingTaskError::NoPong))
-				.map(move |()| pingtime)
-		})
-		.timeout(ping_tolerance)
-		.and_then(move |pingtime| {
-			println!(
-				"Client {} has {}ms ping.",
-				client_id,
-				pingtime.elapsed().as_millis()
-			);
-			Ok(())
-		})
-		.map_err(|e| {
-			if e.is_elapsed()
-			{
-				PingTaskError::NoPong
-			}
-			else if e.is_timer()
-			{
-				PingTaskError::Timer {
-					error: e.into_timer().unwrap(),
-				}
-			}
-			else
-			{
-				e.into_inner().unwrap()
-			}
-		})
-		.or_else(|error| -> io::Result<()> { error.into() })
-		.for_each(|()| Ok(()))
+	Ok(())
 }
 
-fn start_pulse_task(
+async fn start_pulse_task(
 	mut sendbuffer: mpsc::Sender<Message>,
-	supported: mpsc::Receiver<bool>,
-) -> impl Future<Item = (), Error = io::Error> + Send
+) -> Result<(), Error>
 {
-	supported
-		.into_future()
-		.map_err(|(error, _)| PulseTaskError::Recv { error })
-		.and_then(move |(supported, _)| match supported
-		{
-			Some(true) => Ok(Instant::now()),
-			Some(false) => Err(PulseTaskError::Unsupported),
-			None => Err(PulseTaskError::Dropped),
-		})
-		.into_stream()
-		.map(|starttime| {
-			Interval::new(starttime, Duration::from_secs(4))
-				.map_err(|error| PulseTaskError::Timer { error })
-		})
-		.flatten()
-		.for_each(move |_| {
-			sendbuffer
-				.try_send(Message::Pulse)
-				.map_err(|error| PulseTaskError::Send { error })
-		})
-		.or_else(|error| -> io::Result<()> { error.into() })
+	let start = Instant::now() + Duration::from_secs(4);
+	let mut interval = tokio::time::interval_at(start, Duration::from_secs(4));
+
+	loop
+	{
+		interval.tick().await;
+		sendbuffer.send(Message::Pulse).await?;
+	}
 }
 
-fn start_login_task(
+async fn start_login_task(
 	sendbuffer: mpsc::Sender<Message>,
 	mut joinedbuffer: mpsc::Sender<Update>,
 	requestbuffer: mpsc::Receiver<login::Request>,
 	login_server: sync::Arc<login::Server>,
-) -> impl Future<Item = (), Error = io::Error> + Send
+) -> Result<(), Error>
 {
-	let mut sendbuffer_for_login_failure = sendbuffer.clone();
-	let mut sendbuffer_for_access_failure = sendbuffer.clone();
-
-	requestbuffer
-		.map_err(|error| {
-			eprintln!("Recv error in login_task: {:?}", error);
-			io::Error::new(ErrorKind::ConnectionReset, error)
-		})
-		.and_then(move |request| {
-			login_server
-				.login(request)
-				.map(|logindata| Ok(logindata))
-				.or_else(|status| Ok(Err(status)))
-		})
-		.and_then(move |result| match result
-		{
-			Ok(logindata) => Ok(Some(logindata)),
-			Err(status) =>
-			{
-				eprintln!("Login failed with {:?}", status);
-				let message = Message::JoinServer {
-					status: Some(status),
-					content: None,
-					sender: None,
-					metadata: None,
-				};
-				sendbuffer_for_login_failure
-					.try_send(message)
-					.map_err(|error| {
-						eprintln!("Send error in login_task: {:?}", error);
-						io::Error::new(ErrorKind::ConnectionReset, error)
-					})
-					.map(|()| None)
-			}
-		})
-		.filter_map(|x| x)
-		.and_then(move |logindata| {
-			let mut unlocks = EnumSet::<Unlock>::empty();
-			for &x in &logindata.unlocks
-			{
-				unlocks.insert(unlock_from_unlock_id(x));
-			}
-
-			if !unlocks.contains(Unlock::Access)
-			{
-				println!("Login failed due to insufficient access");
-				return sendbuffer_for_access_failure
-					.try_send(Message::JoinServer {
-						status: Some(ResponseStatus::KeyRequired),
-						content: None,
-						sender: None,
-						metadata: None,
-					})
-					.map_err(|error| {
-						eprintln!("Send error in login_task: {:?}", error);
-						io::Error::new(ErrorKind::ConnectionReset, error)
-					})
-					.map(|()| None);
-			}
-
-			Ok(Some(Update::JoinedServer {
-				username: logindata.username,
-				unlocks,
-			}))
-		})
-		.filter_map(|x| x)
-		.for_each(move |update| {
-			joinedbuffer.try_send(update).map_err(|error| {
-				eprintln!("Send error in login_task: {:?}", error);
-				io::Error::new(ErrorKind::ConnectionReset, error)
-			})
-		})
+	Ok(())
 }
 
 #[derive(Debug)]
@@ -606,21 +369,21 @@ pub enum Update
 		username: String,
 		unlocks: EnumSet<Unlock>,
 	},
-	JoinedLobby
-	{
-		lobby: mpsc::Sender<lobby::Update>,
-	},
 	Closing,
 	Closed,
 	Msg(Message),
 }
 
-enum ReceiveTaskError
+#[derive(Debug)]
+enum Error
 {
-	Quit,
 	Illegal,
 	Unexpected,
 	Send
+	{
+		error: mpsc::error::SendError<Message>,
+	},
+	TrySend
 	{
 		error: mpsc::error::TrySendError<Message>,
 	},
@@ -628,272 +391,113 @@ enum ReceiveTaskError
 	{
 		error: mpsc::error::TrySendError<login::Request>,
 	},
-	Chat
+	Watch
 	{
-		error: mpsc::error::TrySendError<chat::Update>,
+		error: watch::error::SendError<()>,
 	},
-	Lobby
-	{
-		error: mpsc::error::TrySendError<lobby::Update>,
-	},
-	Server
+	Recv
 	{
 		error: mpsc::error::RecvError,
 	},
-	Killcount
-	{
-		error: watch::error::RecvError,
-	},
-	Recv
+	Io
 	{
 		error: io::Error,
 	},
 }
 
-impl From<mpsc::error::TrySendError<Message>> for ReceiveTaskError
+impl From<mpsc::error::SendError<Message>> for Error
+{
+	fn from(error: mpsc::error::SendError<Message>) -> Self
+	{
+		Error::Send { error }
+	}
+}
+
+impl From<mpsc::error::TrySendError<Message>> for Error
 {
 	fn from(error: mpsc::error::TrySendError<Message>) -> Self
 	{
-		ReceiveTaskError::Send { error }
+		Error::TrySend { error }
 	}
 }
 
-impl From<mpsc::error::TrySendError<chat::Update>> for ReceiveTaskError
+impl From<mpsc::error::TrySendError<login::Request>> for Error
 {
-	fn from(error: mpsc::error::TrySendError<chat::Update>) -> Self
+	fn from(error: mpsc::error::TrySendError<login::Request>) -> Self
 	{
-		ReceiveTaskError::Chat { error }
+		Error::Login { error }
 	}
 }
 
-impl From<mpsc::error::TrySendError<lobby::Update>> for ReceiveTaskError
+impl From<watch::error::SendError<()>> for Error
 {
-	fn from(error: mpsc::error::TrySendError<lobby::Update>) -> Self
+	fn from(error: watch::error::SendError<()>) -> Self
 	{
-		ReceiveTaskError::Lobby { error }
+		Error::Watch { error }
 	}
 }
 
-impl Into<io::Result<()>> for ReceiveTaskError
+impl From<mpsc::error::RecvError> for Error
 {
-	fn into(self) -> io::Result<()>
+	fn from(error: mpsc::error::RecvError) -> Self
+	{
+		Error::Recv { error }
+	}
+}
+
+impl From<io::Error> for Error
+{
+	fn from(error: io::Error) -> Self
+	{
+		Error::Io { error }
+	}
+}
+
+impl fmt::Display for Error
+{
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
 	{
 		match self
 		{
-			ReceiveTaskError::Quit => Ok(()),
-			ReceiveTaskError::Illegal => Err(io::Error::new(
-				ErrorKind::ConnectionReset,
-				"Illegal message received",
-			)),
-			ReceiveTaskError::Unexpected => Err(io::Error::new(
-				ErrorKind::ConnectionReset,
-				"Something unexpected happened",
-			)),
-			ReceiveTaskError::Send { error } =>
-			{
-				eprintln!("Send error in receive_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-			ReceiveTaskError::Login { error } =>
-			{
-				eprintln!("Login error in receive_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-			ReceiveTaskError::Chat { error } =>
-			{
-				eprintln!("Chat error in receive_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-			ReceiveTaskError::Lobby { error } =>
-			{
-				eprintln!("Lobby error in receive_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-			ReceiveTaskError::Server { error } =>
-			{
-				eprintln!("Server error in receive_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-			ReceiveTaskError::Killcount { error } =>
-			{
-				eprintln!("Killcount error in receive_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-			ReceiveTaskError::Recv { error } =>
-			{
-				eprintln!("Recv error in receive_task: {:?}", error);
-				Err(error)
-			}
+			Error::Illegal => write!(f, "Illegal message received"),
+			Error::Unexpected => write!(f, "Something unexpected happened"),
+			Error::Send { error } => error.fmt(f),
+			Error::TrySend { error } => error.fmt(f),
+			Error::Login { error } => error.fmt(f),
+			Error::Watch { error } => error.fmt(f),
+			Error::Recv { error } => error.fmt(f),
+			Error::Io { error } => error.fmt(f),
 		}
 	}
 }
 
-enum PingTaskError
-{
-	Timer
-	{
-		error: tokio::timer::Error,
-	},
-	Send
-	{
-		error: mpsc::error::TrySendError<Message>,
-	},
-	Recv
-	{
-		error: watch::error::RecvError,
-	},
-	NoPong,
-}
-
-impl Into<io::Result<()>> for PingTaskError
-{
-	fn into(self) -> io::Result<()>
-	{
-		match self
-		{
-			PingTaskError::Timer { error } =>
-			{
-				eprintln!("Timer error in client ping_task: {:?}", error);
-				Ok(())
-			}
-			PingTaskError::Send { error } =>
-			{
-				eprintln!("Send error in ping_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-			PingTaskError::Recv { error } =>
-			{
-				eprintln!("Recv error in ping_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-			PingTaskError::NoPong =>
-			{
-				println!("Client failed to respond to ping.");
-				Err(io::Error::new(ErrorKind::ConnectionReset, "no pong"))
-			}
-		}
-	}
-}
-
-enum PulseTaskError
-{
-	Unsupported,
-	Dropped,
-	Timer
-	{
-		error: tokio::timer::Error,
-	},
-	Send
-	{
-		error: mpsc::error::TrySendError<Message>,
-	},
-	Recv
-	{
-		error: mpsc::error::RecvError,
-	},
-}
-
-impl Into<io::Result<()>> for PulseTaskError
-{
-	fn into(self) -> io::Result<()>
-	{
-		match self
-		{
-			PulseTaskError::Unsupported => Ok(()),
-			PulseTaskError::Dropped => Ok(()),
-			PulseTaskError::Timer { error } =>
-			{
-				eprintln!("Timer error in client pulse_task: {:?}", error);
-				Ok(())
-			}
-			PulseTaskError::Send { error } =>
-			{
-				eprintln!("Send error in pulse_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-			PulseTaskError::Recv { error } =>
-			{
-				eprintln!("Recv error in pulse_task: {:?}", error);
-				Err(io::Error::new(ErrorKind::ConnectionReset, error))
-			}
-		}
-	}
-}
-
-fn handle_update(
-	client: &mut Client,
-	update: Update,
-) -> Result<(), ReceiveTaskError>
+fn handle_update(client: &mut Client, update: Update) -> Result<bool, Error>
 {
 	match update
 	{
-		Update::JoinedServer { username, unlocks } =>
-		{
-			match client.general_chat_reserve.take()
-			{
-				Some(mut chat) => chat
-					.try_send(chat::Update::Join {
-						client_id: client.id,
-						username: username.clone(),
-						unlocks,
-						sendbuffer: client.sendbuffer.clone(),
-					})
-					.map_err(|error| {
-						eprintln!(
-							"Joining chat error in login_task: {:?}",
-							error
-						);
-						ReceiveTaskError::Chat { error }
-					})
-					.map(|()| {
-						client.username = username;
-						client.unlocks = unlocks;
-						client.general_chat = Some(chat);
-					}),
-				None =>
-				{
-					client.sendbuffer.try_send(Message::Closing)?;
-					Ok(())
-				}
-			}
-		}
-
-		Update::JoinedLobby { lobby } =>
-		{
-			// TODO what else to do here?
-			client.lobby = Some(lobby);
-			Ok(())
-		}
+		Update::JoinedServer { .. } => unimplemented!(),
 
 		Update::Closing =>
 		{
 			client.closing = true;
-			client.general_chat_reserve.take();
-			client.lobby_callback.take();
 			client.sendbuffer.try_send(Message::Closing)?;
-			Ok(())
+			Ok(false)
 		}
 		Update::Closed =>
 		{
 			client.closing = true;
-			client.general_chat_reserve.take();
-			client.lobby_callback.take();
 			client.sendbuffer.try_send(Message::Closed)?;
-			Ok(())
+			Ok(false)
 		}
 
 		Update::Msg(message) => handle_message(client, message),
 	}
 }
 
-fn handle_message(
-	client: &mut Client,
-	message: Message,
-) -> Result<(), ReceiveTaskError>
+fn handle_message(client: &mut Client, message: Message)
+	-> Result<bool, Error>
 {
-	// There might be a Future tracking when we last received a message,
-	// or there might not be.
-	let _ = client.last_receive_time.broadcast(());
+	client.last_receive_time.broadcast(())?;
 
 	match message
 	{
@@ -908,8 +512,7 @@ fn handle_message(
 		}
 		Message::Pong =>
 		{
-			// There might be a Future waiting for this, or there might not be.
-			let _ = client.pong_receive_time.broadcast(());
+			client.pong_receive_time.broadcast(())?;
 		}
 		Message::Version { version } =>
 		{
@@ -919,433 +522,19 @@ fn handle_message(
 		{
 			println!("Client {} gracefully disconnected.", client.id);
 			client.sendbuffer.try_send(Message::Quit)?;
-			return Err(ReceiveTaskError::Quit);
+			return Ok(true);
 		}
-		Message::JoinServer { .. } if client.general_chat.is_some() =>
-		{
-			println!("Ignoring message from online client: {:?}", message);
-		}
-		Message::JoinServer { .. } if client.closing =>
-		{
-			client.sendbuffer.try_send(Message::Closing)?;
-		}
-		Message::JoinServer {
-			status: None,
-			content: Some(ref token),
-			sender: Some(_),
-			metadata: _,
-		} if token == "%discord2018" =>
-		{
-			// This session code is now deprecated.
-			client.sendbuffer.try_send(Message::JoinServer {
-				status: Some(ResponseStatus::CredsInvalid),
-				content: None,
-				sender: None,
-				metadata: None,
-			})?;
-		}
-		Message::JoinServer {
-			status: None,
-			content: Some(token),
-			sender: Some(account_id),
-			metadata: _,
-		} =>
-		{
-			let curver = Version::current();
-			if client.version.major != curver.major
-				|| client.version.minor != curver.minor
-			{
-				// Why is this LEAVE_SERVER {} and not
-				// JOIN_SERVER {}? Maybe it has something
-				// to do with MainMenu. Well, let's leave
-				// it until we do proper error handling.
-				// TODO #962
-				let rejection = Message::LeaveServer { content: None };
-				client.sendbuffer.try_send(rejection)?;
-			}
-			else
-			{
-				joining_server(client, token, account_id)?;
-			}
-		}
-		Message::JoinServer { .. } =>
+		_ =>
 		{
 			println!("Invalid message from client: {:?}", message);
-			return Err(ReceiveTaskError::Illegal);
-		}
-		Message::LeaveServer { content: _ } => match client.general_chat.take()
-		{
-			Some(mut general_chat) =>
-			{
-				match client.lobby.take()
-				{
-					Some(ref mut lobby) =>
-					{
-						lobby.try_send(lobby::Update::Leave {
-							client_id: client.id,
-							general_chat: general_chat.clone(),
-						})?
-					}
-					None =>
-					{}
-				}
-
-				general_chat.try_send(chat::Update::Leave {
-					client_id: client.id,
-				})?;
-
-				if !client.closing
-				{
-					client.general_chat_reserve = Some(general_chat);
-				}
-			}
-			None =>
-			{
-				println!("Invalid message from offline client: {:?}", message);
-				return Err(ReceiveTaskError::Illegal);
-			}
-		},
-		Message::JoinLobby { .. } if client.closing =>
-		{
-			client.sendbuffer.try_send(Message::Closing)?;
-		}
-		Message::JoinLobby {
-			lobby_id: Some(lobby_id),
-			username: None,
-			metadata: _,
-		} => match client.general_chat
-		{
-			Some(ref mut general_chat) =>
-			{
-				let lobby_callback = match &client.lobby_callback
-				{
-					Some(callback) => callback.clone(),
-					None =>
-					{
-						eprintln!("Expected lobby_callback");
-						return Err(ReceiveTaskError::Unexpected);
-					}
-				};
-
-				general_chat.try_send(chat::Update::JoinLobby {
-					lobby_id,
-					client_id: client.id,
-					username: client.username.clone(),
-					sendbuffer: client.sendbuffer.clone(),
-					callback: lobby_callback,
-					general_chat: general_chat.clone(),
-				})?;
-			}
-			None =>
-			{
-				println!("Invalid message from offline client: {:?}", message);
-				return Err(ReceiveTaskError::Illegal);
-			}
-		},
-		Message::JoinLobby { .. } =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(ReceiveTaskError::Illegal);
-		}
-		Message::LeaveLobby {
-			lobby_id: None,
-			username: None,
-		} => match client.lobby.take()
-		{
-			Some(ref mut lobby) =>
-			{
-				let general_chat = match &client.general_chat
-				{
-					Some(general_chat) => general_chat.clone(),
-					None =>
-					{
-						eprintln!("Expected general_chat");
-						return Err(ReceiveTaskError::Unexpected);
-					}
-				};
-
-				lobby.try_send(lobby::Update::Leave {
-					client_id: client.id,
-					general_chat: general_chat,
-				})?
-			}
-			None =>
-			{
-				println!(
-					"Invalid message from unlobbied client: {:?}",
-					message
-				);
-				return Err(ReceiveTaskError::Illegal);
-			}
-		},
-		Message::LeaveLobby { .. } =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(ReceiveTaskError::Illegal);
-		}
-		Message::MakeLobby { .. } if client.closing =>
-		{
-			client.sendbuffer.try_send(Message::Closing)?;
-		}
-		Message::MakeLobby { .. } if client.lobby.is_some() =>
-		{
-			println!("Invalid message from lobbied client: {:?}", message);
-			client
-				.sendbuffer
-				.try_send(Message::MakeLobby { lobby_id: None })?;
-		}
-		Message::MakeLobby { lobby_id: None } => match client.general_chat
-		{
-			Some(ref general_chat) =>
-			{
-				let lobby_callback = match &client.lobby_callback
-				{
-					Some(callback) => callback.clone(),
-					None =>
-					{
-						eprintln!("Expected lobby_callback");
-						return Err(ReceiveTaskError::Unexpected);
-					}
-				};
-				let mut lobby = lobby::create(&mut client.lobby_authority);
-				lobby.try_send(lobby::Update::Join {
-					client_id: client.id,
-					client_username: client.username.clone(),
-					client_sendbuffer: client.sendbuffer.clone(),
-					client_callback: lobby_callback,
-					lobby_sendbuffer: lobby.clone(),
-					general_chat: general_chat.clone(),
-				})?;
-				client.lobby = Some(lobby);
-			}
-			None =>
-			{
-				println!("Invalid message from offline client: {:?}", message);
-				return Err(ReceiveTaskError::Illegal);
-			}
-		},
-		Message::MakeLobby { .. } =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(ReceiveTaskError::Illegal);
-		}
-		Message::SaveLobby { .. } if client.closing =>
-		{
-			client.sendbuffer.try_send(Message::Closing)?;
-		}
-		Message::SaveLobby { lobby_id: None } => match client.lobby
-		{
-			Some(ref mut lobby) =>
-			{
-				let general_chat = match &client.general_chat
-				{
-					Some(general_chat) => general_chat.clone(),
-					None =>
-					{
-						eprintln!("Expected general_chat");
-						return Err(ReceiveTaskError::Unexpected);
-					}
-				};
-
-				lobby.try_send(lobby::Update::Save {
-					lobby_sendbuffer: lobby.clone(),
-					general_chat,
-				})?
-			}
-			None =>
-			{
-				println!(
-					"Invalid message from unlobbied client: {:?}",
-					message
-				);
-				return Err(ReceiveTaskError::Illegal);
-			}
-		},
-		Message::SaveLobby { .. } =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(ReceiveTaskError::Illegal);
-		}
-		Message::LockLobby { lobby_id: None } => match client.lobby
-		{
-			Some(ref mut lobby) =>
-			{
-				let general_chat = match &client.general_chat
-				{
-					Some(general_chat) => general_chat.clone(),
-					None =>
-					{
-						eprintln!("Expected general_chat");
-						return Err(ReceiveTaskError::Unexpected);
-					}
-				};
-
-				lobby.try_send(lobby::Update::Lock { general_chat })?
-			}
-			None =>
-			{
-				println!(
-					"Invalid message from unlobbied client: {:?}",
-					message
-				);
-				return Err(ReceiveTaskError::Illegal);
-			}
-		},
-		Message::LockLobby { .. } =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(ReceiveTaskError::Illegal);
-		}
-		Message::UnlockLobby { lobby_id: None } => match client.lobby
-		{
-			Some(ref mut lobby) =>
-			{
-				let general_chat = match &client.general_chat
-				{
-					Some(general_chat) => general_chat.clone(),
-					None =>
-					{
-						eprintln!("Expected general_chat");
-						return Err(ReceiveTaskError::Unexpected);
-					}
-				};
-
-				lobby.try_send(lobby::Update::Unlock { general_chat })?
-			}
-			None =>
-			{
-				println!(
-					"Invalid message from unlobbied client: {:?}",
-					message
-				);
-				return Err(ReceiveTaskError::Illegal);
-			}
-		},
-		Message::UnlockLobby { .. } =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(ReceiveTaskError::Illegal);
-		}
-		Message::NameLobby {
-			lobbyname: _,
-			lobby_id: None,
-		} =>
-		{
-			unimplemented!();
-		}
-		Message::NameLobby { .. } =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(ReceiveTaskError::Illegal);
-		}
-		Message::Init => match client.general_chat
-		{
-			Some(ref mut general_chat) =>
-			{
-				if client.closing
-				{
-					client.sendbuffer.try_send(Message::Closing)?;
-				}
-				general_chat.try_send(chat::Update::Init {
-					sendbuffer: client.sendbuffer.clone(),
-				})?;
-			}
-			None =>
-			{
-				println!("Invalid message from offline client: {:?}", message);
-				return Err(ReceiveTaskError::Illegal);
-			}
-		},
-		Message::Chat { .. } if client.username.is_empty() =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(ReceiveTaskError::Illegal);
-		}
-		Message::Chat {
-			content,
-			sender: None,
-			target: ChatTarget::General,
-		} => match client.general_chat
-		{
-			Some(ref mut general_chat) =>
-			{
-				println!(
-					"Client {} '{}' sent chat message: {}",
-					client.id, client.username, content
-				);
-				general_chat.try_send(chat::Update::Msg(Message::Chat {
-					content: content,
-					sender: Some(client.username.clone()),
-					target: ChatTarget::General,
-				}))?;
-			}
-			None =>
-			{
-				let message = Message::Chat {
-					content,
-					sender: None,
-					target: ChatTarget::General,
-				};
-				println!("Invalid message from offline client: {:?}", message);
-				return Err(ReceiveTaskError::Illegal);
-			}
-		},
-		Message::Chat {
-			content,
-			sender: None,
-			target: ChatTarget::Lobby,
-		} => match client.lobby
-		{
-			Some(ref mut lobby) =>
-			{
-				println!(
-					"Client {} '{}' sent lobby chat message: {}",
-					client.id, client.username, content
-				);
-				lobby.try_send(lobby::Update::Msg(Message::Chat {
-					content: content,
-					sender: Some(client.username.clone()),
-					target: ChatTarget::Lobby,
-				}))?
-			}
-			None =>
-			{
-				let message = Message::Chat {
-					content,
-					sender: None,
-					target: ChatTarget::Lobby,
-				};
-				println!(
-					"Invalid message from unlobbied client: {:?}",
-					message
-				);
-				return Err(ReceiveTaskError::Illegal);
-			}
-		},
-		Message::Chat { .. } =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(ReceiveTaskError::Illegal);
-		}
-		Message::DisbandLobby { .. }
-		| Message::EditLobby { .. }
-		| Message::MaxPlayers { .. }
-		| Message::NumPlayers { .. }
-		| Message::Closing
-		| Message::Closed =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(ReceiveTaskError::Illegal);
+			return Err(Error::Illegal);
 		}
 	}
 
-	Ok(())
+	Ok(false)
 }
 
-fn greet_client(
-	client: &mut Client,
-	version: Version,
-) -> Result<(), ReceiveTaskError>
+fn greet_client(client: &mut Client, version: Version) -> Result<(), Error>
 {
 	client.version = version;
 	/*verbose*/
@@ -1387,14 +576,10 @@ fn greet_client(
 		.has_proper_version_a
 		.store(true, atomic::Ordering::Relaxed);
 
-	// There might be a Future waiting for this, or there might not be.
-	let _ = client.supports_empty_pulses.try_send(true);
-
 	// TODO enable compression
 
 	// Send a ping message, just to get an estimated ping.
-	// There might be a Future waiting for this, or there might not be.
-	let _ = client.pingbuffer.broadcast(());
+	client.pingbuffer.broadcast(())?;
 
 	Ok(())
 }
@@ -1403,7 +588,7 @@ fn joining_server(
 	client: &mut Client,
 	token: String,
 	account_id: String,
-) -> Result<(), ReceiveTaskError>
+) -> Result<(), Error>
 {
 	println!(
 		"Client {} is logging in with account id {}",
@@ -1413,26 +598,20 @@ fn joining_server(
 	match client.login.try_send(login::Request { token, account_id })
 	{
 		Ok(()) => Ok(()),
-		Err(error) =>
+		Err(mpsc::error::TrySendError::Full(_request)) =>
 		{
-			eprintln!("Failed to enqueue for login: {:?}", error);
+			eprintln!("Failed to enqueue for login, queue full");
 
-			if error.is_full()
-			{
-				// TODO better error handling (#962)
-				let message = Message::JoinServer {
-					status: Some(ResponseStatus::ConnectionFailed),
-					content: None,
-					sender: None,
-					metadata: None,
-				};
-				client.sendbuffer.try_send(message)?;
-				Ok(())
-			}
-			else
-			{
-				Err(ReceiveTaskError::Login { error })
-			}
+			// TODO better error handling (#962)
+			let message = Message::JoinServer {
+				status: Some(ResponseStatus::ConnectionFailed),
+				content: None,
+				sender: None,
+				metadata: None,
+			};
+			client.sendbuffer.try_send(message)?;
+			Ok(())
 		}
+		Err(error) => Err(error.into()),
 	}
 }
