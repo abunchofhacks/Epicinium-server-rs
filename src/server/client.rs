@@ -726,6 +726,43 @@ fn handle_message(client: &mut Client, message: Message)
 			client.sendbuffer.try_send(Message::Quit)?;
 			return Ok(true);
 		}
+		//Message::JoinServer { .. } if client.general_chat.is_some() =>
+		//{
+		//	println!("Ignoring message from online client: {:?}", message);
+		//}
+		Message::JoinServer { .. } if client.closing =>
+		{
+			client.sendbuffer.try_send(Message::Closing)?;
+		}
+		Message::JoinServer {
+			status: None,
+			content: Some(token),
+			sender: _,
+			metadata: _,
+		} =>
+		{
+			let curver = Version::current();
+			if client.version.major != curver.major
+				|| client.version.minor != curver.minor
+			{
+				// Why is this LEAVE_SERVER {} and not
+				// JOIN_SERVER {}? Maybe it has something
+				// to do with MainMenu. Well, let's leave
+				// it until we do proper error handling.
+				// TODO #962
+				let rejection = Message::LeaveServer { content: None };
+				client.sendbuffer.try_send(rejection)?;
+			}
+			else
+			{
+				joining_server(client, token)?;
+			}
+		}
+		Message::JoinServer { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
 		_ =>
 		{
 			println!("Invalid message from client: {:?}", message);
@@ -792,8 +829,11 @@ fn joining_server(client: &mut Client, token: String) -> Result<(), Error>
 		Ok(()) => Ok(()),
 		Err(mpsc::error::TrySendError::Full(_request)) =>
 		{
-			eprintln!("Failed to enqueue for login, queue full");
+			eprintln!("Failed to enqueue for login, login task busy");
 
+			// We only process one login request at a time. Does it make sense
+			// to respond to a second request if the first response is still
+			// underway?
 			// TODO better error handling (#962)
 			let message = Message::JoinServer {
 				status: Some(ResponseStatus::ConnectionFailed),
