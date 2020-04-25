@@ -13,10 +13,9 @@ use std::sync;
 use std::sync::atomic;
 
 use futures::future;
-use futures::select;
-use futures::FutureExt;
-use futures::StreamExt;
-use futures::TryFutureExt;
+use futures::future::Either;
+use futures::{pin_mut, select};
+use futures::{FutureExt, StreamExt, TryFutureExt};
 
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
@@ -103,19 +102,36 @@ pub fn accept(
 		login_server,
 	);
 
-	let task = future::try_join5(
-		receive_task,
-		send_task,
-		ping_task,
-		pulse_task,
-		login_task,
-	)
-	.map_ok(|((), (), (), (), ())| ())
-	.map_err(move |e| eprintln!("Error in client {}: {:?}", id, e))
-	.map(move |_result| {
-		//let _discarded = canary;
-		println!("Client {} done.", id);
-	});
+	// The support task cannot finish because the pulse_task never finishes,
+	// although one of the tasks might return an error.
+	let support_task = future::try_join3(ping_task, pulse_task, login_task)
+		.map_ok(|((), (), ())| ())
+		.fuse();
+
+	// The main task finishes as soon as the receive task does, aborting the
+	// support task in the process.
+	let main_task = async {
+		pin_mut!(receive_task);
+		pin_mut!(support_task);
+		future::select(receive_task, support_task)
+			.map(|either| match either
+			{
+				Either::Left((result, _support_task)) => result,
+				Either::Right((Err(error), _)) => Err(error),
+				Either::Right((Ok(()), _)) => Err(Error::Unexpected),
+			})
+			.await
+	};
+
+	// If the receive task finishes, the send task will eventually run out
+	// of things to send and finish as well.
+	let task = future::try_join(main_task, send_task)
+		.map_ok(|((), ())| ())
+		.map_err(move |e| eprintln!("Error in client {}: {:?}", id, e))
+		.map(move |_result| {
+			//let _discarded = canary;
+			println!("Client {} done.", id);
+		});
 
 	tokio::spawn(task);
 }
