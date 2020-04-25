@@ -10,11 +10,12 @@ use std::error;
 
 use reqwest as http;
 
+use enumset::*;
+
 #[derive(Debug)]
 pub struct Request
 {
 	pub token: String,
-	pub account_id: String,
 }
 
 pub struct Server
@@ -59,21 +60,20 @@ impl Server
 	fn dev_login(&self, request: Request) -> Result<LoginData, ResponseStatus>
 	{
 		let username;
-		let unlocks;
-		match request.account_id.parse::<u8>()
+		let unlocks: EnumSet<Unlock>;
+		match request.token.parse::<u8>()
 		{
 			Ok(1) =>
 			{
 				username = "Alice".to_string();
-				unlocks =
-					vec![unlock_id(Unlock::Access), unlock_id(Unlock::Dev)];
+				unlocks = enum_set!(Unlock::BetaAccess | Unlock::Dev);
 			}
 			Ok(x) if x >= 2 && x <= 8 =>
 			{
 				const NAMES: [&str; 7] =
 					["Bob", "Carol", "Dave", "Emma", "Frank", "Gwen", "Harold"];
 				username = NAMES[(x - 2) as usize].to_string();
-				unlocks = vec![unlock_id(Unlock::Access)];
+				unlocks = enum_set!(Unlock::BetaAccess);
 			}
 			_ =>
 			{
@@ -81,8 +81,7 @@ impl Server
 				let serial: u64 = rand::random();
 				let id = keycode(key, serial);
 				username = format!("{}", id);
-				unlocks =
-					vec![unlock_id(Unlock::Access), unlock_id(Unlock::Dev)];
+				unlocks = enum_set!(Unlock::BetaAccess | Unlock::Dev);
 			}
 		}
 
@@ -124,7 +123,7 @@ impl Connection
 		let http = http::Client::builder().user_agent(user_agent).build()?;
 
 		Ok(Connection {
-			http: http::Client::new(),
+			http,
 			validate_session_url,
 		})
 	}
@@ -133,7 +132,6 @@ impl Connection
 		-> Result<LoginData, ResponseStatus>
 	{
 		let payload = json!({
-			"id": request.account_id,
 			"token": request.token,
 			// TODO "challenge_key": challenge_key,
 		});

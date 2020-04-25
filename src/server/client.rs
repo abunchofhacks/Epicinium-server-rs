@@ -22,7 +22,9 @@ use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio::sync::watch;
+use tokio::time as timer;
 use tokio::time::{Duration, Instant};
 
 use enumset::EnumSet;
@@ -34,9 +36,9 @@ const MESSAGE_SIZE_WARNING_LIMIT: usize = 65537;
 struct Client
 {
 	sendbuffer: mpsc::Sender<Message>,
-	pingbuffer: watch::Sender<()>,
 	last_receive_time: watch::Sender<()>,
-	pong_receive_time: watch::Sender<()>,
+	pong_receive_time: Option<oneshot::Sender<()>>,
+	ping_tolerance: watch::Sender<Duration>,
 	login: mpsc::Sender<login::Request>,
 	has_proper_version: bool,
 	has_proper_version_a: sync::Arc<atomic::AtomicBool>,
@@ -57,21 +59,21 @@ pub fn accept(
 )
 {
 	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
-	let sendbuffer_ping = sendbuffer_in.clone();
 	let sendbuffer_pulse = sendbuffer_in.clone();
 	let sendbuffer_login = sendbuffer_in.clone();
-	let (joinedbuffer_in, joinedbuffer_out) = mpsc::channel::<Update>(1);
-	let (pingbuffer_in, pingbuffer_out) = watch::channel(());
+	let (updatebuffer_in, updatebuffer_out) = mpsc::channel::<Update>(1);
+	let updatebuffer_ping = updatebuffer_in.clone();
+	let tolerance = Duration::from_secs(120);
+	let (pingtolerance_in, pingtolerance_out) = watch::channel(tolerance);
 	let (timebuffer_in, timebuffer_out) = watch::channel(());
-	let (pongbuffer_in, pongbuffer_out) = watch::channel(());
 	let (loginbuffer_in, loginbuffer_out) = mpsc::channel::<login::Request>(1);
 	let (reader, writer) = tokio::io::split(socket);
 
 	let client = Client {
 		sendbuffer: sendbuffer_in,
-		pingbuffer: pingbuffer_in,
 		last_receive_time: timebuffer_in,
-		pong_receive_time: pongbuffer_in,
+		pong_receive_time: None,
+		ping_tolerance: pingtolerance_in,
 		login: loginbuffer_in,
 		has_proper_version: false,
 		has_proper_version_a: sync::Arc::new(atomic::AtomicBool::new(false)),
@@ -85,19 +87,18 @@ pub fn accept(
 	};
 
 	let receive_task =
-		start_receive_task(client, joinedbuffer_out, server_state, reader);
+		start_receive_task(client, updatebuffer_out, server_state, reader);
 	let send_task = start_send_task(id, sendbuffer_out, writer);
 	let ping_task = start_ping_task(
 		id,
-		sendbuffer_ping,
+		updatebuffer_ping,
 		timebuffer_out,
-		pingbuffer_out,
-		pongbuffer_out,
+		pingtolerance_out,
 	);
 	let pulse_task = start_pulse_task(sendbuffer_pulse);
 	let login_task = start_login_task(
 		sendbuffer_login,
-		joinedbuffer_in,
+		updatebuffer_in,
 		loginbuffer_out,
 		login_server,
 	);
@@ -328,13 +329,116 @@ fn prepare_message_data(message: Message) -> (String, u32)
 
 async fn start_ping_task(
 	client_id: Keycode,
-	mut sendbuffer: mpsc::Sender<Message>,
-	timebuffer: watch::Receiver<()>,
-	pingbuffer: watch::Receiver<()>,
-	pongbuffer: watch::Receiver<()>,
+	mut sendbuffer: mpsc::Sender<Update>,
+	mut last_receive_time: watch::Receiver<()>,
+	mut ping_tolerance: watch::Receiver<Duration>,
 ) -> Result<(), Error>
 {
+	loop
+	{
+		let (callback_in, callback_out) = oneshot::channel::<()>();
+		let request = Update::PingRequest {
+			callback: callback_in,
+		};
+		sendbuffer.send(request).await?;
+
+		wait_for_pong(client_id, callback_out, &mut ping_tolerance).await?;
+
+		// TODO ghostbusting
+
+		wait_for_inactivity(&mut last_receive_time).await?;
+	}
+}
+
+async fn wait_for_inactivity(
+	activity: &mut watch::Receiver<()>,
+) -> Result<(), Error>
+{
+	loop
+	{
+		let threshold = Duration::from_secs(5);
+		let activity_event = activity.recv().map(|x| match x
+		{
+			Some(()) => Ok(PingEvent::Activity),
+			None => Err(Error::Unexpected),
+		});
+		let timeout_event =
+			timer::delay_for(threshold).map(|()| PingEvent::Timeout);
+		let event = select! {
+			x = activity_event.fuse() => x?,
+			x = timeout_event.fuse() => x,
+		};
+		match event
+		{
+			PingEvent::Activity => continue,
+			PingEvent::Timeout => return Ok(()),
+		}
+	}
+}
+
+async fn wait_for_pong(
+	client_id: Keycode,
+	callback: oneshot::Receiver<()>,
+	tolerance_updates: &mut watch::Receiver<Duration>,
+) -> Result<(), Error>
+{
+	let sendtime = Instant::now();
+	let mut tolerance = Duration::from_secs(5);
+
+	let mut received_event = callback.map_ok(|()| PongEvent::Received).fuse();
+	loop
+	{
+		let tolerance_event = tolerance_updates.recv().map(|x| match x
+		{
+			Some(value) => Ok(PongEvent::NewTolerance { value }),
+			None => Err(Error::Unexpected),
+		});
+		let timeout_event = timer::delay_until(sendtime + tolerance)
+			.map(|()| PongEvent::Timeout);
+		let event = select! {
+			x = tolerance_event.fuse() => x?,
+			x = received_event => x?,
+			x = timeout_event.fuse() => x,
+		};
+		match event
+		{
+			PongEvent::NewTolerance { value } =>
+			{
+				tolerance = value;
+			}
+			PongEvent::Timeout =>
+			{
+				eprintln!("Disconnecting inactive client {}", client_id);
+				// TODO slack
+				return Err(Error::Timeout);
+			}
+			PongEvent::Received => break,
+		}
+	}
+
+	println!(
+		"Client {} has {}ms ping",
+		client_id,
+		sendtime.elapsed().as_millis()
+	);
+
 	Ok(())
+}
+
+enum PingEvent
+{
+	Activity,
+	Timeout,
+}
+
+enum PongEvent
+{
+	NewTolerance
+	{
+		value: Duration,
+	},
+	Timeout,
+	Received,
 }
 
 async fn start_pulse_task(
@@ -342,7 +446,7 @@ async fn start_pulse_task(
 ) -> Result<(), Error>
 {
 	let start = Instant::now() + Duration::from_secs(4);
-	let mut interval = tokio::time::interval_at(start, Duration::from_secs(4));
+	let mut interval = timer::interval_at(start, Duration::from_secs(4));
 
 	loop
 	{
@@ -352,18 +456,62 @@ async fn start_pulse_task(
 }
 
 async fn start_login_task(
-	sendbuffer: mpsc::Sender<Message>,
+	mut sendbuffer: mpsc::Sender<Message>,
 	mut joinedbuffer: mpsc::Sender<Update>,
-	requestbuffer: mpsc::Receiver<login::Request>,
+	mut requestbuffer: mpsc::Receiver<login::Request>,
 	login_server: sync::Arc<login::Server>,
 ) -> Result<(), Error>
 {
+	while let Some(request) = requestbuffer.recv().await
+	{
+		match login_server.login(request).await
+		{
+			Ok(logindata) =>
+			{
+				if logindata.unlocks.contains(Unlock::BetaAccess)
+				{
+					let update = Update::JoinedServer {
+						username: logindata.username,
+						unlocks: logindata.unlocks,
+					};
+					joinedbuffer.send(update).await?;
+				}
+				else
+				{
+					println!("Login failed due to insufficient access");
+					let message = Message::JoinServer {
+						status: Some(ResponseStatus::KeyRequired),
+						content: None,
+						sender: None,
+						metadata: None,
+					};
+					sendbuffer.send(message).await?;
+				}
+			}
+			Err(responsestatus) =>
+			{
+				eprintln!("Login failed with {:?}", responsestatus);
+				let message = Message::JoinServer {
+					status: Some(responsestatus),
+					content: None,
+					sender: None,
+					metadata: None,
+				};
+				sendbuffer.send(message).await?;
+			}
+		}
+	}
+
 	Ok(())
 }
 
 #[derive(Debug)]
 pub enum Update
 {
+	PingRequest
+	{
+		callback: oneshot::Sender<()>,
+	},
 	JoinedServer
 	{
 		username: String,
@@ -378,6 +526,7 @@ pub enum Update
 enum Error
 {
 	Illegal,
+	Timeout,
 	Unexpected,
 	Send
 	{
@@ -386,6 +535,10 @@ enum Error
 	TrySend
 	{
 		error: mpsc::error::TrySendError<Message>,
+	},
+	Update
+	{
+		error: mpsc::error::SendError<Update>,
 	},
 	Login
 	{
@@ -398,6 +551,10 @@ enum Error
 	Recv
 	{
 		error: mpsc::error::RecvError,
+	},
+	OneshotRecv
+	{
+		error: oneshot::error::RecvError,
 	},
 	Io
 	{
@@ -418,6 +575,14 @@ impl From<mpsc::error::TrySendError<Message>> for Error
 	fn from(error: mpsc::error::TrySendError<Message>) -> Self
 	{
 		Error::TrySend { error }
+	}
+}
+
+impl From<mpsc::error::SendError<Update>> for Error
+{
+	fn from(error: mpsc::error::SendError<Update>) -> Self
+	{
+		Error::Update { error }
 	}
 }
 
@@ -445,6 +610,14 @@ impl From<mpsc::error::RecvError> for Error
 	}
 }
 
+impl From<oneshot::error::RecvError> for Error
+{
+	fn from(error: oneshot::error::RecvError) -> Self
+	{
+		Error::OneshotRecv { error }
+	}
+}
+
 impl From<io::Error> for Error
 {
 	fn from(error: io::Error) -> Self
@@ -460,12 +633,15 @@ impl fmt::Display for Error
 		match self
 		{
 			Error::Illegal => write!(f, "Illegal message received"),
+			Error::Timeout => write!(f, "Failed to respond"),
 			Error::Unexpected => write!(f, "Something unexpected happened"),
 			Error::Send { error } => error.fmt(f),
 			Error::TrySend { error } => error.fmt(f),
+			Error::Update { error } => error.fmt(f),
 			Error::Login { error } => error.fmt(f),
 			Error::Watch { error } => error.fmt(f),
 			Error::Recv { error } => error.fmt(f),
+			Error::OneshotRecv { error } => error.fmt(f),
 			Error::Io { error } => error.fmt(f),
 		}
 	}
@@ -475,6 +651,13 @@ fn handle_update(client: &mut Client, update: Update) -> Result<bool, Error>
 {
 	match update
 	{
+		Update::PingRequest { callback } =>
+		{
+			client.pong_receive_time = Some(callback);
+			client.sendbuffer.try_send(Message::Ping)?;
+			Ok(false)
+		}
+
 		Update::JoinedServer { .. } => unimplemented!(),
 
 		Update::Closing =>
@@ -512,7 +695,10 @@ fn handle_message(client: &mut Client, message: Message)
 		}
 		Message::Pong =>
 		{
-			client.pong_receive_time.broadcast(())?;
+			if let Some(one) = client.pong_receive_time.take()
+			{
+				one.send(()).map_err(|()| Error::Unexpected)?;
+			}
 		}
 		Message::Version { version } =>
 		{
@@ -578,24 +764,14 @@ fn greet_client(client: &mut Client, version: Version) -> Result<(), Error>
 
 	// TODO enable compression
 
-	// Send a ping message, just to get an estimated ping.
-	client.pingbuffer.broadcast(())?;
-
 	Ok(())
 }
 
-fn joining_server(
-	client: &mut Client,
-	token: String,
-	account_id: String,
-) -> Result<(), Error>
+fn joining_server(client: &mut Client, token: String) -> Result<(), Error>
 {
-	println!(
-		"Client {} is logging in with account id {}",
-		client.id, &account_id
-	);
+	println!("Client {} is logging in", client.id);
 
-	match client.login.try_send(login::Request { token, account_id })
+	match client.login.try_send(login::Request { token })
 	{
 		Ok(()) => Ok(()),
 		Err(mpsc::error::TrySendError::Full(_request)) =>

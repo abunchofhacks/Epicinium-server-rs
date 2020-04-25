@@ -13,9 +13,10 @@ use std::error;
 use std::net::SocketAddr;
 use std::sync;
 
+use futures::future;
+use futures::select;
 use futures::FutureExt;
 use futures::TryFutureExt;
-use futures::{select, try_join};
 
 use tokio::net::TcpListener;
 use tokio::sync::watch;
@@ -45,7 +46,13 @@ pub async fn run_server(
 	let (killcount_in, killcount_out) = watch::channel(0u8);
 	let killer_task = killer::run(killcount_in).map_err(|e| e.into());
 
-	try_join!(acceptance_task, killer_task).map(|((), ())| ())
+	let close_task = wait_for_close(killcount_out, state_in);
+
+	let server_task =
+		future::try_join3(acceptance_task, killer_task, close_task)
+			.map_ok(|((), (), ())| ());
+
+	server_task.await
 }
 
 async fn accept_clients(
@@ -99,6 +106,26 @@ async fn accept_clients(
 	}
 
 	binding.unbind().await
+}
+
+async fn wait_for_close(
+	mut killcount: watch::Receiver<u8>,
+	server_state: watch::Sender<State>,
+) -> Result<(), Box<dyn error::Error>>
+{
+	while let Some(x) = killcount.recv().await
+	{
+		if x > 0
+		{
+			server_state.broadcast(State::Closing)?;
+		}
+		else if x > 1
+		{
+			server_state.broadcast(State::Closed)?;
+		}
+	}
+
+	Ok(())
 }
 
 fn increase_sockets() -> std::io::Result<()>

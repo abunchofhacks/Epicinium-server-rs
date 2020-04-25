@@ -167,61 +167,13 @@ pub enum ResponseStatus
 	UnknownError = 99,
 }
 
-#[derive(EnumSetType, Debug)]
+#[derive(EnumSetType, Debug, Serialize, Deserialize)]
 pub enum Unlock
 {
 	Unknown,
 	Dev,
-	Access,
+	BetaAccess,
 	Guest,
-}
-
-pub fn unlock_id(unlock: Unlock) -> u8
-{
-	if cfg!(debug_assertions)
-	{
-		match unlock
-		{
-			Unlock::Unknown => 0,
-			Unlock::Dev => 2,
-			Unlock::Access => 9,
-			Unlock::Guest => 10,
-		}
-	}
-	else
-	{
-		match unlock
-		{
-			Unlock::Unknown => 0,
-			Unlock::Dev => 2,
-			Unlock::Access => 3,
-			Unlock::Guest => 4,
-		}
-	}
-}
-
-pub fn unlock_from_unlock_id(x: u8) -> Unlock
-{
-	if cfg!(debug_assertions)
-	{
-		match x
-		{
-			2 => Unlock::Dev,
-			9 => Unlock::Access,
-			10 => Unlock::Guest,
-			_ => Unlock::Unknown,
-		}
-	}
-	else
-	{
-		match x
-		{
-			2 => Unlock::Dev,
-			3 => Unlock::Access,
-			4 => Unlock::Guest,
-			_ => Unlock::Unknown,
-		}
-	}
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -237,8 +189,7 @@ pub struct LoginResponse
 pub struct LoginData
 {
 	pub username: String,
-	// TODO deserialize using unlock_from_unlock_id
-	pub unlocks: Vec<u8>,
+	pub unlocks: EnumSet<Unlock>,
 	pub rating: f32,
 	pub stars: i32,
 	pub recent_stars: i32,
