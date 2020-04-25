@@ -14,9 +14,7 @@ use std::sync::atomic;
 
 use futures::future;
 use futures::select;
-use futures::FutureExt;
-use futures::StreamExt;
-use futures::TryFutureExt;
+use futures::{FutureExt, StreamExt, TryFutureExt};
 
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
@@ -152,7 +150,7 @@ async fn start_receive_task(
 		has_quit = handle_update(&mut client, update)?;
 	}
 
-	println!("Client {} stopped receiving.", client.id);
+	println!("Client {}: stopped receiving.", client.id);
 	Ok(())
 }
 
@@ -253,7 +251,7 @@ async fn start_send_task(
 		send_bytes(&mut socket, buffer).await?;
 	}
 
-	println!("Client {} stopped sending.", client_id);
+	println!("Client {}: stopped sending.", client_id);
 	Ok(())
 }
 
@@ -329,100 +327,134 @@ fn prepare_message_data(message: Message) -> (String, u32)
 
 async fn start_ping_task(
 	client_id: Keycode,
-	mut sendbuffer: mpsc::Sender<Update>,
-	mut last_receive_time: watch::Receiver<()>,
-	mut ping_tolerance: watch::Receiver<Duration>,
+	sendbuffer: mpsc::Sender<Update>,
+	last_receive_time: watch::Receiver<()>,
+	ping_tolerance: watch::Receiver<Duration>,
 ) -> Result<(), Error>
 {
+	let mut pingtask = PingTask {
+		id: client_id,
+		sendbuffer,
+		last_receive_time,
+		ping_tolerance,
+	};
+
 	loop
+	{
+		match pingtask.run().await
+		{
+			Ok(()) => continue,
+			Err(Error::Stopped) => break,
+			Err(error) =>
+			{
+				return Err(error);
+			}
+		}
+	}
+
+	println!("Client {}: stopped pinging.", client_id);
+	Ok(())
+}
+
+struct PingTask
+{
+	id: Keycode,
+	sendbuffer: mpsc::Sender<Update>,
+	last_receive_time: watch::Receiver<()>,
+	ping_tolerance: watch::Receiver<Duration>,
+}
+
+impl PingTask
+{
+	async fn run(&mut self) -> Result<(), Error>
 	{
 		let (callback_in, callback_out) = oneshot::channel::<()>();
 		let request = Update::PingRequest {
 			callback: callback_in,
 		};
-		sendbuffer.send(request).await?;
+		self.sendbuffer.send(request).await?;
 
-		wait_for_pong(client_id, callback_out, &mut ping_tolerance).await?;
+		self.wait_for_pong(callback_out).await?;
 
 		// TODO ghostbusting
 
-		wait_for_inactivity(&mut last_receive_time).await?;
+		self.wait_for_inactivity().await?;
+
+		Ok(())
 	}
-}
 
-async fn wait_for_inactivity(
-	activity: &mut watch::Receiver<()>,
-) -> Result<(), Error>
-{
-	loop
+	async fn wait_for_inactivity(&mut self) -> Result<(), Error>
 	{
-		let threshold = Duration::from_secs(5);
-		let activity_event = activity.recv().map(|x| match x
+		loop
 		{
-			Some(()) => Ok(PingEvent::Activity),
-			None => Err(Error::Unexpected),
-		});
-		let timeout_event =
-			timer::delay_for(threshold).map(|()| PingEvent::Timeout);
-		let event = select! {
-			x = activity_event.fuse() => x?,
-			x = timeout_event.fuse() => x,
-		};
-		match event
-		{
-			PingEvent::Activity => continue,
-			PingEvent::Timeout => return Ok(()),
-		}
-	}
-}
-
-async fn wait_for_pong(
-	client_id: Keycode,
-	callback: oneshot::Receiver<()>,
-	tolerance_updates: &mut watch::Receiver<Duration>,
-) -> Result<(), Error>
-{
-	let sendtime = Instant::now();
-	let mut tolerance = Duration::from_secs(5);
-
-	let mut received_event = callback.map_ok(|()| PongEvent::Received).fuse();
-	loop
-	{
-		let tolerance_event = tolerance_updates.recv().map(|x| match x
-		{
-			Some(value) => Ok(PongEvent::NewTolerance { value }),
-			None => Err(Error::Unexpected),
-		});
-		let timeout_event = timer::delay_until(sendtime + tolerance)
-			.map(|()| PongEvent::Timeout);
-		let event = select! {
-			x = tolerance_event.fuse() => x?,
-			x = received_event => x?,
-			x = timeout_event.fuse() => x,
-		};
-		match event
-		{
-			PongEvent::NewTolerance { value } =>
+			let threshold = Duration::from_secs(5);
+			let activity_event = self.last_receive_time.recv().map(|x| match x
 			{
-				tolerance = value;
-			}
-			PongEvent::Timeout =>
+				Some(()) => Ok(PingEvent::Activity),
+				None => Err(Error::Stopped),
+			});
+			let timeout_event =
+				timer::delay_for(threshold).map(|()| PingEvent::Timeout);
+			let event = select! {
+				x = activity_event.fuse() => x?,
+				x = timeout_event.fuse() => x,
+			};
+			match event
 			{
-				eprintln!("Disconnecting inactive client {}", client_id);
-				// TODO slack
-				return Err(Error::Timeout);
+				PingEvent::Activity => continue,
+				PingEvent::Timeout => return Ok(()),
 			}
-			PongEvent::Received => break,
 		}
 	}
 
-	println!(
-		"Client {} has {}ms ping",
-		client_id,
-		sendtime.elapsed().as_millis()
-	);
+	async fn wait_for_pong(
+		&mut self,
+		callback: oneshot::Receiver<()>,
+	) -> Result<(), Error>
+	{
+		let sendtime = Instant::now();
+		let mut tolerance = Duration::from_secs(5);
 
-	Ok(())
+		let mut received_event =
+			callback.map_ok(|()| PongEvent::Received).fuse();
+		loop
+		{
+			let tolerance_event = self.ping_tolerance.recv().map(|x| match x
+			{
+				Some(value) => Ok(PongEvent::NewTolerance { value }),
+				None => Err(Error::Stopped),
+			});
+			let timeout_event = timer::delay_until(sendtime + tolerance)
+				.map(|()| PongEvent::Timeout);
+			let event = select! {
+				x = tolerance_event.fuse() => x?,
+				x = received_event => x?,
+				x = timeout_event.fuse() => x,
+			};
+			match event
+			{
+				PongEvent::NewTolerance { value } =>
+				{
+					tolerance = value;
+				}
+				PongEvent::Timeout =>
+				{
+					eprintln!("Disconnecting inactive client {}", self.id);
+					// TODO slack
+					return Err(Error::Timeout);
+				}
+				PongEvent::Received => break,
+			}
+		}
+
+		println!(
+			"Client {} has {}ms ping",
+			self.id,
+			sendtime.elapsed().as_millis()
+		);
+
+		Ok(())
+	}
 }
 
 enum PingEvent
@@ -448,11 +480,13 @@ async fn start_pulse_task(
 	let start = Instant::now() + Duration::from_secs(4);
 	let mut interval = timer::interval_at(start, Duration::from_secs(4));
 
-	loop
+	// Keep sending pulses as long as the send task is alive.
+	while let Ok(()) = sendbuffer.send(Message::Pulse).await
 	{
 		interval.tick().await;
-		sendbuffer.send(Message::Pulse).await?;
 	}
+
+	Ok(())
 }
 
 async fn start_login_task(
@@ -525,6 +559,7 @@ pub enum Update
 #[derive(Debug)]
 enum Error
 {
+	Stopped,
 	Illegal,
 	Timeout,
 	Unexpected,
@@ -632,6 +667,7 @@ impl fmt::Display for Error
 	{
 		match self
 		{
+			Error::Stopped => write!(f, "Receive task has stopped"),
 			Error::Illegal => write!(f, "Illegal message received"),
 			Error::Timeout => write!(f, "Failed to respond"),
 			Error::Unexpected => write!(f, "Something unexpected happened"),
