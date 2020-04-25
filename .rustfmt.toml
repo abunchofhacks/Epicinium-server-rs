@@ -3,3 +3,4 @@ max_width = 80
 hard_tabs = true
 brace_style = "AlwaysNextLine"
 control_brace_style = "AlwaysNextLine"
+edition = "2018"
