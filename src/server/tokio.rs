@@ -19,6 +19,7 @@ use futures::FutureExt;
 use futures::TryFutureExt;
 
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use tokio::sync::watch;
 
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -40,13 +41,29 @@ pub async fn run_server(
 	let login_server = login::connect(settings)?;
 	let login = sync::Arc::new(login_server);
 
-	let (state_in, state_out) = watch::channel(State::Open);
-	let acceptance_task = accept_clients(settings, login, state_out);
-
 	let (killcount_in, killcount_out) = watch::channel(0u8);
 	let killer_task = killer::run(killcount_in).map_err(|e| e.into());
 
-	let close_task = wait_for_close(killcount_out, state_in);
+	let (state_in, state_out) = watch::channel(State::Open);
+	let (client_canary_in, client_canary_out) = mpsc::channel::<()>(1);
+	let (general_canary_in, general_canary_out) = mpsc::channel::<()>(1);
+	let close_task = wait_for_close(
+		killcount_out,
+		general_canary_out,
+		client_canary_out,
+		state_in,
+	);
+
+	let (general_in, general_out) = mpsc::channel::<()>(10000);
+	let _chat = (general_canary_in, general_out);
+
+	let acceptance_task = accept_clients(
+		settings,
+		login,
+		general_in,
+		state_out,
+		client_canary_in,
+	);
 
 	let server_task =
 		future::try_join3(acceptance_task, killer_task, close_task)
@@ -58,7 +75,9 @@ pub async fn run_server(
 async fn accept_clients(
 	settings: &Settings,
 	login: sync::Arc<login::Server>,
+	_general_chat: mpsc::Sender<()>,
 	mut server_state: watch::Receiver<State>,
+	client_canary: mpsc::Sender<()>,
 ) -> Result<(), Box<dyn error::Error>>
 {
 	let server = settings.get_server()?;
@@ -97,35 +116,79 @@ async fn accept_clients(
 			}
 		};
 
+		println!("Accepting incoming connection: {:?}", socket);
+
 		let serial = ticker;
 		ticker += 1;
 		let key: u16 = rand::random();
 		let id = keycode(key, serial);
 
-		client::accept(socket, id, login.clone(), server_state.clone());
+		client::accept(
+			socket,
+			id,
+			login.clone(),
+			server_state.clone(),
+			client_canary.clone(),
+		);
+
+		println!("Accepted client {}.", id);
 	}
+
+	println!("Stopped listening.");
 
 	binding.unbind().await
 }
 
 async fn wait_for_close(
 	mut killcount: watch::Receiver<u8>,
+	chat_canary: mpsc::Receiver<()>,
+	client_canary: mpsc::Receiver<()>,
 	server_state: watch::Sender<State>,
 ) -> Result<(), Box<dyn error::Error>>
 {
+	wait_for_kill(&mut killcount, 1).await;
+	println!("Closing...");
+	server_state.broadcast(State::Closing)?;
+
+	wait_for_canary_or_kill(chat_canary, &mut killcount, 2).await;
+	println!("Closed.");
+	// If all clients are disconnected, no one will receive the broadcast.
+	let _ = server_state.broadcast(State::Closed);
+
+	wait_for_canary(client_canary).await;
+	println!("All clients have disconnected.");
+	Ok(())
+}
+
+async fn wait_for_kill(killcount: &mut watch::Receiver<u8>, threshold: u8)
+{
 	while let Some(x) = killcount.recv().await
 	{
-		if x > 0
+		if x >= threshold
 		{
-			server_state.broadcast(State::Closing)?;
-		}
-		else if x > 1
-		{
-			server_state.broadcast(State::Closed)?;
+			break;
 		}
 	}
+}
 
-	Ok(())
+async fn wait_for_canary(mut canary: mpsc::Receiver<()>)
+{
+	while let Some(()) = canary.recv().await
+	{
+		// Nothing to do.
+	}
+}
+
+async fn wait_for_canary_or_kill(
+	canary: mpsc::Receiver<()>,
+	killcount: &mut watch::Receiver<u8>,
+	threshold: u8,
+)
+{
+	select! {
+		() = wait_for_canary(canary).fuse() => (),
+		() = wait_for_kill(killcount, threshold).fuse() => (),
+	}
 }
 
 fn increase_sockets() -> std::io::Result<()>

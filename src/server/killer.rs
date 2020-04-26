@@ -1,9 +1,16 @@
 /* Killer */
 
+use std::error;
+
+use futures::select;
+use futures::FutureExt;
+
 use tokio::signal::unix::SignalKind;
 use tokio::sync::watch;
 
-pub async fn run(watchers: watch::Sender<u8>) -> Result<(), std::io::Error>
+pub async fn run(
+	mut watchers: watch::Sender<u8>,
+) -> Result<(), Box<dyn error::Error>>
 {
 	let mut signals = tokio::signal::unix::signal(SignalKind::terminate())?;
 
@@ -11,15 +18,21 @@ pub async fn run(watchers: watch::Sender<u8>) -> Result<(), std::io::Error>
 
 	loop
 	{
-		signals.recv().await;
-		killcount += 1;
-		match watchers.broadcast(killcount)
+		let signal = select! {
+			() = watchers.closed().fuse() => break,
+			x = signals.recv().fuse() => x,
+		};
+		match signal
 		{
-			Ok(()) =>
-			{}
-			Err(_error) => break,
+			Some(()) =>
+			{
+				killcount += 1;
+				watchers.broadcast(killcount)?;
+			}
+			None => break,
 		}
 	}
 
+	println!("Killer ended.");
 	Ok(())
 }

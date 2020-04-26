@@ -55,6 +55,7 @@ pub fn accept(
 	id: Keycode,
 	login_server: sync::Arc<login::Server>,
 	server_state: watch::Receiver<ServerState>,
+	canary: mpsc::Sender<()>,
 )
 {
 	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
@@ -129,8 +130,8 @@ pub fn accept(
 		.map_ok(|((), ())| ())
 		.map_err(move |e| eprintln!("Error in client {}: {:?}", id, e))
 		.map(move |_result| {
-			//let _discarded = canary;
-			println!("Client {} done.", id);
+			let _discarded = canary;
+			println!("Client {} has disconnected.", id);
 		});
 
 	tokio::spawn(task);
@@ -722,7 +723,7 @@ fn handle_message(client: &mut Client, message: Message)
 		}
 		Message::Quit =>
 		{
-			println!("Client {} gracefully disconnected.", client.id);
+			println!("Client {} is gracefully disconnecting...", client.id);
 			client.sendbuffer.try_send(Message::Quit)?;
 			return Ok(true);
 		}
