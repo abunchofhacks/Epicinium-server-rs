@@ -5,9 +5,6 @@ use crate::server::client;
 use crate::server::lobby;
 use crate::server::message::*;
 
-use futures::future::Future;
-use futures::stream::Stream;
-
 use tokio::sync::mpsc;
 
 use enumset::*;
@@ -61,24 +58,22 @@ pub enum Update
 	Msg(Message),
 }
 
-pub fn start_task(
-	updates: mpsc::Receiver<Update>,
+pub async fn run(
+	mut updates: mpsc::Receiver<Update>,
 	canary: mpsc::Sender<()>,
-) -> impl Future<Item = (), Error = ()> + Send
+) -> Result<(), Box<dyn std::error::Error>>
 {
 	let mut clients: Vec<Client> = Vec::new();
 	let mut lobbies: Vec<Lobby> = Vec::new();
 
-	updates
-		.map_err(|error| eprintln!("Recv error in general chat: {:?}", error))
-		.for_each(move |update| {
-			handle_update(update, &mut clients, &mut lobbies);
-			Ok(())
-		})
-		.map(move |()| {
-			let _discard = canary;
-			println!("General chat has disbanded.");
-		})
+	while let Some(update) = updates.recv().await
+	{
+		handle_update(update, &mut clients, &mut lobbies);
+	}
+
+	println!("General chat has disbanded.");
+	let _discard = canary;
+	Ok(())
 }
 
 fn handle_update(

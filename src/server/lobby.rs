@@ -8,9 +8,6 @@ use crate::server::message::*;
 use std::sync;
 use std::sync::atomic;
 
-use futures::future::Future;
-use futures::stream::Stream;
-
 use tokio::sync::mpsc;
 
 use vec_drain_where::VecDrainWhereExt;
@@ -68,7 +65,7 @@ pub fn create(ticker: &mut sync::Arc<atomic::AtomicU64>)
 		public: true,
 	};
 
-	let task = start_task(lobby, updates_out);
+	let task = run(lobby, updates_out);
 	tokio::spawn(task);
 
 	updates_in
@@ -84,20 +81,22 @@ struct Lobby
 	public: bool,
 }
 
-fn start_task(
-	mut lobby: Lobby,
-	updates: mpsc::Receiver<Update>,
-) -> impl Future<Item = (), Error = ()> + Send
+async fn run(mut lobby: Lobby, mut updates: mpsc::Receiver<Update>)
 {
 	let lobby_id = lobby.id;
 	let mut clients: Vec<Client> = Vec::new();
 
-	updates
-		.map_err(move |error| {
-			eprintln!("Recv error in lobby {}: {:?}", lobby_id, error)
-		})
-		.for_each(move |update| handle_update(update, &mut lobby, &mut clients))
-		.map(move |()| println!("Lobby {} has disbanded.", lobby_id))
+	while let Some(update) = updates.recv().await
+	{
+		// TODO rethink lobby errors
+		match handle_update(update, &mut lobby, &mut clients)
+		{
+			Ok(()) => continue,
+			Err(()) => eprintln!("Lobby {:?} crashed.", lobby_id),
+		}
+	}
+
+	println!("Lobby {} has disbanded.", lobby_id);
 }
 
 fn handle_update(

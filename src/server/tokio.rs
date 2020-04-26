@@ -2,7 +2,7 @@
 
 use crate::common::coredump::enable_coredumps;
 use crate::common::keycode::*;
-//use crate::server::chat;
+use crate::server::chat;
 use crate::server::client;
 use crate::server::killer;
 use crate::server::login;
@@ -12,6 +12,7 @@ use crate::server::settings::*;
 use std::error;
 use std::net::SocketAddr;
 use std::sync;
+use std::sync::atomic;
 
 use futures::future;
 use futures::select;
@@ -54,8 +55,8 @@ pub async fn run_server(
 		state_in,
 	);
 
-	let (general_in, general_out) = mpsc::channel::<()>(10000);
-	let _chat = (general_canary_in, general_out);
+	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
+	let chat_task = chat::run(general_out, general_canary_in);
 
 	let acceptance_task = accept_clients(
 		settings,
@@ -66,8 +67,8 @@ pub async fn run_server(
 	);
 
 	let server_task =
-		future::try_join3(acceptance_task, killer_task, close_task)
-			.map_ok(|((), (), ())| ());
+		future::try_join4(acceptance_task, chat_task, killer_task, close_task)
+			.map_ok(|((), (), (), ())| ());
 
 	server_task.await
 }
@@ -75,7 +76,7 @@ pub async fn run_server(
 async fn accept_clients(
 	settings: &Settings,
 	login: sync::Arc<login::Server>,
-	_general_chat: mpsc::Sender<()>,
+	general_chat: mpsc::Sender<chat::Update>,
 	mut server_state: watch::Receiver<State>,
 	client_canary: mpsc::Sender<()>,
 ) -> Result<(), Box<dyn error::Error>>
@@ -91,6 +92,7 @@ async fn accept_clients(
 	println!("Listening on {}:{}", ipaddress, port);
 
 	let mut ticker: u64 = rand::random();
+	let lobbyticker = sync::Arc::new(atomic::AtomicU64::new(rand::random()));
 
 	loop
 	{
@@ -127,8 +129,10 @@ async fn accept_clients(
 			socket,
 			id,
 			login.clone(),
+			general_chat.clone(),
 			server_state.clone(),
 			client_canary.clone(),
+			lobbyticker.clone(),
 		);
 
 		println!("Accepted client {}.", id);

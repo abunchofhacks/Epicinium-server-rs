@@ -2,6 +2,8 @@
 
 use crate::common::keycode::Keycode;
 use crate::common::version::*;
+use crate::server::chat;
+use crate::server::lobby;
 use crate::server::login;
 use crate::server::message::*;
 use crate::server::tokio::State as ServerState;
@@ -39,6 +41,11 @@ struct Client
 	pong_receive_time: Option<oneshot::Sender<()>>,
 	ping_tolerance: watch::Sender<Duration>,
 	login: mpsc::Sender<login::Request>,
+	general_chat_reserve: Option<mpsc::Sender<chat::Update>>,
+	general_chat: Option<mpsc::Sender<chat::Update>>,
+	lobby_authority: sync::Arc<atomic::AtomicU64>,
+	lobby_callback: Option<mpsc::Sender<Update>>,
+	lobby: Option<mpsc::Sender<lobby::Update>>,
 	has_proper_version: bool,
 	has_proper_version_a: sync::Arc<atomic::AtomicBool>,
 
@@ -50,12 +57,65 @@ struct Client
 	closing: bool,
 }
 
+impl Drop for Client
+{
+	fn drop(&mut self)
+	{
+		let mut general_chat = self.general_chat.take();
+
+		match general_chat
+		{
+			Some(ref mut general_chat) =>
+			{
+				let update = chat::Update::Leave { client_id: self.id };
+				match general_chat.try_send(update)
+				{
+					Ok(()) => (),
+					Err(e) => eprintln!("Error while dropping client: {:?}", e),
+				}
+			}
+			None =>
+			{}
+		}
+
+		match self.lobby.take()
+		{
+			Some(mut lobby) => match general_chat
+			{
+				Some(ref general_chat) =>
+				{
+					let update = lobby::Update::Leave {
+						client_id: self.id,
+						general_chat: general_chat.clone(),
+					};
+					match lobby.try_send(update)
+					{
+						Ok(()) => (),
+						Err(e) =>
+						{
+							eprintln!("Error while dropping client: {:?}", e)
+						}
+					}
+				}
+				None =>
+				{
+					eprintln!("Expected general_chat when dropping lobby");
+				}
+			},
+			None =>
+			{}
+		}
+	}
+}
+
 pub fn accept(
 	socket: TcpStream,
 	id: Keycode,
 	login_server: sync::Arc<login::Server>,
+	chat_server: mpsc::Sender<chat::Update>,
 	server_state: watch::Receiver<ServerState>,
 	canary: mpsc::Sender<()>,
+	lobby_authority: sync::Arc<atomic::AtomicU64>,
 )
 {
 	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
@@ -63,6 +123,7 @@ pub fn accept(
 	let sendbuffer_login = sendbuffer_in.clone();
 	let (updatebuffer_in, updatebuffer_out) = mpsc::channel::<Update>(1);
 	let updatebuffer_ping = updatebuffer_in.clone();
+	let updatebuffer_lobby = updatebuffer_in.clone();
 	let tolerance = Duration::from_secs(120);
 	let (pingtolerance_in, pingtolerance_out) = watch::channel(tolerance);
 	let (timebuffer_in, timebuffer_out) = watch::channel(());
@@ -75,6 +136,11 @@ pub fn accept(
 		pong_receive_time: None,
 		ping_tolerance: pingtolerance_in,
 		login: loginbuffer_in,
+		general_chat_reserve: Some(chat_server),
+		general_chat: None,
+		lobby_authority: lobby_authority,
+		lobby_callback: Some(updatebuffer_lobby),
+		lobby: None,
 		has_proper_version: false,
 		has_proper_version_a: sync::Arc::new(atomic::AtomicBool::new(false)),
 
@@ -534,6 +600,10 @@ pub enum Update
 		username: String,
 		unlocks: EnumSet<Unlock>,
 	},
+	JoinedLobby
+	{
+		lobby: mpsc::Sender<lobby::Update>,
+	},
 	Closing,
 	Closed,
 	Msg(Message),
@@ -675,17 +745,75 @@ fn handle_update(client: &mut Client, update: Update) -> Result<bool, Error>
 			Ok(false)
 		}
 
-		Update::JoinedServer { .. } => unimplemented!(),
+		Update::JoinedServer { username, unlocks } =>
+		{
+			match client.general_chat_reserve.take()
+			{
+				Some(mut chat) =>
+				{
+					let request = chat::Update::Join {
+						client_id: client.id,
+						username: username.clone(),
+						unlocks,
+						sendbuffer: client.sendbuffer.clone(),
+					};
+					match chat.try_send(request)
+					{
+						Ok(()) =>
+						{
+							client.username = username;
+							client.unlocks = unlocks;
+							client.general_chat = Some(chat);
+							Ok(false)
+						}
+						Err(error) =>
+						{
+							eprintln!(
+								"Client {} failed to join chat: {:?}",
+								client.id, error
+							);
+							// If the chat cannot handle more updates, it is
+							// probably too busy to handle more clients.
+							// TODO better error handling (#962)
+							let message = Message::JoinServer {
+								status: Some(ResponseStatus::UnknownError),
+								content: None,
+								sender: None,
+								metadata: None,
+							};
+							client.sendbuffer.try_send(message)?;
+							Ok(false)
+						}
+					}
+				}
+				None =>
+				{
+					client.sendbuffer.try_send(Message::Closing)?;
+					Ok(false)
+				}
+			}
+		}
+
+		Update::JoinedLobby { lobby } =>
+		{
+			// TODO what else to do here?
+			client.lobby = Some(lobby);
+			Ok(false)
+		}
 
 		Update::Closing =>
 		{
 			client.closing = true;
+			client.general_chat_reserve.take();
+			client.lobby_callback.take();
 			client.sendbuffer.try_send(Message::Closing)?;
 			Ok(false)
 		}
 		Update::Closed =>
 		{
 			client.closing = true;
+			client.general_chat_reserve.take();
+			client.lobby_callback.take();
 			client.sendbuffer.try_send(Message::Closed)?;
 			Ok(false)
 		}
@@ -727,10 +855,10 @@ fn handle_message(client: &mut Client, message: Message)
 			client.sendbuffer.try_send(Message::Quit)?;
 			return Ok(true);
 		}
-		//Message::JoinServer { .. } if client.general_chat.is_some() =>
-		//{
-		//	println!("Ignoring message from online client: {:?}", message);
-		//}
+		Message::JoinServer { .. } if client.general_chat.is_some() =>
+		{
+			println!("Ignoring message from online client: {:?}", message);
+		}
 		Message::JoinServer { .. } if client.closing =>
 		{
 			client.sendbuffer.try_send(Message::Closing)?;
@@ -764,7 +892,382 @@ fn handle_message(client: &mut Client, message: Message)
 			println!("Invalid message from client: {:?}", message);
 			return Err(Error::Illegal);
 		}
-		_ =>
+		Message::LeaveServer { content: _ } => match client.general_chat.take()
+		{
+			Some(mut general_chat) =>
+			{
+				match client.lobby.take()
+				{
+					Some(ref mut lobby) =>
+					{
+						// TODO await send() probably?
+						let _ = lobby.try_send(lobby::Update::Leave {
+							client_id: client.id,
+							general_chat: general_chat.clone(),
+						});
+					}
+					None =>
+					{}
+				}
+
+				// TODO await send() probably?
+				let _ = general_chat.try_send(chat::Update::Leave {
+					client_id: client.id,
+				});
+
+				if !client.closing
+				{
+					client.general_chat_reserve = Some(general_chat);
+				}
+			}
+			None =>
+			{
+				println!("Invalid message from offline client: {:?}", message);
+				return Err(Error::Illegal);
+			}
+		},
+		Message::JoinLobby { .. } if client.closing =>
+		{
+			client.sendbuffer.try_send(Message::Closing)?;
+		}
+		Message::JoinLobby {
+			lobby_id: Some(lobby_id),
+			username: None,
+			metadata: _,
+		} => match client.general_chat
+		{
+			Some(ref mut general_chat) =>
+			{
+				let lobby_callback = match &client.lobby_callback
+				{
+					Some(callback) => callback.clone(),
+					None =>
+					{
+						eprintln!("Expected lobby_callback");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				// TODO await send() probably?
+				let _ = general_chat.try_send(chat::Update::JoinLobby {
+					lobby_id,
+					client_id: client.id,
+					username: client.username.clone(),
+					sendbuffer: client.sendbuffer.clone(),
+					callback: lobby_callback,
+					general_chat: general_chat.clone(),
+				});
+			}
+			None =>
+			{
+				println!("Invalid message from offline client: {:?}", message);
+				return Err(Error::Illegal);
+			}
+		},
+		Message::JoinLobby { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
+		Message::LeaveLobby {
+			lobby_id: None,
+			username: None,
+		} => match client.lobby.take()
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				// TODO await send() probably?
+				let _ = lobby.try_send(lobby::Update::Leave {
+					client_id: client.id,
+					general_chat: general_chat,
+				});
+			}
+			None =>
+			{
+				println!(
+					"Invalid message from unlobbied client: {:?}",
+					message
+				);
+				return Err(Error::Illegal);
+			}
+		},
+		Message::LeaveLobby { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
+		Message::MakeLobby { .. } if client.closing =>
+		{
+			client.sendbuffer.try_send(Message::Closing)?;
+		}
+		Message::MakeLobby { .. } if client.lobby.is_some() =>
+		{
+			println!("Invalid message from lobbied client: {:?}", message);
+			client
+				.sendbuffer
+				.try_send(Message::MakeLobby { lobby_id: None })?;
+		}
+		Message::MakeLobby { lobby_id: None } => match client.general_chat
+		{
+			Some(ref general_chat) =>
+			{
+				let lobby_callback = match &client.lobby_callback
+				{
+					Some(callback) => callback.clone(),
+					None =>
+					{
+						eprintln!("Expected lobby_callback");
+						return Err(Error::Unexpected);
+					}
+				};
+				let mut lobby = lobby::create(&mut client.lobby_authority);
+
+				// TODO await send() probably?
+				let _ = lobby.try_send(lobby::Update::Join {
+					client_id: client.id,
+					client_username: client.username.clone(),
+					client_sendbuffer: client.sendbuffer.clone(),
+					client_callback: lobby_callback,
+					lobby_sendbuffer: lobby.clone(),
+					general_chat: general_chat.clone(),
+				});
+				client.lobby = Some(lobby);
+			}
+			None =>
+			{
+				println!("Invalid message from offline client: {:?}", message);
+				return Err(Error::Illegal);
+			}
+		},
+		Message::MakeLobby { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
+		Message::SaveLobby { .. } if client.closing =>
+		{
+			client.sendbuffer.try_send(Message::Closing)?;
+		}
+		Message::SaveLobby { lobby_id: None } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				// TODO await send() probably?
+				let _ = lobby.try_send(lobby::Update::Save {
+					lobby_sendbuffer: lobby.clone(),
+					general_chat,
+				});
+			}
+			None =>
+			{
+				println!(
+					"Invalid message from unlobbied client: {:?}",
+					message
+				);
+				return Err(Error::Illegal);
+			}
+		},
+		Message::SaveLobby { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
+		Message::LockLobby { lobby_id: None } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				// TODO await send() probably?
+				let _ = lobby.try_send(lobby::Update::Lock { general_chat });
+			}
+			None =>
+			{
+				println!(
+					"Invalid message from unlobbied client: {:?}",
+					message
+				);
+				return Err(Error::Illegal);
+			}
+		},
+		Message::LockLobby { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
+		Message::UnlockLobby { lobby_id: None } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				// TODO await send() probably?
+				let _ = lobby.try_send(lobby::Update::Unlock { general_chat });
+			}
+			None =>
+			{
+				println!(
+					"Invalid message from unlobbied client: {:?}",
+					message
+				);
+				return Err(Error::Illegal);
+			}
+		},
+		Message::UnlockLobby { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
+		Message::NameLobby {
+			lobbyname: _,
+			lobby_id: None,
+		} =>
+		{
+			unimplemented!();
+		}
+		Message::NameLobby { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
+		Message::Init => match client.general_chat
+		{
+			Some(ref mut general_chat) =>
+			{
+				if client.closing
+				{
+					client.sendbuffer.try_send(Message::Closing)?;
+				}
+
+				// TODO await send() probably?
+				let _ = general_chat.try_send(chat::Update::Init {
+					sendbuffer: client.sendbuffer.clone(),
+				});
+			}
+			None =>
+			{
+				println!("Invalid message from offline client: {:?}", message);
+				return Err(Error::Illegal);
+			}
+		},
+		Message::Chat { .. } if client.username.is_empty() =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
+		Message::Chat {
+			content,
+			sender: None,
+			target: ChatTarget::General,
+		} => match client.general_chat
+		{
+			Some(ref mut general_chat) =>
+			{
+				println!(
+					"Client {} '{}' sent chat message: {}",
+					client.id, client.username, content
+				);
+
+				// TODO await send() probably?
+				let _ =
+					general_chat.try_send(chat::Update::Msg(Message::Chat {
+						content: content,
+						sender: Some(client.username.clone()),
+						target: ChatTarget::General,
+					}));
+			}
+			None =>
+			{
+				let message = Message::Chat {
+					content,
+					sender: None,
+					target: ChatTarget::General,
+				};
+				println!("Invalid message from offline client: {:?}", message);
+				return Err(Error::Illegal);
+			}
+		},
+		Message::Chat {
+			content,
+			sender: None,
+			target: ChatTarget::Lobby,
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				println!(
+					"Client {} '{}' sent lobby chat message: {}",
+					client.id, client.username, content
+				);
+
+				// TODO await send() probably?
+				let _ = lobby.try_send(lobby::Update::Msg(Message::Chat {
+					content: content,
+					sender: Some(client.username.clone()),
+					target: ChatTarget::Lobby,
+				}));
+			}
+			None =>
+			{
+				let message = Message::Chat {
+					content,
+					sender: None,
+					target: ChatTarget::Lobby,
+				};
+				println!(
+					"Invalid message from unlobbied client: {:?}",
+					message
+				);
+				return Err(Error::Illegal);
+			}
+		},
+		Message::Chat { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
+		Message::DisbandLobby { .. }
+		| Message::EditLobby { .. }
+		| Message::MaxPlayers { .. }
+		| Message::NumPlayers { .. }
+		| Message::Closing
+		| Message::Closed =>
 		{
 			println!("Invalid message from client: {:?}", message);
 			return Err(Error::Illegal);
