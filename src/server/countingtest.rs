@@ -9,17 +9,14 @@ use std::error;
 use std::io;
 use std::io::ErrorKind;
 use std::net::SocketAddr;
-use std::sync;
-use std::sync::atomic;
-
-use futures::future::Either;
 
 use rand::seq::SliceRandom;
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 
-pub fn run(settings: &Settings) -> Result<(), Box<dyn error::Error>>
+#[tokio::main]
+pub async fn run(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 {
 	coredump::enable_coredumps()?;
 	increase_sockets()?;
@@ -62,113 +59,92 @@ pub fn run(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 
 	let tests = numbers
 		.iter()
-		.map(|&number| start_test(number, ntests, fakeversion, &serveraddress));
-	let all_tests = stream::futures_unordered(tests).fold((), |(), ()| Ok(()));
-
-	tokio::run(all_tests);
+		.map(|&number| run_test(number, ntests, fakeversion, &serveraddress));
+	futures::future::try_join_all(tests).await?;
 	Ok(())
 }
 
-fn start_test(
+async fn run_test(
 	number: usize,
 	count: usize,
 	fakeversion: Version,
 	serveraddress: &SocketAddr,
-) -> impl Future<Item = (), Error = ()> + Send
+) -> Result<(), Box<dyn error::Error>>
 {
 	println!("[{}] Connecting...", number);
 
-	TcpStream::connect(&serveraddress)
-		.map_err(move |error| {
-			eprintln!("[{}] Failed to connect: {:?}", number, error)
-		})
-		.and_then(move |connection| {
-			run_test(connection, number, count, fakeversion)
-		})
-}
+	let connection = TcpStream::connect(&serveraddress).await?;
 
-fn run_test(
-	socket: TcpStream,
-	number: usize,
-	count: usize,
-	fakeversion: Version,
-) -> impl Future<Item = (), Error = ()> + Send
-{
 	println!("[{}] Connected.", number);
 
-	let initialmessages = vec![Message::Version {
+	let initialmessage = Message::Version {
 		version: fakeversion,
-	}];
+	};
 
-	let mut has_quit = sync::Arc::new(atomic::AtomicBool::new(false));
-	let has_quit_get = has_quit.clone();
+	let mut has_quit = false;
 
 	// Wait for count + 1 JoinServer messages because the first JoinServer is
 	// information about us successfully joining.
 	// TODO separate these message types and remove this hack
 	let mut waiting = if number == 0 { count + 1 } else { 0 };
 
-	let (reader, writer) = socket.split();
-	stream::unfold(reader, move |socket| {
-		let lengthbuffer = [0u8; 4];
-		let future_length = tokio_io::io::read_exact(socket, lengthbuffer)
-			.and_then(move |(socket, lengthbuffer)| {
-				let length = u32::from_be_bytes(lengthbuffer);
-				receive_message(socket, number, length)
-			});
+	let (mut reader, mut writer) = tokio::io::split(connection);
 
-		Some(future_length)
-	})
-	.map_err(move |error| {
-		eprintln!("[{}] Failed to receive: {:?}", number, error)
-	})
-	.take_while(move |message| {
-		future::ok(match message
+	send_message(number, &mut writer, initialmessage).await?;
+
+	while let Some(message) = receive_message(number, &mut reader).await?
+	{
+		let responses =
+			handle_message(number, &mut waiting, &mut has_quit, message)
+				.map_err(|()| {
+					io::Error::new(
+						ErrorKind::Other,
+						"error while handling message",
+					)
+				})?;
+
+		for response in responses
 		{
-			Message::Quit => !has_quit_get.load(atomic::Ordering::Relaxed),
-			_ => true,
-		})
-	})
-	.and_then(move |message| {
-		handle_message(number, &mut waiting, &mut has_quit, message)
-	})
-	.map(|responses| stream::iter_ok(responses))
-	.flatten()
-	.select(stream::iter_ok(initialmessages))
-	.map(move |message| prepare_message(number, message))
-	.fold(writer, move |writer, bytes| {
-		send_bytes(writer, number, bytes)
-	})
-	.map(|_writer| ())
+			send_message(number, &mut writer, response).await?;
+		}
+	}
+
+	if !has_quit
+	{
+		eprintln!("[{}] Stopped receiving unexpectedly", number);
+	}
+
+	Ok(())
 }
 
-fn receive_message(
-	socket: ReadHalf<TcpStream>,
+async fn receive_message(
 	number: usize,
-	length: u32,
-) -> impl Future<Item = (Message, ReadHalf<TcpStream>), Error = io::Error>
+	socket: &mut ReadHalf<TcpStream>,
+) -> Result<Option<Message>, io::Error>
 {
+	let length = match socket.read_u32().await
+	{
+		Ok(length) => length,
+		Err(error) if error.kind() == ErrorKind::UnexpectedEof =>
+		{
+			return Ok(None);
+		}
+		Err(error) => return Err(error),
+	};
 	if length == 0
 	{
 		println!("[{}] Received pulse.", number);
-		return Either::A(future::ok((Message::Pulse, socket)));
+		return Ok(Some(Message::Pulse));
 	}
 
 	println!("[{}] Receiving message of length {}...", number, length);
-	let buffer = vec![0; length as usize];
-	Either::B(tokio_io::io::read_exact(socket, buffer).and_then(
-		move |(socket, buffer)| {
-			println!(
-				"[{}] Received message of length {}.",
-				number,
-				buffer.len()
-			);
-			let message = parse_message(number, buffer)?;
+	let mut buffer = vec![0u8; length as usize];
+	socket.read_exact(&mut buffer).await?;
 
-			// Unfold expects the value first and the state second.
-			Ok((message, socket))
-		},
-	))
+	println!("[{}] Received message of length {}.", number, buffer.len());
+	let message = parse_message(number, buffer)?;
+
+	Ok(Some(message))
 }
 
 fn parse_message(number: usize, buffer: Vec<u8>) -> io::Result<Message>
@@ -195,7 +171,7 @@ fn parse_message(number: usize, buffer: Vec<u8>) -> io::Result<Message>
 fn handle_message(
 	number: usize,
 	waiting: &mut usize,
-	has_quit: &mut sync::Arc<atomic::AtomicBool>,
+	has_quit: &mut bool,
 	message: Message,
 ) -> Result<Vec<Message>, ()>
 {
@@ -230,7 +206,7 @@ fn handle_message(
 				else if *waiting == 1
 				{
 					println!("{}!", number);
-					has_quit.store(true, atomic::Ordering::Relaxed);
+					*has_quit = true;
 					return Ok(vec![
 						Message::Chat {
 							content: number.to_string(),
@@ -261,7 +237,7 @@ fn handle_message(
 			if x + 1 == number
 			{
 				println!("{}!", number);
-				has_quit.store(true, atomic::Ordering::Relaxed);
+				*has_quit = true;
 				return Ok(vec![
 					Message::Chat {
 						content: number.to_string(),
@@ -307,6 +283,21 @@ fn handle_message(
 	}
 }
 
+async fn send_message(
+	number: usize,
+	socket: &mut WriteHalf<TcpStream>,
+	message: Message,
+) -> Result<(), io::Error>
+{
+	let buffer = prepare_message(number, message);
+
+	socket.write_all(&buffer).await?;
+
+	/*verbose*/
+	println!("[{}] Sent {} bytes.", number, buffer.len());
+	Ok(())
+}
+
 fn prepare_message(number: usize, message: Message) -> Vec<u8>
 {
 	if let Message::Pulse = message
@@ -346,23 +337,6 @@ fn prepare_message_data(number: usize, message: Message) -> (String, u32)
 	}
 
 	(jsonstr, length)
-}
-
-fn send_bytes(
-	socket: WriteHalf<TcpStream>,
-	number: usize,
-	buffer: Vec<u8>,
-) -> impl Future<Item = WriteHalf<TcpStream>, Error = ()> + Send
-{
-	tokio_io::io::write_all(socket, buffer)
-		.map(move |(socket, buffer)| {
-			/*verbose*/
-			println!("[{}] Sent {} bytes.", number, buffer.len());
-			socket
-		})
-		.map_err(move |error| {
-			eprintln!("[{}] Failed to send: {:?}", number, error);
-		})
 }
 
 fn increase_sockets() -> std::io::Result<()>

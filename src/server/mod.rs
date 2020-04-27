@@ -8,7 +8,7 @@ mod login;
 mod message;
 mod portal;
 
-//pub mod countingtest;
+pub mod countingtest;
 pub mod settings;
 pub mod tokio;
 

@@ -244,16 +244,12 @@ async fn receive_message(
 	versioned: bool,
 ) -> Result<Update, Error>
 {
-	let mut lengthbuffer = [0u8; 4];
-	socket.read_exact(&mut lengthbuffer).await?;
-
-	let length = u32::from_be_bytes(lengthbuffer);
+	let length = socket.read_u32().await?;
 	if length == 0
 	{
 		/*verbose*/
 		println!("Received pulse.");
 
-		// Unfold expects the value first and the state second.
 		return Ok(Update::Msg(Message::Pulse));
 	}
 	else if !versioned && length as usize >= MESSAGE_SIZE_UNVERSIONED_LIMIT
@@ -298,7 +294,6 @@ async fn receive_message(
 	println!("Received message of length {}.", buffer.len());
 	let message = parse_message(buffer)?;
 
-	// Unfold expects the value first and the state second.
 	Ok(Update::Msg(message))
 }
 
