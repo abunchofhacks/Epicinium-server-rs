@@ -595,6 +595,16 @@ pub enum Update
 		username: String,
 		unlocks: EnumSet<Unlock>,
 	},
+	LobbyFound
+	{
+		lobby_id: Keycode,
+		lobby_sendbuffer: mpsc::Sender<lobby::Update>,
+		general_chat: mpsc::Sender<chat::Update>,
+	},
+	LobbyNotFound
+	{
+		lobby_id: Keycode,
+	},
 	JoinedLobby
 	{
 		lobby: mpsc::Sender<lobby::Update>,
@@ -789,6 +799,42 @@ fn handle_update(client: &mut Client, update: Update) -> Result<bool, Error>
 			}
 		}
 
+		Update::LobbyFound {
+			lobby_id: _,
+			mut lobby_sendbuffer,
+			general_chat,
+		} =>
+		{
+			let lobby_callback = match &client.lobby_callback
+			{
+				Some(callback) => callback.clone(),
+				None =>
+				{
+					eprintln!("Expected lobby_callback");
+					return Err(Error::Unexpected);
+				}
+			};
+			let update = lobby::Update::Join {
+				client_id: client.id,
+				client_username: client.username.clone(),
+				client_sendbuffer: client.sendbuffer.clone(),
+				client_callback: lobby_callback,
+				lobby_sendbuffer: lobby_sendbuffer.clone(),
+				general_chat,
+			};
+			// TODO await send() probably?
+			let _ = lobby_sendbuffer.try_send(update);
+			Ok(false)
+		}
+		Update::LobbyNotFound { lobby_id: _ } =>
+		{
+			client.sendbuffer.try_send(Message::JoinLobby {
+				lobby_id: None,
+				username: None,
+				metadata: None,
+			})?;
+			Ok(false)
+		}
 		Update::JoinedLobby { lobby } =>
 		{
 			// TODO what else to do here?
@@ -933,6 +979,8 @@ fn handle_message(client: &mut Client, message: Message)
 		{
 			Some(ref mut general_chat) =>
 			{
+				// TODO refuse if already in lobby
+
 				let lobby_callback = match &client.lobby_callback
 				{
 					Some(callback) => callback.clone(),
@@ -944,11 +992,8 @@ fn handle_message(client: &mut Client, message: Message)
 				};
 
 				// TODO await send() probably?
-				let _ = general_chat.try_send(chat::Update::JoinLobby {
+				let _ = general_chat.try_send(chat::Update::FindLobby {
 					lobby_id,
-					client_id: client.id,
-					username: client.username.clone(),
-					sendbuffer: client.sendbuffer.clone(),
 					callback: lobby_callback,
 					general_chat: general_chat.clone(),
 				});

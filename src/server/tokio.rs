@@ -56,7 +56,7 @@ pub async fn run_server(
 	);
 
 	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
-	let chat_task = chat::run(general_out, general_canary_in);
+	let chat_task = chat::run(general_out, general_canary_in).map(|()| Ok(()));
 
 	let acceptance_task = accept_clients(
 		settings,
@@ -77,7 +77,7 @@ async fn accept_clients(
 	settings: &Settings,
 	login: sync::Arc<login::Server>,
 	general_chat: mpsc::Sender<chat::Update>,
-	mut server_state: watch::Receiver<State>,
+	server_state: watch::Receiver<State>,
 	client_canary: mpsc::Sender<()>,
 ) -> Result<(), Box<dyn error::Error>>
 {
@@ -86,11 +86,26 @@ async fn accept_clients(
 	let binding: portal::Binding = portal::bind(settings).await?;
 	let port = binding.port;
 	let address: SocketAddr = format!("{}:{}", ipaddress, port).parse()?;
-	let mut listener = TcpListener::bind(&address).await?;
+	let listener = TcpListener::bind(&address).await?;
 	binding.confirm().await?;
 
 	println!("Listening on {}:{}", ipaddress, port);
 
+	listen(listener, login, general_chat, server_state, client_canary).await;
+
+	println!("Stopped listening.");
+
+	binding.unbind().await
+}
+
+async fn listen(
+	mut listener: TcpListener,
+	login: sync::Arc<login::Server>,
+	general_chat: mpsc::Sender<chat::Update>,
+	mut server_state: watch::Receiver<State>,
+	client_canary: mpsc::Sender<()>,
+)
+{
 	let mut ticker: u64 = rand::random();
 	let lobbyticker = sync::Arc::new(atomic::AtomicU64::new(rand::random()));
 
@@ -137,10 +152,6 @@ async fn accept_clients(
 
 		println!("Accepted client {}.", id);
 	}
-
-	println!("Stopped listening.");
-
-	binding.unbind().await
 }
 
 async fn wait_for_close(
