@@ -98,6 +98,7 @@ impl Connection
 			.request(http::Method::POST, registration_url.clone())
 			.send()
 			.await?
+			.error_for_status()?
 			.json()
 			.await?;
 
@@ -117,11 +118,12 @@ impl Connection
 
 	async fn deregister(self) -> Result<(), Box<dyn error::Error>>
 	{
-		let _ = self
+		let _: http::Response = self
 			.http
 			.request(http::Method::DELETE, self.registered_url.clone())
 			.send()
-			.await?;
+			.await?
+			.error_for_status()?;
 		Ok(())
 	}
 
@@ -130,12 +132,13 @@ impl Connection
 		let info = ServerConfirmation { online: true };
 		let payload = serde_json::to_string(&info)?;
 
-		let _ = self
+		let _: http::Response = self
 			.http
 			.request(http::Method::PATCH, self.registered_url.clone())
 			.body(payload)
 			.send()
-			.await?;
+			.await?
+			.error_for_status()?;
 		Ok(())
 	}
 }

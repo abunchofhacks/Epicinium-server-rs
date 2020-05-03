@@ -147,6 +147,12 @@ impl Connection
 
 				ResponseStatus::ConnectionFailed
 			})?
+			.error_for_status()
+			.map_err(|error| {
+				eprintln!("Login failed: {:?}", error);
+
+				ResponseStatus::ConnectionFailed
+			})?
 			.json()
 			.await
 			.map_err(|error| {
