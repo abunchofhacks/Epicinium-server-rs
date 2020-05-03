@@ -232,7 +232,7 @@ async fn start_receive_task(
 				x.ok_or_else(|| Error::Unexpected)?
 			}
 		};
-		has_quit = handle_update(&mut client, update)?;
+		has_quit = handle_update(&mut client, update).await?;
 	}
 
 	println!("Client {} stopped receiving.", client.id);
@@ -632,6 +632,14 @@ enum Error
 	{
 		error: mpsc::error::SendError<Update>,
 	},
+	Chat
+	{
+		error: mpsc::error::SendError<chat::Update>,
+	},
+	Lobby
+	{
+		error: mpsc::error::SendError<lobby::Update>,
+	},
 	Login
 	{
 		error: mpsc::error::TrySendError<login::Request>,
@@ -675,6 +683,22 @@ impl From<mpsc::error::SendError<Update>> for Error
 	fn from(error: mpsc::error::SendError<Update>) -> Self
 	{
 		Error::Update { error }
+	}
+}
+
+impl From<mpsc::error::SendError<chat::Update>> for Error
+{
+	fn from(error: mpsc::error::SendError<chat::Update>) -> Self
+	{
+		Error::Chat { error }
+	}
+}
+
+impl From<mpsc::error::SendError<lobby::Update>> for Error
+{
+	fn from(error: mpsc::error::SendError<lobby::Update>) -> Self
+	{
+		Error::Lobby { error }
 	}
 }
 
@@ -730,6 +754,8 @@ impl fmt::Display for Error
 			Error::Send { error } => error.fmt(f),
 			Error::TrySend { error } => error.fmt(f),
 			Error::Update { error } => error.fmt(f),
+			Error::Chat { error } => error.fmt(f),
+			Error::Lobby { error } => error.fmt(f),
 			Error::Login { error } => error.fmt(f),
 			Error::Watch { error } => error.fmt(f),
 			Error::Recv { error } => error.fmt(f),
@@ -739,7 +765,10 @@ impl fmt::Display for Error
 	}
 }
 
-fn handle_update(client: &mut Client, update: Update) -> Result<bool, Error>
+async fn handle_update(
+	client: &mut Client,
+	update: Update,
+) -> Result<bool, Error>
 {
 	match update
 	{
@@ -822,8 +851,7 @@ fn handle_update(client: &mut Client, update: Update) -> Result<bool, Error>
 				lobby_sendbuffer: lobby_sendbuffer.clone(),
 				general_chat,
 			};
-			// TODO await send() probably?
-			let _ = lobby_sendbuffer.try_send(update);
+			lobby_sendbuffer.send(update).await?;
 			Ok(false)
 		}
 		Update::LobbyNotFound { lobby_id: _ } =>
@@ -859,12 +887,14 @@ fn handle_update(client: &mut Client, update: Update) -> Result<bool, Error>
 			Ok(false)
 		}
 
-		Update::Msg(message) => handle_message(client, message),
+		Update::Msg(message) => handle_message(client, message).await,
 	}
 }
 
-fn handle_message(client: &mut Client, message: Message)
-	-> Result<bool, Error>
+async fn handle_message(
+	client: &mut Client,
+	message: Message,
+) -> Result<bool, Error>
 {
 	client.last_receive_time.broadcast(())?;
 
@@ -941,20 +971,20 @@ fn handle_message(client: &mut Client, message: Message)
 				{
 					Some(ref mut lobby) =>
 					{
-						// TODO await send() probably?
-						let _ = lobby.try_send(lobby::Update::Leave {
+						let update = lobby::Update::Leave {
 							client_id: client.id,
 							general_chat: general_chat.clone(),
-						});
+						};
+						lobby.send(update).await?;
 					}
 					None =>
 					{}
 				}
 
-				// TODO await send() probably?
-				let _ = general_chat.try_send(chat::Update::Leave {
+				let update = chat::Update::Leave {
 					client_id: client.id,
-				});
+				};
+				general_chat.send(update).await?;
 
 				if !client.closing
 				{
@@ -991,12 +1021,12 @@ fn handle_message(client: &mut Client, message: Message)
 					}
 				};
 
-				// TODO await send() probably?
-				let _ = general_chat.try_send(chat::Update::FindLobby {
+				let update = chat::Update::FindLobby {
 					lobby_id,
 					callback: lobby_callback,
 					general_chat: general_chat.clone(),
-				});
+				};
+				general_chat.send(update).await?;
 			}
 			None =>
 			{
@@ -1026,11 +1056,11 @@ fn handle_message(client: &mut Client, message: Message)
 					}
 				};
 
-				// TODO await send() probably?
-				let _ = lobby.try_send(lobby::Update::Leave {
+				let update = lobby::Update::Leave {
 					client_id: client.id,
 					general_chat: general_chat,
-				});
+				};
+				lobby.send(update).await?;
 			}
 			None =>
 			{
@@ -1072,15 +1102,15 @@ fn handle_message(client: &mut Client, message: Message)
 				};
 				let mut lobby = lobby::create(&mut client.lobby_authority);
 
-				// TODO await send() probably?
-				let _ = lobby.try_send(lobby::Update::Join {
+				let update = lobby::Update::Join {
 					client_id: client.id,
 					client_username: client.username.clone(),
 					client_sendbuffer: client.sendbuffer.clone(),
 					client_callback: lobby_callback,
 					lobby_sendbuffer: lobby.clone(),
 					general_chat: general_chat.clone(),
-				});
+				};
+				lobby.send(update).await?;
 				client.lobby = Some(lobby);
 			}
 			None =>
@@ -1112,11 +1142,11 @@ fn handle_message(client: &mut Client, message: Message)
 					}
 				};
 
-				// TODO await send() probably?
-				let _ = lobby.try_send(lobby::Update::Save {
+				let update = lobby::Update::Save {
 					lobby_sendbuffer: lobby.clone(),
 					general_chat,
-				});
+				};
+				lobby.send(update).await?;
 			}
 			None =>
 			{
@@ -1146,8 +1176,8 @@ fn handle_message(client: &mut Client, message: Message)
 					}
 				};
 
-				// TODO await send() probably?
-				let _ = lobby.try_send(lobby::Update::Lock { general_chat });
+				let update = lobby::Update::Lock { general_chat };
+				lobby.send(update).await?;
 			}
 			None =>
 			{
@@ -1177,8 +1207,8 @@ fn handle_message(client: &mut Client, message: Message)
 					}
 				};
 
-				// TODO await send() probably?
-				let _ = lobby.try_send(lobby::Update::Unlock { general_chat });
+				let update = lobby::Update::Unlock { general_chat };
+				lobby.send(update).await?;
 			}
 			None =>
 			{
@@ -1215,10 +1245,10 @@ fn handle_message(client: &mut Client, message: Message)
 					client.sendbuffer.try_send(Message::Closing)?;
 				}
 
-				// TODO await send() probably?
-				let _ = general_chat.try_send(chat::Update::Init {
+				let update = chat::Update::Init {
 					sendbuffer: client.sendbuffer.clone(),
-				});
+				};
+				general_chat.send(update).await?;
 			}
 			None =>
 			{
@@ -1244,13 +1274,12 @@ fn handle_message(client: &mut Client, message: Message)
 					client.id, client.username, content
 				);
 
-				// TODO await send() probably?
-				let _ =
-					general_chat.try_send(chat::Update::Msg(Message::Chat {
-						content: content,
-						sender: Some(client.username.clone()),
-						target: ChatTarget::General,
-					}));
+				let update = chat::Update::Msg(Message::Chat {
+					content: content,
+					sender: Some(client.username.clone()),
+					target: ChatTarget::General,
+				});
+				general_chat.send(update).await?;
 			}
 			None =>
 			{
@@ -1276,12 +1305,12 @@ fn handle_message(client: &mut Client, message: Message)
 					client.id, client.username, content
 				);
 
-				// TODO await send() probably?
-				let _ = lobby.try_send(lobby::Update::Msg(Message::Chat {
+				let update = lobby::Update::Msg(Message::Chat {
 					content: content,
 					sender: Some(client.username.clone()),
 					target: ChatTarget::Lobby,
-				}));
+				});
+				lobby.send(update).await?;
 			}
 			None =>
 			{
