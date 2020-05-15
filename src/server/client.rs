@@ -1225,12 +1225,34 @@ async fn handle_message(
 			return Err(Error::Illegal);
 		}
 		Message::NameLobby {
-			lobbyname: _,
+			lobbyname,
 			lobby_id: None,
-		} =>
+		} => match client.lobby
 		{
-			unimplemented!();
-		}
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update = lobby::Update::Rename {
+					lobbyname,
+					general_chat,
+				};
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid NameLobby message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
 		Message::NameLobby { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);

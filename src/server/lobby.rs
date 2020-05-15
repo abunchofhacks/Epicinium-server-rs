@@ -47,6 +47,12 @@ pub enum Update
 		general_chat: mpsc::Sender<chat::Update>,
 	},
 
+	Rename
+	{
+		lobbyname: String,
+		general_chat: mpsc::Sender<chat::Update>,
+	},
+
 	Msg(Message),
 }
 
@@ -147,6 +153,15 @@ async fn handle_update(
 		Update::Unlock { mut general_chat } =>
 		{
 			lobby.public = true;
+			describe_lobby(lobby, &mut general_chat).await
+		}
+
+		Update::Rename {
+			lobbyname,
+			mut general_chat,
+		} =>
+		{
+			lobby.name = lobbyname;
 			describe_lobby(lobby, &mut general_chat).await
 		}
 
