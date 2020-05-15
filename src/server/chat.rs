@@ -89,7 +89,13 @@ fn handle_update(
 			unlocks,
 			sendbuffer,
 		} => handle_join(
-			client_id, username, unlocks, sendbuffer, clients, lobbies,
+			client_id,
+			username,
+			unlocks,
+			sendbuffer,
+			clients,
+			lobbies,
+			current_challenge,
 		),
 		Update::Init { sendbuffer } =>
 		{
@@ -187,6 +193,7 @@ fn handle_join(
 	sendbuffer: mpsc::Sender<Message>,
 	clients: &mut Vec<Client>,
 	lobbies: &Vec<Lobby>,
+	current_challenge: &Challenge,
 )
 {
 	// TODO ghostbusting
@@ -255,6 +262,11 @@ fn handle_join(
 	// Tell the newcomer that they are online.
 	// TODO this is weird (#1411)
 	newcomer.send(message);
+
+	newcomer.send(Message::ListChallenge {
+		key: current_challenge.key.clone(),
+		metadata: current_challenge.metadata.clone(),
+	});
 
 	// Let the client know we are done initializing.
 	newcomer.send(Message::Init);

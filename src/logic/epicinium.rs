@@ -35,7 +35,7 @@ pub fn current_challenge_discord_image_key() -> String
 	s.to_string_lossy().to_string()
 }
 
-#[link(name = "epiciniumlib", kind = "static")]
+#[link(name = "epicinium", kind = "static")]
 extern "C" {
 	fn epicinium_current_challenge_key() -> *const c_char;
 	fn epicinium_current_challenge_display_name() -> *const c_char;
