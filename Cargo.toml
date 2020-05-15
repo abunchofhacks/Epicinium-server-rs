@@ -24,6 +24,7 @@ futures = "0.3"
 tokio = { version = "0.2", features = ["rt-threaded", "macros", "time", "sync", "tcp", "signal"] }
 backtrace = "*"
 owning_ref = "*"
+libc = "*"
 
 [features]
 defaults = []

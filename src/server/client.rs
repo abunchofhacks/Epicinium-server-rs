@@ -1357,6 +1357,7 @@ async fn handle_message(
 		| Message::EditLobby { .. }
 		| Message::MaxPlayers { .. }
 		| Message::NumPlayers { .. }
+		| Message::ListChallenge { .. }
 		| Message::Closing
 		| Message::Closed =>
 		{

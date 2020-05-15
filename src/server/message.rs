@@ -3,6 +3,7 @@
 use crate::common::header::*;
 use crate::common::keycode::*;
 use crate::common::version::*;
+use crate::logic::challenge;
 
 use enumset::*;
 
@@ -109,6 +110,13 @@ pub enum Message
 
 		#[serde(rename = "time")]
 		value: i32,
+	},
+	ListChallenge
+	{
+		#[serde(rename = "content")]
+		key: String,
+
+		metadata: challenge::Metadata,
 	},
 	Init,
 	Closing,

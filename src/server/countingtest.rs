@@ -276,7 +276,8 @@ fn handle_message(
 		| Message::UnlockLobby { .. }
 		| Message::NameLobby { .. }
 		| Message::MaxPlayers { .. }
-		| Message::NumPlayers { .. } =>
+		| Message::NumPlayers { .. }
+		| Message::ListChallenge { .. } =>
 		{
 			unreachable!();
 		}

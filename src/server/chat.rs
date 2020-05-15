@@ -1,6 +1,7 @@
 /* Server::Chat */
 
 use crate::common::keycode::*;
+use crate::logic::challenge::Challenge;
 use crate::server::client;
 use crate::server::lobby;
 use crate::server::message::*;
@@ -55,14 +56,18 @@ pub enum Update
 	Msg(Message),
 }
 
-pub async fn run(mut updates: mpsc::Receiver<Update>, canary: mpsc::Sender<()>)
+pub async fn run(
+	current_challenge: Challenge,
+	mut updates: mpsc::Receiver<Update>,
+	canary: mpsc::Sender<()>,
+)
 {
 	let mut clients: Vec<Client> = Vec::new();
 	let mut lobbies: Vec<Lobby> = Vec::new();
 
 	while let Some(update) = updates.recv().await
 	{
-		handle_update(update, &mut clients, &mut lobbies);
+		handle_update(update, &mut clients, &mut lobbies, &current_challenge);
 	}
 
 	println!("General chat has disbanded.");
@@ -73,6 +78,7 @@ fn handle_update(
 	update: Update,
 	clients: &mut Vec<Client>,
 	lobbies: &mut Vec<Lobby>,
+	current_challenge: &Challenge,
 )
 {
 	match update
@@ -87,7 +93,7 @@ fn handle_update(
 		),
 		Update::Init { sendbuffer } =>
 		{
-			handle_init(sendbuffer, clients, lobbies)
+			handle_init(sendbuffer, clients, lobbies, current_challenge)
 		}
 		Update::Leave { client_id } => handle_leave(client_id, clients),
 
@@ -290,9 +296,10 @@ fn handle_init(
 	sendbuffer: mpsc::Sender<Message>,
 	clients: &Vec<Client>,
 	lobbies: &Vec<Lobby>,
+	current_challenge: &Challenge,
 )
 {
-	match do_init(sendbuffer, clients, lobbies)
+	match do_init(sendbuffer, clients, lobbies, current_challenge)
 	{
 		Ok(()) => (),
 		Err(e) => eprintln!("Send error while processing init: {:?}", e),
@@ -303,6 +310,7 @@ fn do_init(
 	mut sendbuffer: mpsc::Sender<Message>,
 	clients: &Vec<Client>,
 	lobbies: &Vec<Lobby>,
+	current_challenge: &Challenge,
 ) -> Result<(), mpsc::error::TrySendError<Message>>
 {
 	// Let the client know which lobbies there are.
@@ -332,6 +340,11 @@ fn do_init(
 			// TODO in_game
 		}
 	}
+
+	sendbuffer.try_send(Message::ListChallenge {
+		key: current_challenge.key.clone(),
+		metadata: current_challenge.metadata.clone(),
+	})?;
 
 	// Let the client know we are done initializing.
 	sendbuffer.try_send(Message::Init)

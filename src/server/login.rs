@@ -23,13 +23,16 @@ pub struct Server
 	connection: Option<Connection>,
 }
 
-pub fn connect(settings: &Settings) -> Result<Server, Box<dyn error::Error>>
+pub fn connect(
+	settings: &Settings,
+	current_challenge_key: String,
+) -> Result<Server, Box<dyn error::Error>>
 {
 	if settings.login_server().is_some()
 		|| (!cfg!(feature = "version-is-dev")
 			&& (!cfg!(debug_assertions) || cfg!(feature = "candidate")))
 	{
-		let connection = Connection::open(settings)?;
+		let connection = Connection::open(settings, current_challenge_key)?;
 		Ok(Server {
 			connection: Some(connection),
 		})
@@ -101,11 +104,15 @@ struct Connection
 {
 	http: http::Client,
 	validate_session_url: http::Url,
+	current_challenge_key: String,
 }
 
 impl Connection
 {
-	fn open(settings: &Settings) -> Result<Connection, Box<dyn error::Error>>
+	fn open(
+		settings: &Settings,
+		current_challenge_key: String,
+	) -> Result<Connection, Box<dyn error::Error>>
 	{
 		let url = settings.get_login_server()?;
 		let base_url = http::Url::parse(url)?;
@@ -125,6 +132,7 @@ impl Connection
 		Ok(Connection {
 			http,
 			validate_session_url,
+			current_challenge_key,
 		})
 	}
 
@@ -133,7 +141,7 @@ impl Connection
 	{
 		let payload = json!({
 			"token": request.token,
-			// TODO "challenge_key": challenge_key,
+			"challenge_key": self.current_challenge_key,
 		});
 
 		let response: LoginResponse = self
