@@ -5,9 +5,6 @@ use crate::server::client;
 use crate::server::lobby;
 use crate::server::message::*;
 
-use futures::future::Future;
-use futures::stream::Stream;
-
 use tokio::sync::mpsc;
 
 use enumset::*;
@@ -48,12 +45,9 @@ pub enum Update
 		lobby_id: Keycode,
 	},
 
-	JoinLobby
+	FindLobby
 	{
 		lobby_id: Keycode,
-		client_id: Keycode,
-		username: String,
-		sendbuffer: mpsc::Sender<Message>,
 		callback: mpsc::Sender<client::Update>,
 		general_chat: mpsc::Sender<Update>,
 	},
@@ -61,24 +55,18 @@ pub enum Update
 	Msg(Message),
 }
 
-pub fn start_task(
-	updates: mpsc::Receiver<Update>,
-	canary: mpsc::Sender<()>,
-) -> impl Future<Item = (), Error = ()> + Send
+pub async fn run(mut updates: mpsc::Receiver<Update>, canary: mpsc::Sender<()>)
 {
 	let mut clients: Vec<Client> = Vec::new();
 	let mut lobbies: Vec<Lobby> = Vec::new();
 
-	updates
-		.map_err(|error| eprintln!("Recv error in general chat: {:?}", error))
-		.for_each(move |update| {
-			handle_update(update, &mut clients, &mut lobbies);
-			Ok(())
-		})
-		.map(move |()| {
-			let _discard = canary;
-			println!("General chat has disbanded.");
-		})
+	while let Some(update) = updates.recv().await
+	{
+		handle_update(update, &mut clients, &mut lobbies);
+	}
+
+	println!("General chat has disbanded.");
+	let _discard = canary;
 }
 
 fn handle_update(
@@ -131,24 +119,13 @@ fn handle_update(
 			handle_disband_lobby(lobby_id, clients, lobbies)
 		}
 
-		Update::JoinLobby {
+		Update::FindLobby {
 			lobby_id,
-			client_id,
-			username,
-			sendbuffer,
 			callback,
 			general_chat,
 		} =>
 		{
-			handle_join_lobby(
-				lobbies,
-				lobby_id,
-				client_id,
-				username,
-				sendbuffer,
-				callback,
-				general_chat,
-			);
+			handle_find_lobby(lobbies, lobby_id, callback, general_chat);
 		}
 
 		Update::Msg(message) =>
@@ -179,7 +156,11 @@ impl Client
 		{
 			Ok(()) => (),
 			// TODO filter dead clients somehow
-			Err(_error) => self.dead = true,
+			Err(error) =>
+			{
+				println!("Error sending to client {}: {:?}", self.id, error);
+				self.dead = true
+			}
 		}
 	}
 }
@@ -191,19 +172,6 @@ struct Lobby
 	description_messages: Vec<Message>,
 	sendbuffer: mpsc::Sender<lobby::Update>,
 	dead: bool,
-}
-
-impl Lobby
-{
-	fn send(&mut self, update: lobby::Update)
-	{
-		match self.sendbuffer.try_send(update)
-		{
-			Ok(()) => (),
-			// TODO filter dead clients somehow
-			Err(_error) => self.dead = true,
-		}
-	}
 }
 
 fn handle_join(
@@ -465,13 +433,10 @@ fn handle_disband_lobby(
 	}
 }
 
-fn handle_join_lobby(
+fn handle_find_lobby(
 	lobbies: &mut Vec<Lobby>,
 	lobby_id: Keycode,
-	client_id: Keycode,
-	client_username: String,
-	client_sendbuffer: mpsc::Sender<Message>,
-	client_callback: mpsc::Sender<client::Update>,
+	mut client_callback: mpsc::Sender<client::Update>,
 	general_chat: mpsc::Sender<Update>,
 )
 {
@@ -479,15 +444,24 @@ fn handle_join_lobby(
 	{
 		if lobby.id == lobby_id
 		{
-			lobby.send(lobby::Update::Join {
-				client_id,
-				client_username,
-				client_sendbuffer,
-				client_callback: client_callback,
+			let update = client::Update::LobbyFound {
+				lobby_id,
 				lobby_sendbuffer: lobby.sendbuffer.clone(),
-				general_chat: general_chat,
-			});
+				general_chat,
+			};
+			match client_callback.try_send(update)
+			{
+				Ok(()) => (),
+				Err(e) => eprintln!("Send error while finding lobby: {:?}", e),
+			}
 			return;
 		}
+	}
+
+	let update = client::Update::LobbyNotFound { lobby_id };
+	match client_callback.try_send(update)
+	{
+		Ok(()) => (),
+		Err(e) => eprintln!("Send error while finding lobby: {:?}", e),
 	}
 }

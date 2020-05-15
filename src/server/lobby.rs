@@ -8,9 +8,6 @@ use crate::server::message::*;
 use std::sync;
 use std::sync::atomic;
 
-use futures::future::Future;
-use futures::stream::Stream;
-
 use tokio::sync::mpsc;
 
 use vec_drain_where::VecDrainWhereExt;
@@ -68,7 +65,7 @@ pub fn create(ticker: &mut sync::Arc<atomic::AtomicU64>)
 		public: true,
 	};
 
-	let task = start_task(lobby, updates_out);
+	let task = run(lobby, updates_out);
 	tokio::spawn(task);
 
 	updates_in
@@ -84,37 +81,35 @@ struct Lobby
 	public: bool,
 }
 
-fn start_task(
-	mut lobby: Lobby,
-	updates: mpsc::Receiver<Update>,
-) -> impl Future<Item = (), Error = ()> + Send
+async fn run(mut lobby: Lobby, mut updates: mpsc::Receiver<Update>)
 {
 	let lobby_id = lobby.id;
 	let mut clients: Vec<Client> = Vec::new();
 
-	updates
-		.map_err(move |error| {
-			eprintln!("Recv error in lobby {}: {:?}", lobby_id, error)
-		})
-		.for_each(move |update| handle_update(update, &mut lobby, &mut clients))
-		.map(move |()| println!("Lobby {} has disbanded.", lobby_id))
+	while let Some(update) = updates.recv().await
+	{
+		match handle_update(update, &mut lobby, &mut clients).await
+		{
+			Ok(()) => continue,
+			Err(error) => eprintln!("Lobby {} crashed: {:?}", lobby_id, error),
+		}
+	}
+
+	println!("Lobby {} has disbanded.", lobby_id);
 }
 
-fn handle_update(
+async fn handle_update(
 	update: Update,
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
-) -> Result<(), ()>
+) -> Result<(), mpsc::error::SendError<chat::Update>>
 {
 	match update
 	{
 		Update::Save {
 			lobby_sendbuffer,
 			mut general_chat,
-		} =>
-		{
-			list_lobby(lobby, lobby_sendbuffer, &mut general_chat)?;
-		}
+		} => list_lobby(lobby, lobby_sendbuffer, &mut general_chat).await,
 
 		Update::Join {
 			client_id,
@@ -123,33 +118,34 @@ fn handle_update(
 			client_callback,
 			lobby_sendbuffer,
 			mut general_chat,
-		} => handle_join(
-			lobby,
-			client_id,
-			client_username,
-			client_sendbuffer,
-			client_callback,
-			lobby_sendbuffer,
-			&mut general_chat,
-			clients,
-		),
+		} =>
+		{
+			handle_join(
+				lobby,
+				client_id,
+				client_username,
+				client_sendbuffer,
+				client_callback,
+				lobby_sendbuffer,
+				&mut general_chat,
+				clients,
+			)
+			.await
+		}
 		Update::Leave {
 			client_id,
 			mut general_chat,
-		} =>
-		{
-			handle_leave(lobby, client_id, clients, &mut general_chat)?;
-		}
+		} => handle_leave(lobby, client_id, clients, &mut general_chat).await,
 
 		Update::Lock { mut general_chat } =>
 		{
 			lobby.public = false;
-			describe_lobby(lobby, &mut general_chat)?;
+			describe_lobby(lobby, &mut general_chat).await
 		}
 		Update::Unlock { mut general_chat } =>
 		{
 			lobby.public = true;
-			describe_lobby(lobby, &mut general_chat)?;
+			describe_lobby(lobby, &mut general_chat).await
 		}
 
 		Update::Msg(message) =>
@@ -158,46 +154,35 @@ fn handle_update(
 			{
 				client.send(message.clone());
 			}
+			Ok(())
 		}
 	}
-
-	Ok(())
 }
 
-fn list_lobby(
+async fn list_lobby(
 	lobby: &Lobby,
 	lobby_sendbuffer: mpsc::Sender<Update>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
-) -> Result<(), ()>
+) -> Result<(), mpsc::error::SendError<chat::Update>>
 {
-	let lobby_id = lobby.id;
-
-	general_chat
-		.try_send(chat::Update::ListLobby {
-			lobby_id: lobby.id,
-			description_messages: make_listing_messages(&lobby),
-			sendbuffer: lobby_sendbuffer,
-		})
-		.map_err(|error| {
-			eprintln!("Chat error in lobby {}: {:?}", lobby_id, error)
-		})
+	let update = chat::Update::ListLobby {
+		lobby_id: lobby.id,
+		description_messages: make_listing_messages(&lobby),
+		sendbuffer: lobby_sendbuffer,
+	};
+	general_chat.send(update).await
 }
 
-fn describe_lobby(
+async fn describe_lobby(
 	lobby: &Lobby,
 	general_chat: &mut mpsc::Sender<chat::Update>,
-) -> Result<(), ()>
+) -> Result<(), mpsc::error::SendError<chat::Update>>
 {
-	let lobby_id = lobby.id;
-
-	general_chat
-		.try_send(chat::Update::DescribeLobby {
-			lobby_id: lobby.id,
-			description_messages: make_listing_messages(&lobby),
-		})
-		.map_err(|error| {
-			eprintln!("Chat error in lobby {}: {:?}", lobby_id, error)
-		})
+	let update = chat::Update::DescribeLobby {
+		lobby_id: lobby.id,
+		description_messages: make_listing_messages(&lobby),
+	};
+	general_chat.send(update).await
 }
 
 fn make_listing_messages(lobby: &Lobby) -> Vec<Message>
@@ -257,16 +242,49 @@ impl Client
 	}
 }
 
-fn handle_join(
+async fn handle_join(
+	lobby: &mut Lobby,
+	client_id: Keycode,
+	client_username: String,
+	client_sendbuffer: mpsc::Sender<Message>,
+	client_callback: mpsc::Sender<client::Update>,
+	lobby_sendbuffer: mpsc::Sender<Update>,
+	general_chat: &mut mpsc::Sender<chat::Update>,
+	clients: &mut Vec<Client>,
+) -> Result<(), mpsc::error::SendError<chat::Update>>
+{
+	match do_join(
+		lobby,
+		client_id,
+		client_username.clone(),
+		client_sendbuffer,
+		client_callback,
+		lobby_sendbuffer,
+		clients,
+	)
+	{
+		Ok(()) => (),
+		Err(()) => return Ok(()),
+	}
+
+	let message = Message::JoinLobby {
+		lobby_id: Some(lobby.id),
+		username: Some(client_username),
+		metadata: None,
+	};
+	let update = chat::Update::Msg(message);
+	general_chat.send(update).await
+}
+
+fn do_join(
 	lobby: &mut Lobby,
 	client_id: Keycode,
 	client_username: String,
 	client_sendbuffer: mpsc::Sender<Message>,
 	mut client_callback: mpsc::Sender<client::Update>,
 	lobby_sendbuffer: mpsc::Sender<Update>,
-	_general_chat: &mut mpsc::Sender<chat::Update>,
 	clients: &mut Vec<Client>,
-)
+) -> Result<(), ()>
 {
 	// TODO joining might fail because it is full or locked etcetera
 
@@ -312,23 +330,37 @@ fn handle_join(
 		metadata: None,
 	});
 
-	match client_callback.try_send(client::Update::JoinedLobby {
-		lobby: lobby_sendbuffer,
-	})
-	{
-		Ok(()) => (),
-		Err(e) => eprintln!("Send error while processing leave: {:?}", e),
-	};
+	client_callback
+		.try_send(client::Update::JoinedLobby {
+			lobby: lobby_sendbuffer,
+		})
+		.unwrap_or_else(|e| eprintln!("Callback error in join: {:?}", e));
 
 	clients.push(newcomer);
+
+	Ok(())
 }
 
-fn handle_leave(
+async fn handle_leave(
 	lobby: &mut Lobby,
 	client_id: Keycode,
 	clients: &mut Vec<Client>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
-) -> Result<(), ()>
+) -> Result<(), mpsc::error::SendError<chat::Update>>
+{
+	do_leave(lobby, client_id, clients);
+
+	// TODO dont disband if rejoinable etcetera
+	if clients.is_empty()
+	{
+		let update = chat::Update::DisbandLobby { lobby_id: lobby.id };
+		general_chat.send(update).await?;
+	}
+
+	Ok(())
+}
+
+fn do_leave(lobby: &mut Lobby, client_id: Keycode, clients: &mut Vec<Client>)
 {
 	let removed: Vec<Client> = clients
 		.e_drain_where(|client| client.id == client_id)
@@ -359,16 +391,4 @@ fn handle_leave(
 			Err(e) => eprintln!("Send error while processing leave: {:?}", e),
 		}
 	}
-
-	// TODO dont disband if rejoinable etcetera
-	if clients.is_empty()
-	{
-		general_chat
-			.try_send(chat::Update::DisbandLobby { lobby_id: lobby.id })
-			.map_err(|error| {
-				eprintln!("Chat error in lobby {}: {:?}", lobby.id, error)
-			})?;
-	}
-
-	Ok(())
 }
