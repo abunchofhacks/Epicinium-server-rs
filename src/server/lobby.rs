@@ -526,7 +526,7 @@ fn do_leave(lobby: &mut Lobby, client_id: Keycode, clients: &mut Vec<Client>)
 
 async fn handle_ruleset_confirmation(
 	lobby: &mut Lobby,
-	general_chat: &mut mpsc::Sender<chat::Update>,
+	_general_chat: &mut mpsc::Sender<chat::Update>,
 	ruleset_name: String,
 ) -> Result<(), Error>
 {

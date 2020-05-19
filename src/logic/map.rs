@@ -4,6 +4,10 @@ use crate::logic::epicinium;
 
 use std::io;
 
+use tokio::fs::File;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::BufReader;
+
 use serde_json;
 
 pub async fn load_pool_with_metadata(
@@ -22,8 +26,13 @@ pub async fn load_pool_with_metadata(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metadata(serde_json::Value);
 
-async fn load_metadata(_mapname: &str) -> Result<Metadata, io::Error>
+async fn load_metadata(mapname: &str) -> Result<Metadata, io::Error>
 {
-	// TODO implement
-	Ok(Metadata(serde_json::Value::Null))
+	let filename = format!("maps/{}.map", mapname);
+	let file = File::open(filename).await?;
+	let mut reader = BufReader::new(file);
+	let mut buffer = String::new();
+	reader.read_line(&mut buffer).await?;
+	let metadata: Metadata = serde_json::from_str(&buffer)?;
+	Ok(metadata)
 }
