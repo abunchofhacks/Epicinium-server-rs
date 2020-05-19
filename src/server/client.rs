@@ -1298,10 +1298,7 @@ async fn handle_message(
 					}
 				};
 
-				let update = lobby::Update::PickTimer {
-					general_chat,
-					seconds,
-				};
+				let update = lobby::Update::PickTimer { seconds };
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1324,10 +1321,7 @@ async fn handle_message(
 					}
 				};
 
-				let update = lobby::Update::PickRuleset {
-					general_chat,
-					ruleset_name,
-				};
+				let update = lobby::Update::PickRuleset { ruleset_name };
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1351,6 +1345,7 @@ async fn handle_message(
 				};
 
 				let update = lobby::Update::ConfirmRuleset {
+					client_id: client.id,
 					general_chat,
 					ruleset_name,
 				};

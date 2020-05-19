@@ -1,14 +1,22 @@
 /* Map */
 
 use crate::logic::epicinium;
+use crate::logic::player::PLAYER_MAX;
 
 use std::io;
+use std::path::Path;
 
 use tokio::fs::File;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 
 use serde_json;
+
+pub fn exists(mapname: &str) -> bool
+{
+	let fname = filename(mapname);
+	Path::new(&fname).exists()
+}
 
 pub async fn load_pool_with_metadata(
 ) -> Result<Vec<(String, Metadata)>, io::Error>
@@ -23,13 +31,39 @@ pub async fn load_pool_with_metadata(
 	Ok(pool)
 }
 
+fn filename(mapname: &str) -> String
+{
+	format!("maps/{}.map", mapname)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metadata(serde_json::Value);
 
-async fn load_metadata(mapname: &str) -> Result<Metadata, io::Error>
+impl Metadata
 {
-	let filename = format!("maps/{}.map", mapname);
-	let file = File::open(filename).await?;
+	pub fn playercount(&self) -> Option<usize>
+	{
+		let count = self.0.get("playercount")?.as_i64()?;
+		let count = if count < 2
+		{
+			2
+		}
+		else if count as usize > PLAYER_MAX
+		{
+			PLAYER_MAX
+		}
+		else
+		{
+			count as usize
+		};
+		Some(count)
+	}
+}
+
+pub async fn load_metadata(mapname: &str) -> Result<Metadata, io::Error>
+{
+	let fname = filename(mapname);
+	let file = File::open(fname).await?;
 	let mut reader = BufReader::new(file);
 	let mut buffer = String::new();
 	reader.read_line(&mut buffer).await?;

@@ -22,6 +22,8 @@ pub enum Player
 	SELF,
 }
 
+pub const PLAYER_MAX: usize = 8;
+
 impl Default for Player
 {
 	fn default() -> Player

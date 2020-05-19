@@ -2,6 +2,7 @@
 
 use crate::common::keycode::*;
 use crate::logic::map;
+use crate::logic::player::PLAYER_MAX;
 use crate::server::chat;
 use crate::server::client;
 use crate::server::message::*;
@@ -63,16 +64,15 @@ pub enum Update
 	},
 	PickTimer
 	{
-		general_chat: mpsc::Sender<chat::Update>,
 		seconds: u32,
 	},
 	PickRuleset
 	{
-		general_chat: mpsc::Sender<chat::Update>,
 		ruleset_name: String,
 	},
 	ConfirmRuleset
 	{
+		client_id: Keycode,
 		general_chat: mpsc::Sender<chat::Update>,
 		ruleset_name: String,
 	},
@@ -108,7 +108,10 @@ struct Lobby
 	map_pool: Vec<(String, map::Metadata)>,
 	map_name: String,
 	ruleset_name: String,
+	ruleset_confirmations: Vec<Keycode>,
 	timer_in_seconds: u32,
+
+	is_waiting_for_confirmation: bool,
 }
 
 async fn run(lobby_id: Keycode, mut updates: mpsc::Receiver<Update>)
@@ -162,7 +165,9 @@ async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
 		map_pool,
 		map_name,
 		ruleset_name,
+		ruleset_confirmations: Vec::with_capacity(PLAYER_MAX),
 		timer_in_seconds: 60,
+		is_waiting_for_confirmation: false,
 	})
 }
 
@@ -230,29 +235,31 @@ async fn handle_update(
 			map_name,
 		} =>
 		{
-			unimplemented!();
+			pick_map(lobby, clients, map_name).await?;
+			describe_lobby(lobby, &mut general_chat).await
 		}
-		Update::PickTimer {
-			mut general_chat,
-			seconds,
-		} =>
+		Update::PickTimer { seconds } =>
 		{
-			unimplemented!();
+			pick_timer(lobby, clients, seconds).await
 		}
-		Update::PickRuleset {
-			mut general_chat,
-			ruleset_name,
-		} =>
+		Update::PickRuleset { ruleset_name } =>
 		{
-			unimplemented!();
+			pick_ruleset(lobby, clients, ruleset_name).await
 		}
 		Update::ConfirmRuleset {
+			client_id,
 			mut general_chat,
 			ruleset_name,
 		} =>
 		{
-			handle_ruleset_confirmation(lobby, &mut general_chat, ruleset_name)
-				.await
+			handle_ruleset_confirmation(
+				lobby,
+				clients,
+				client_id,
+				&mut general_chat,
+				ruleset_name,
+			)
+			.await
 		}
 
 		Update::Msg(message) =>
@@ -434,23 +441,23 @@ fn do_join(
 		for (mapname, metadata) in &lobby.map_pool
 		{
 			newcomer.send(Message::ListMap {
-				map_name: mapname.to_string(),
+				map_name: mapname.clone(),
 				metadata: metadata.clone(),
 			});
 		}
 
 		newcomer.send(Message::PickMap {
-			map_name: lobby.map_name.to_string(),
+			map_name: lobby.map_name.clone(),
 		});
 		newcomer.send(Message::PickTimer {
 			seconds: lobby.timer_in_seconds,
 		});
 
 		newcomer.send(Message::ListRuleset {
-			ruleset_name: lobby.ruleset_name.to_string(),
+			ruleset_name: lobby.ruleset_name.clone(),
 		});
 		newcomer.send(Message::PickRuleset {
-			ruleset_name: lobby.ruleset_name.to_string(),
+			ruleset_name: lobby.ruleset_name.clone(),
 		});
 	}
 	else
@@ -524,9 +531,180 @@ fn do_leave(lobby: &mut Lobby, client_id: Keycode, clients: &mut Vec<Client>)
 	}
 }
 
+async fn pick_map(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	map_name: String,
+) -> Result<(), Error>
+{
+	// TODO check if client is host
+
+	// Is this a game lobby?
+	if lobby.is_replay
+	{
+		return Ok(());
+	}
+
+	let found = lobby.map_pool.iter().find(|&(x, _)| *x == map_name);
+
+	let found = if found.is_some()
+	{
+		found
+	}
+	// TODO check if map in hidden pool or client is developer
+	else if map::exists(&map_name)
+	{
+		let metadata = map::load_metadata(&map_name).await?;
+		lobby.map_pool.push((map_name.clone(), metadata));
+		lobby.map_pool.last()
+	}
+	else if map_name.len() >= 3
+	{
+		// Partial search for '1v1' or 'ffa'.
+		let pat = &map_name;
+		lobby.map_pool.iter().find(|&(x, _)| x.find(pat).is_some())
+	}
+	else
+	{
+		None
+	};
+
+	let (name, metadata) = match found
+	{
+		Some(x) => x,
+		None =>
+		{
+			// Pick failed, send the current map.
+			let message = Message::PickMap {
+				map_name: lobby.map_name.clone(),
+			};
+			for client in clients.iter_mut()
+			{
+				client.send(message.clone());
+			}
+			return Ok(());
+		}
+	};
+
+	lobby.map_name = name.to_string();
+
+	let message = Message::PickMap {
+		map_name: lobby.map_name.clone(),
+	};
+	for client in clients.iter_mut()
+	{
+		client.send(message.clone());
+	}
+
+	let playercount = metadata.playercount().ok_or(Error::NoPlayerCount)?;
+
+	// We may need to demote players to observers.
+	// TODO demotions
+
+	// We may need to remove bots.
+	// TODO remove bots
+
+	// We have a new playercount.
+	lobby.max_players = playercount as i32;
+
+	// If the lobby used to be an AI lobby, we keep it that way.
+	// A lobby is an AI lobby in this sense if there is at most 1 human
+	// and all other slots are filled by AI players.
+	// TODO add bots
+
+	Ok(())
+}
+
+async fn pick_timer(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	timer_in_seconds: u32,
+) -> Result<(), Error>
+{
+	// TODO check if client is host
+
+	// Is this a game lobby?
+	if lobby.is_replay
+	{
+		return Ok(());
+	}
+
+	// Not much need for extreme validation. Current hard cap 5 minutes.
+	if timer_in_seconds > 300
+	{
+		// Do not change lobby timer.
+	}
+	else
+	{
+		lobby.timer_in_seconds = timer_in_seconds;
+	}
+
+	let message = Message::PickTimer {
+		seconds: timer_in_seconds,
+	};
+	for client in clients.iter_mut()
+	{
+		client.send(message.clone());
+	}
+
+	Ok(())
+}
+
+async fn pick_ruleset(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	ruleset_name: String,
+) -> Result<(), Error>
+{
+	// TODO check if client is host
+	// TODO check if ruleset in pool or client is developer or replay
+
+	// Is this a game lobby?
+	if lobby.is_replay
+	{
+		return Ok(());
+	}
+
+	// Maybe give an error here? For now, this is used because AIChallenge
+	// might want to use the default ruleset.
+	if ruleset_name.is_empty()
+	{
+		// TODO Library::nameCurrentBible()
+		lobby.ruleset_name = "v0.33.0".to_string();
+	}
+	// TODO Library::existsBible(ruleset_name)
+	else
+	{
+		lobby.ruleset_name = ruleset_name;
+	}
+
+	// All players have to confirm that they have this ruleset.
+	lobby.ruleset_confirmations.clear();
+
+	// Before picking, list the new ruleset to trigger the confirmations.
+	// This is a bit redundant, I guess, but in the future we might want to
+	// have an actual ruleset dropdown, in which case we do not want to have to
+	// reconfirm the ruleset every time it is picked, just once it is listed.
+	let listmessage = Message::ListRuleset {
+		ruleset_name: lobby.ruleset_name.clone(),
+	};
+	let pickmessage = Message::PickRuleset {
+		ruleset_name: lobby.ruleset_name.clone(),
+	};
+	for client in clients.iter_mut()
+	{
+		client.send(listmessage.clone());
+		client.send(pickmessage.clone());
+	}
+
+	Ok(())
+}
+
 async fn handle_ruleset_confirmation(
 	lobby: &mut Lobby,
-	_general_chat: &mut mpsc::Sender<chat::Update>,
+	clients: &mut Vec<Client>,
+	client_id: Keycode,
+	general_chat: &mut mpsc::Sender<chat::Update>,
 	ruleset_name: String,
 ) -> Result<(), Error>
 {
@@ -540,17 +718,58 @@ async fn handle_ruleset_confirmation(
 		return Ok(());
 	}
 
-	// TODO add to confirmations if not already present
+	if lobby
+		.ruleset_confirmations
+		.iter()
+		.find(|&&x| x == client_id)
+		.is_some()
+	{
+		return Ok(());
+	}
 
-	// TODO Start the game once everyone has confirmed.
+	lobby.ruleset_confirmations.push(client_id);
 
-	Ok(())
+	if lobby.is_waiting_for_confirmation && is_ruleset_confirmed(lobby, clients)
+	{
+		// Start the game once everyone has confirmed.
+		try_start(lobby, clients, general_chat).await
+	}
+	else
+	{
+		Ok(())
+	}
+}
+
+fn is_ruleset_confirmed(lobby: &Lobby, clients: &Vec<Client>) -> bool
+{
+	for client in clients
+	{
+		if lobby
+			.ruleset_confirmations
+			.iter()
+			.find(|&&x| x == client.id)
+			.is_none()
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+async fn try_start(
+	_lobby: &mut Lobby,
+	_clients: &mut Vec<Client>,
+	_general_chat: &mut mpsc::Sender<chat::Update>,
+) -> Result<(), Error>
+{
+	unimplemented!()
 }
 
 #[derive(Debug)]
 enum Error
 {
 	EmptyMapPool,
+	NoPlayerCount,
 	Io
 	{
 		error: io::Error,
@@ -584,6 +803,7 @@ impl fmt::Display for Error
 		match self
 		{
 			Error::EmptyMapPool => write!(f, "The map pool is empty"),
+			Error::NoPlayerCount => write!(f, "No player count defined"),
 			Error::Io { error } => error.fmt(f),
 			Error::GeneralChat { error } => error.fmt(f),
 		}
