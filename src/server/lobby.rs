@@ -1,10 +1,13 @@
 /* Server::Lobby */
 
 use crate::common::keycode::*;
+use crate::logic::map;
 use crate::server::chat;
 use crate::server::client;
 use crate::server::message::*;
 
+use std::fmt;
+use std::io;
 use std::sync;
 use std::sync::atomic;
 
@@ -49,8 +52,29 @@ pub enum Update
 
 	Rename
 	{
-		lobbyname: String,
+		lobby_name: String,
 		general_chat: mpsc::Sender<chat::Update>,
+	},
+
+	PickMap
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+		map_name: String,
+	},
+	PickTimer
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+		seconds: u32,
+	},
+	PickRuleset
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+		ruleset_name: String,
+	},
+	ConfirmRuleset
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+		ruleset_name: String,
 	},
 
 	Msg(Message),
@@ -65,15 +89,7 @@ pub fn create(ticker: &mut sync::Arc<atomic::AtomicU64>)
 
 	let (updates_in, updates_out) = mpsc::channel::<Update>(1000);
 
-	let lobby = Lobby {
-		id: lobby_id,
-		name: initial_name(),
-		num_players: 0,
-		max_players: 2,
-		public: true,
-	};
-
-	let task = run(lobby, updates_out);
+	let task = run(lobby_id, updates_out);
 	tokio::spawn(task);
 
 	updates_in
@@ -86,12 +102,27 @@ struct Lobby
 	name: String,
 	num_players: i32,
 	max_players: i32,
-	public: bool,
+	is_public: bool,
+	is_replay: bool,
+
+	map_pool: Vec<(String, map::Metadata)>,
+	map_name: String,
+	ruleset_name: String,
+	timer_in_seconds: u32,
 }
 
-async fn run(mut lobby: Lobby, mut updates: mpsc::Receiver<Update>)
+async fn run(lobby_id: Keycode, mut updates: mpsc::Receiver<Update>)
 {
-	let lobby_id = lobby.id;
+	let mut lobby = match initialize(lobby_id).await
+	{
+		Ok(lobby) => lobby,
+		Err(error) =>
+		{
+			eprintln!("Failed to create lobby: {:?}", error);
+			return;
+		}
+	};
+
 	let mut clients: Vec<Client> = Vec::new();
 
 	while let Some(update) = updates.recv().await
@@ -99,18 +130,47 @@ async fn run(mut lobby: Lobby, mut updates: mpsc::Receiver<Update>)
 		match handle_update(update, &mut lobby, &mut clients).await
 		{
 			Ok(()) => continue,
-			Err(error) => eprintln!("Lobby {} crashed: {:?}", lobby_id, error),
+			Err(error) =>
+			{
+				eprintln!("Lobby {} crashed: {:?}", lobby_id, error);
+				break;
+			}
 		}
 	}
 
 	println!("Lobby {} has disbanded.", lobby_id);
 }
 
+async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
+{
+	let map_pool = map::load_pool_with_metadata().await?;
+
+	let defaultmap = map_pool.get(0).ok_or(Error::EmptyMapPool)?;
+	let (name, _) = defaultmap;
+	let map_name = name.to_string();
+
+	// TODO Library::nameCurrentBible()
+	let ruleset_name = "v0.33.0".to_string();
+
+	Ok(Lobby {
+		id: lobby_id,
+		name: initial_name(),
+		num_players: 0,
+		max_players: 2,
+		is_public: true,
+		is_replay: false,
+		map_pool,
+		map_name,
+		ruleset_name,
+		timer_in_seconds: 60,
+	})
+}
+
 async fn handle_update(
 	update: Update,
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
-) -> Result<(), mpsc::error::SendError<chat::Update>>
+) -> Result<(), Error>
 {
 	match update
 	{
@@ -147,22 +207,52 @@ async fn handle_update(
 
 		Update::Lock { mut general_chat } =>
 		{
-			lobby.public = false;
+			lobby.is_public = false;
 			describe_lobby(lobby, &mut general_chat).await
 		}
 		Update::Unlock { mut general_chat } =>
 		{
-			lobby.public = true;
+			lobby.is_public = true;
 			describe_lobby(lobby, &mut general_chat).await
 		}
 
 		Update::Rename {
-			lobbyname,
+			lobby_name,
 			mut general_chat,
 		} =>
 		{
-			lobby.name = lobbyname;
+			lobby.name = lobby_name;
 			describe_lobby(lobby, &mut general_chat).await
+		}
+
+		Update::PickMap {
+			mut general_chat,
+			map_name,
+		} =>
+		{
+			unimplemented!();
+		}
+		Update::PickTimer {
+			mut general_chat,
+			seconds,
+		} =>
+		{
+			unimplemented!();
+		}
+		Update::PickRuleset {
+			mut general_chat,
+			ruleset_name,
+		} =>
+		{
+			unimplemented!();
+		}
+		Update::ConfirmRuleset {
+			mut general_chat,
+			ruleset_name,
+		} =>
+		{
+			handle_ruleset_confirmation(lobby, &mut general_chat, ruleset_name)
+				.await
 		}
 
 		Update::Msg(message) =>
@@ -180,26 +270,28 @@ async fn list_lobby(
 	lobby: &Lobby,
 	lobby_sendbuffer: mpsc::Sender<Update>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
-) -> Result<(), mpsc::error::SendError<chat::Update>>
+) -> Result<(), Error>
 {
 	let update = chat::Update::ListLobby {
 		lobby_id: lobby.id,
 		description_messages: make_listing_messages(&lobby),
 		sendbuffer: lobby_sendbuffer,
 	};
-	general_chat.send(update).await
+	general_chat.send(update).await?;
+	Ok(())
 }
 
 async fn describe_lobby(
 	lobby: &Lobby,
 	general_chat: &mut mpsc::Sender<chat::Update>,
-) -> Result<(), mpsc::error::SendError<chat::Update>>
+) -> Result<(), Error>
 {
 	let update = chat::Update::DescribeLobby {
 		lobby_id: lobby.id,
 		description_messages: make_listing_messages(&lobby),
 	};
-	general_chat.send(update).await
+	general_chat.send(update).await?;
+	Ok(())
 }
 
 fn make_listing_messages(lobby: &Lobby) -> Vec<Message>
@@ -211,7 +303,7 @@ fn make_listing_messages(lobby: &Lobby) -> Vec<Message>
 		},
 		Message::NameLobby {
 			lobby_id: Some(lobby.id),
-			lobbyname: lobby.name.clone(),
+			lobby_name: lobby.name.clone(),
 		},
 		Message::MaxPlayers {
 			lobby_id: lobby.id,
@@ -221,7 +313,7 @@ fn make_listing_messages(lobby: &Lobby) -> Vec<Message>
 			lobby_id: lobby.id,
 			value: lobby.num_players,
 		},
-		if lobby.public
+		if lobby.is_public
 		{
 			Message::UnlockLobby {
 				lobby_id: Some(lobby.id),
@@ -268,7 +360,7 @@ async fn handle_join(
 	lobby_sendbuffer: mpsc::Sender<Update>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
 	clients: &mut Vec<Client>,
-) -> Result<(), mpsc::error::SendError<chat::Update>>
+) -> Result<(), Error>
 {
 	match do_join(
 		lobby,
@@ -290,7 +382,8 @@ async fn handle_join(
 		metadata: None,
 	};
 	let update = chat::Update::Msg(message);
-	general_chat.send(update).await
+	general_chat.send(update).await?;
+	Ok(())
 }
 
 fn do_join(
@@ -336,10 +429,35 @@ fn do_join(
 	// TODO AI pool
 	// TODO bots
 
-	// TODO map pool if this is not a replay lobby
-	// TODO other map settings
-	// TODO list all recordings if this is a replay lobby
-	// TODO other replay settings
+	if !lobby.is_replay
+	{
+		for (mapname, metadata) in &lobby.map_pool
+		{
+			newcomer.send(Message::ListMap {
+				map_name: mapname.to_string(),
+				metadata: metadata.clone(),
+			});
+		}
+
+		newcomer.send(Message::PickMap {
+			map_name: lobby.map_name.to_string(),
+		});
+		newcomer.send(Message::PickTimer {
+			seconds: lobby.timer_in_seconds,
+		});
+
+		newcomer.send(Message::ListRuleset {
+			ruleset_name: lobby.ruleset_name.to_string(),
+		});
+		newcomer.send(Message::PickRuleset {
+			ruleset_name: lobby.ruleset_name.to_string(),
+		});
+	}
+	else
+	{
+		// TODO list all recordings if this is a replay lobby
+		// TODO other replay settings
+	}
 
 	// The newcomer will be announced globally.
 
@@ -359,7 +477,7 @@ async fn handle_leave(
 	client_id: Keycode,
 	clients: &mut Vec<Client>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
-) -> Result<(), mpsc::error::SendError<chat::Update>>
+) -> Result<(), Error>
 {
 	do_leave(lobby, client_id, clients);
 
@@ -402,6 +520,72 @@ fn do_leave(lobby: &mut Lobby, client_id: Keycode, clients: &mut Vec<Client>)
 		{
 			Ok(()) => (),
 			Err(e) => eprintln!("Send error while processing leave: {:?}", e),
+		}
+	}
+}
+
+async fn handle_ruleset_confirmation(
+	lobby: &mut Lobby,
+	general_chat: &mut mpsc::Sender<chat::Update>,
+	ruleset_name: String,
+) -> Result<(), Error>
+{
+	if ruleset_name != lobby.ruleset_name
+	{
+		println!(
+			"Ignoring confirmation for ruleset '{}' \
+			 when current ruleset is '{}'.",
+			ruleset_name, lobby.ruleset_name
+		);
+		return Ok(());
+	}
+
+	// TODO add to confirmations if not already present
+
+	// TODO Start the game once everyone has confirmed.
+
+	Ok(())
+}
+
+#[derive(Debug)]
+enum Error
+{
+	EmptyMapPool,
+	Io
+	{
+		error: io::Error,
+	},
+	GeneralChat
+	{
+		error: mpsc::error::SendError<chat::Update>,
+	},
+}
+
+impl From<io::Error> for Error
+{
+	fn from(error: io::Error) -> Self
+	{
+		Error::Io { error }
+	}
+}
+
+impl From<mpsc::error::SendError<chat::Update>> for Error
+{
+	fn from(error: mpsc::error::SendError<chat::Update>) -> Self
+	{
+		Error::GeneralChat { error }
+	}
+}
+
+impl fmt::Display for Error
+{
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
+	{
+		match self
+		{
+			Error::EmptyMapPool => write!(f, "The map pool is empty"),
+			Error::Io { error } => error.fmt(f),
+			Error::GeneralChat { error } => error.fmt(f),
 		}
 	}
 }

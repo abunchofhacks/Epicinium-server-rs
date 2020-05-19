@@ -277,7 +277,12 @@ fn handle_message(
 		| Message::NameLobby { .. }
 		| Message::MaxPlayers { .. }
 		| Message::NumPlayers { .. }
-		| Message::ListChallenge { .. } =>
+		| Message::ListMap { .. }
+		| Message::ListRuleset { .. }
+		| Message::ListChallenge { .. }
+		| Message::PickMap { .. }
+		| Message::PickTimer { .. }
+		| Message::PickRuleset { .. } =>
 		{
 			unreachable!();
 		}

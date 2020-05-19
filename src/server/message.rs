@@ -4,6 +4,7 @@ use crate::common::header::*;
 use crate::common::keycode::*;
 use crate::common::version::*;
 use crate::logic::challenge;
+use crate::logic::map;
 
 use enumset::*;
 
@@ -90,7 +91,7 @@ pub enum Message
 	NameLobby
 	{
 		#[serde(rename = "content")]
-		lobbyname: String,
+		lobby_name: String,
 
 		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
 		lobby_id: Option<Keycode>,
@@ -111,12 +112,39 @@ pub enum Message
 		#[serde(rename = "time")]
 		value: i32,
 	},
+	PickMap
+	{
+		#[serde(rename = "content")]
+		map_name: String,
+	},
+	PickTimer
+	{
+		#[serde(rename = "time")]
+		seconds: u32,
+	},
+	PickRuleset
+	{
+		#[serde(rename = "content")]
+		ruleset_name: String,
+	},
 	ListChallenge
 	{
 		#[serde(rename = "content")]
 		key: String,
 
 		metadata: challenge::Metadata,
+	},
+	ListMap
+	{
+		#[serde(rename = "content")]
+		map_name: String,
+
+		metadata: map::Metadata,
+	},
+	ListRuleset
+	{
+		#[serde(rename = "content")]
+		ruleset_name: String,
 	},
 	Init,
 	Closing,

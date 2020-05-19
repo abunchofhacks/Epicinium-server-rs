@@ -1225,7 +1225,7 @@ async fn handle_message(
 			return Err(Error::Illegal);
 		}
 		Message::NameLobby {
-			lobbyname,
+			lobby_name,
 			lobby_id: None,
 		} => match client.lobby
 		{
@@ -1242,7 +1242,7 @@ async fn handle_message(
 				};
 
 				let update = lobby::Update::Rename {
-					lobbyname,
+					lobby_name,
 					general_chat,
 				};
 				lobby.send(update).await?;
@@ -1258,6 +1258,110 @@ async fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(Error::Illegal);
 		}
+		Message::PickMap { map_name } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update = lobby::Update::PickMap {
+					general_chat,
+					map_name,
+				};
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid PickMap message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
+		Message::PickTimer { seconds } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update = lobby::Update::PickTimer {
+					general_chat,
+					seconds,
+				};
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid PickTimer message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
+		Message::PickRuleset { ruleset_name } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update = lobby::Update::PickRuleset {
+					general_chat,
+					ruleset_name,
+				};
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid PickRuleset message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
+		Message::ListRuleset { ruleset_name } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update = lobby::Update::ConfirmRuleset {
+					general_chat,
+					ruleset_name,
+				};
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid ListRuleset message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
 		Message::Init => match client.general_chat
 		{
 			Some(ref mut general_chat) =>
@@ -1358,6 +1462,7 @@ async fn handle_message(
 		| Message::MaxPlayers { .. }
 		| Message::NumPlayers { .. }
 		| Message::ListChallenge { .. }
+		| Message::ListMap { .. }
 		| Message::Closing
 		| Message::Closed =>
 		{

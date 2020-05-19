@@ -4,6 +4,7 @@ pub mod challenge;
 pub mod change;
 pub mod cycle;
 pub mod descriptor;
+pub mod map;
 pub mod order;
 pub mod player;
 pub mod position;
