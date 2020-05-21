@@ -2,11 +2,11 @@
 
 use crate::common::keycode::*;
 use crate::logic::map;
-use crate::logic::player::PLAYER_MAX;
 use crate::server::chat;
 use crate::server::client;
 use crate::server::message::*;
 
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::io;
 use std::sync;
@@ -57,6 +57,12 @@ pub enum Update
 		general_chat: mpsc::Sender<chat::Update>,
 	},
 
+	ClaimRole
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+		username: String,
+		role: Role,
+	},
 	PickMap
 	{
 		general_chat: mpsc::Sender<chat::Update>,
@@ -105,10 +111,12 @@ struct Lobby
 	is_public: bool,
 	is_replay: bool,
 
+	roles: HashMap<Keycode, Role>,
+
 	map_pool: Vec<(String, map::Metadata)>,
 	map_name: String,
 	ruleset_name: String,
-	ruleset_confirmations: Vec<Keycode>,
+	ruleset_confirmations: HashSet<Keycode>,
 	timer_in_seconds: u32,
 
 	is_waiting_for_confirmation: bool,
@@ -162,10 +170,11 @@ async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
 		max_players: 2,
 		is_public: true,
 		is_replay: false,
+		roles: HashMap::new(),
 		map_pool,
 		map_name,
 		ruleset_name,
-		ruleset_confirmations: Vec::with_capacity(PLAYER_MAX),
+		ruleset_confirmations: HashSet::new(),
 		timer_in_seconds: 60,
 		is_waiting_for_confirmation: false,
 	})
@@ -227,6 +236,16 @@ async fn handle_update(
 		} =>
 		{
 			lobby.name = lobby_name;
+			describe_lobby(lobby, &mut general_chat).await
+		}
+
+		Update::ClaimRole {
+			mut general_chat,
+			username,
+			role,
+		} =>
+		{
+			handle_claim_role(lobby, clients, username, role)?;
 			describe_lobby(lobby, &mut general_chat).await
 		}
 
@@ -390,6 +409,15 @@ async fn handle_join(
 	};
 	let update = chat::Update::Msg(message);
 	general_chat.send(update).await?;
+
+	// If the newcomer was invited, their role might be forced to be observer.
+	// TODO forced role if joining through spectate secret
+	let forced_role = None;
+	change_role(lobby, clients, client_id, forced_role)?;
+
+	// If a game is already in progress, rejoin it.
+	// TODO rejoin
+
 	Ok(())
 }
 
@@ -428,7 +456,13 @@ fn do_join(
 			metadata: None,
 		});
 
-		// TODO roles
+		if let Some(&role) = lobby.roles.get(&other.id)
+		{
+			newcomer.send(Message::ClaimRole {
+				username: other.username.clone(),
+				role,
+			});
+		}
 		// TODO colors
 		// TODO vision types
 	}
@@ -529,6 +563,122 @@ fn do_leave(lobby: &mut Lobby, client_id: Keycode, clients: &mut Vec<Client>)
 			Err(e) => eprintln!("Send error while processing leave: {:?}", e),
 		}
 	}
+
+	lobby.roles.remove(&client_id);
+	// TODO colors
+	// TODO visiontypes
+}
+
+fn handle_claim_role(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	username: String,
+	role: Role,
+) -> Result<(), Error>
+{
+	// Find any client based on the username supplied by the sender.
+	let client = match clients.into_iter().find(|x| x.username == username)
+	{
+		Some(client) => client,
+		None =>
+		{
+			// Client not found.
+			// TODO let the sender know somehow?
+			return Ok(());
+		}
+	};
+	let subject_client_id = client.id;
+
+	change_role(lobby, clients, subject_client_id, Some(role))
+}
+
+fn change_role(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	client_id: Keycode,
+	preferred_role: Option<Role>,
+) -> Result<(), Error>
+{
+	let client = clients
+		.into_iter()
+		.find(|x| x.id == client_id)
+		.ok_or(Error::ClientMissing)?;
+	let client_username = client.username.clone();
+
+	// If a game is already in progress, the user might be a disconnected user.
+	let inprogress = false;
+	// TODO determine role if was disconnected
+
+	let assigned_role = match preferred_role
+	{
+		Some(Role::Player) =>
+		{
+			if lobby.num_players < lobby.max_players
+			{
+				Role::Player
+			}
+			else
+			{
+				// Claim failed. The user keeps their original role.
+				if let Some(&oldrole) = lobby.roles.get(&client_id)
+				{
+					let message = Message::ClaimRole {
+						username: client_username,
+						role: oldrole,
+					};
+					for client in clients.iter_mut()
+					{
+						client.send(message.clone());
+					}
+				}
+				return Ok(());
+			}
+		}
+		Some(Role::Observer) => Role::Observer,
+		None =>
+		{
+			if !inprogress && lobby.num_players < lobby.max_players
+			{
+				Role::Player
+			}
+			else
+			{
+				Role::Observer
+			}
+		}
+	};
+
+	lobby.roles.insert(client_id, assigned_role);
+
+	let message = Message::ClaimRole {
+		username: client_username,
+		role: assigned_role,
+	};
+	for client in clients.iter_mut()
+	{
+		client.send(message.clone());
+	}
+
+	if assigned_role == Role::Player
+	{
+		lobby.num_players += 1;
+
+		// If we remembered the player's vision type, they keep it.
+		// TODO vision types
+		{}
+	}
+	else
+	{
+		// The player loses their player color when they stop being a player.
+		// TODO colors
+
+		// If the lobby used to be an AI lobby, we keep it that way.
+		// A lobby is an AI lobby in this sense if there is at most 1 human
+		// and all other slots are filled by AI players.
+		// TODO bots
+	}
+
+	Ok(())
 }
 
 async fn pick_map(
@@ -596,21 +746,66 @@ async fn pick_map(
 		client.send(message.clone());
 	}
 
-	let playercount = metadata.playercount().ok_or(Error::NoPlayerCount)?;
+	let playercount = match metadata.playercount()
+	{
+		Some(count) => count as i32,
+		None => return Err(Error::NoPlayerCount),
+	};
 
 	// We may need to demote players to observers.
-	// TODO demotions
+	let oldcount = lobby.max_players;
+	let mut newcount = 0;
+	let mut humancount = 0;
+	let mut botcount = 0;
+	let mut demotions = Vec::new();
+	for client in clients.into_iter()
+	{
+		if lobby.roles.get(&client.id) == Some(&Role::Player)
+		{
+			if newcount < playercount
+			{
+				newcount += 1;
+				humancount += 1;
+			}
+			else
+			{
+				demotions.push(client.id);
+			}
+		}
+	}
+	for id in demotions
+	{
+		change_role(lobby, clients, id, Some(Role::Observer))?;
+	}
 
 	// We may need to remove bots.
 	// TODO remove bots
+	for _ in 0..0
+	{
+		if newcount < playercount
+		{
+			newcount += 1;
+			botcount += 1;
+		}
+		else
+		{
+			// TODO remove bots
+		}
+	}
 
 	// We have a new playercount.
-	lobby.max_players = playercount as i32;
+	lobby.max_players = playercount;
 
 	// If the lobby used to be an AI lobby, we keep it that way.
 	// A lobby is an AI lobby in this sense if there is at most 1 human
 	// and all other slots are filled by AI players.
-	// TODO add bots
+	if humancount <= 1 && humancount + botcount == oldcount
+	{
+		for _ in oldcount..playercount
+		{
+			// TODO add a bot
+		}
+	}
 
 	Ok(())
 }
@@ -718,16 +913,12 @@ async fn handle_ruleset_confirmation(
 		return Ok(());
 	}
 
-	if lobby
-		.ruleset_confirmations
-		.iter()
-		.find(|&&x| x == client_id)
-		.is_some()
+	if lobby.ruleset_confirmations.contains(&client_id)
 	{
 		return Ok(());
 	}
 
-	lobby.ruleset_confirmations.push(client_id);
+	lobby.ruleset_confirmations.insert(client_id);
 
 	if lobby.is_waiting_for_confirmation && is_ruleset_confirmed(lobby, clients)
 	{
@@ -744,11 +935,7 @@ fn is_ruleset_confirmed(lobby: &Lobby, clients: &Vec<Client>) -> bool
 {
 	for client in clients
 	{
-		if lobby
-			.ruleset_confirmations
-			.iter()
-			.find(|&&x| x == client.id)
-			.is_none()
+		if lobby.ruleset_confirmations.contains(&client.id)
 		{
 			return false;
 		}
@@ -770,6 +957,7 @@ enum Error
 {
 	EmptyMapPool,
 	NoPlayerCount,
+	ClientMissing,
 	Io
 	{
 		error: io::Error,
@@ -804,6 +992,7 @@ impl fmt::Display for Error
 		{
 			Error::EmptyMapPool => write!(f, "The map pool is empty"),
 			Error::NoPlayerCount => write!(f, "No player count defined"),
+			Error::ClientMissing => write!(f, "Client missing"),
 			Error::Io { error } => error.fmt(f),
 			Error::GeneralChat { error } => error.fmt(f),
 		}

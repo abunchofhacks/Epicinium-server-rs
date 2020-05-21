@@ -277,6 +277,7 @@ fn handle_message(
 		| Message::NameLobby { .. }
 		| Message::MaxPlayers { .. }
 		| Message::NumPlayers { .. }
+		| Message::ClaimRole { .. }
 		| Message::ListMap { .. }
 		| Message::ListRuleset { .. }
 		| Message::ListChallenge { .. }

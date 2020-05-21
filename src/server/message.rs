@@ -112,6 +112,13 @@ pub enum Message
 		#[serde(rename = "time")]
 		value: i32,
 	},
+	ClaimRole
+	{
+		#[serde(rename = "sender")]
+		username: String,
+
+		role: Role,
+	},
 	PickMap
 	{
 		#[serde(rename = "content")]
@@ -167,6 +174,14 @@ pub enum ChatTarget
 {
 	General,
 	Lobby,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Enum)]
+#[serde(rename_all = "lowercase")]
+pub enum Role
+{
+	Player,
+	Observer,
 }
 
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]

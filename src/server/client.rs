@@ -1258,6 +1258,33 @@ async fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(Error::Illegal);
 		}
+		Message::ClaimRole { username, role } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update = lobby::Update::ClaimRole {
+					general_chat,
+					username,
+					role,
+				};
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid ClaimRole message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
 		Message::PickMap { map_name } => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -1288,16 +1315,6 @@ async fn handle_message(
 		{
 			Some(ref mut lobby) =>
 			{
-				let general_chat = match &client.general_chat
-				{
-					Some(general_chat) => general_chat.clone(),
-					None =>
-					{
-						eprintln!("Expected general_chat");
-						return Err(Error::Unexpected);
-					}
-				};
-
 				let update = lobby::Update::PickTimer { seconds };
 				lobby.send(update).await?;
 			}
@@ -1311,16 +1328,6 @@ async fn handle_message(
 		{
 			Some(ref mut lobby) =>
 			{
-				let general_chat = match &client.general_chat
-				{
-					Some(general_chat) => general_chat.clone(),
-					None =>
-					{
-						eprintln!("Expected general_chat");
-						return Err(Error::Unexpected);
-					}
-				};
-
 				let update = lobby::Update::PickRuleset { ruleset_name };
 				lobby.send(update).await?;
 			}
