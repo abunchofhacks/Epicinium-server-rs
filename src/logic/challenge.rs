@@ -1,6 +1,7 @@
 /* Challenge */
 
 use crate::logic::epicinium;
+use crate::logic::epicinium::ChallengeId;
 
 #[derive(Debug)]
 pub struct Challenge
@@ -39,4 +40,12 @@ pub fn load_current() -> Challenge
 			discord_image_key,
 		},
 	}
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionBriefing(serde_json::Value);
+
+pub fn load_briefing(id: ChallengeId) -> MissionBriefing
+{
+	MissionBriefing(epicinium::challenge_mission_briefing(id))
 }
