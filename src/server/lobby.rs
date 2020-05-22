@@ -415,6 +415,11 @@ async fn handle_join(
 	let forced_role = None;
 	change_role(lobby, clients, client_id, forced_role)?;
 
+	if Some(&Role::Player) == lobby.roles.get(&client_id)
+	{
+		describe_lobby(lobby, general_chat).await?;
+	}
+
 	// If a game is already in progress, rejoin it.
 	// TODO rejoin
 
@@ -500,7 +505,15 @@ fn do_join(
 		// TODO other replay settings
 	}
 
-	// The newcomer will be announced globally.
+	let message = Message::JoinLobby {
+		lobby_id: Some(lobby.id),
+		username: Some(newcomer.username.clone()),
+		metadata: None,
+	};
+	for client in clients.iter_mut()
+	{
+		client.send(message.clone());
+	}
 
 	client_callback
 		.try_send(client::Update::JoinedLobby {
@@ -520,7 +533,7 @@ async fn handle_leave(
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
-	do_leave(lobby, client_id, clients);
+	let removed_role = do_leave(lobby, client_id, clients);
 
 	// TODO dont disband if rejoinable etcetera
 	if clients.is_empty()
@@ -528,11 +541,20 @@ async fn handle_leave(
 		let update = chat::Update::DisbandLobby { lobby_id: lobby.id };
 		general_chat.send(update).await?;
 	}
+	else if removed_role == Some(Role::Player)
+	{
+		lobby.num_players -= 1;
+		describe_lobby(lobby, general_chat).await?;
+	}
 
 	Ok(())
 }
 
-fn do_leave(lobby: &mut Lobby, client_id: Keycode, clients: &mut Vec<Client>)
+fn do_leave(
+	lobby: &mut Lobby,
+	client_id: Keycode,
+	clients: &mut Vec<Client>,
+) -> Option<Role>
 {
 	let removed: Vec<Client> = clients
 		.e_drain_where(|client| client.id == client_id)
@@ -564,10 +586,11 @@ fn do_leave(lobby: &mut Lobby, client_id: Keycode, clients: &mut Vec<Client>)
 		}
 	}
 
-	lobby.roles.remove(&client_id);
-	// TODO change num_players
+	let removed_role = lobby.roles.remove(&client_id);
 	// TODO colors
 	// TODO visiontypes
+
+	removed_role
 }
 
 fn handle_claim_role(
@@ -663,6 +686,14 @@ fn change_role(
 	if assigned_role == Role::Player
 	{
 		lobby.num_players += 1;
+		let message = Message::NumPlayers {
+			lobby_id: lobby.id,
+			value: lobby.max_players,
+		};
+		for client in clients.iter_mut()
+		{
+			client.send(message.clone());
+		}
 
 		// If we remembered the player's vision type, they keep it.
 		// TODO vision types
@@ -796,6 +827,14 @@ async fn pick_map(
 
 	// We have a new playercount.
 	lobby.max_players = playercount;
+	let message = Message::MaxPlayers {
+		lobby_id: lobby.id,
+		value: lobby.max_players,
+	};
+	for client in clients.iter_mut()
+	{
+		client.send(message.clone());
+	}
 
 	// If the lobby used to be an AI lobby, we keep it that way.
 	// A lobby is an AI lobby in this sense if there is at most 1 human
