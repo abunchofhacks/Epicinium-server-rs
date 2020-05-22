@@ -3,7 +3,6 @@
 use crate::common::coredump::enable_coredumps;
 use crate::common::keycode::*;
 use crate::logic::challenge;
-use crate::logic::challenge::Challenge;
 use crate::server::chat;
 use crate::server::client;
 use crate::server::killer;
@@ -41,9 +40,7 @@ pub async fn run_server(
 	enable_coredumps()?;
 	increase_sockets()?;
 
-	let current_challenge: Challenge = challenge::load_current();
-
-	let login_server = login::connect(settings, current_challenge.key.clone())?;
+	let login_server = login::connect(settings, challenge::get_current_key())?;
 	let login = sync::Arc::new(login_server);
 
 	let (killcount_in, killcount_out) = watch::channel(0u8);
@@ -60,9 +57,7 @@ pub async fn run_server(
 	);
 
 	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
-	let chat_task =
-		chat::run(current_challenge, general_out, general_canary_in)
-			.map(|()| Ok(()));
+	let chat_task = chat::run(general_out, general_canary_in).map(|()| Ok(()));
 
 	let acceptance_task = accept_clients(
 		settings,

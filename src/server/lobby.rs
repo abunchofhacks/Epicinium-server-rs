@@ -565,6 +565,7 @@ fn do_leave(lobby: &mut Lobby, client_id: Keycode, clients: &mut Vec<Client>)
 	}
 
 	lobby.roles.remove(&client_id);
+	// TODO change num_players
 	// TODO colors
 	// TODO visiontypes
 }

@@ -15,34 +15,43 @@ pub fn map_pool() -> Vec<String>
 	pool
 }
 
-pub fn current_challenge_key() -> String
+#[derive(Debug, Clone, Copy)]
+pub struct ChallengeId(u16);
+
+pub fn current_challenge_id() -> ChallengeId
+{
+	let id = unsafe { epicinium_current_challenge_id() };
+	ChallengeId(id)
+}
+
+pub fn challenge_key(id: ChallengeId) -> String
 {
 	let s: &CStr = unsafe {
-		CStr::from_ptr(epicinium_current_challenge_key()) //
+		CStr::from_ptr(epicinium_challenge_key(id.0)) //
 	};
 	s.to_string_lossy().to_string()
 }
 
-pub fn current_challenge_display_name() -> String
+pub fn challenge_display_name(id: ChallengeId) -> String
 {
 	let s: &CStr = unsafe {
-		CStr::from_ptr(epicinium_current_challenge_display_name()) //
+		CStr::from_ptr(epicinium_challenge_display_name(id.0)) //
 	};
 	s.to_string_lossy().to_string()
 }
 
-pub fn current_challenge_panel_picture_name() -> String
+pub fn challenge_panel_picture_name(id: ChallengeId) -> String
 {
 	let s: &CStr = unsafe {
-		CStr::from_ptr(epicinium_current_challenge_panel_picture_name()) //
+		CStr::from_ptr(epicinium_challenge_panel_picture_name(id.0)) //
 	};
 	s.to_string_lossy().to_string()
 }
 
-pub fn current_challenge_discord_image_key() -> String
+pub fn challenge_discord_image_key(id: ChallengeId) -> String
 {
 	let s: &CStr = unsafe {
-		CStr::from_ptr(epicinium_current_challenge_discord_image_key()) //
+		CStr::from_ptr(epicinium_challenge_discord_image_key(id.0)) //
 	};
 	s.to_string_lossy().to_string()
 }
@@ -52,8 +61,9 @@ extern "C" {
 	fn epicinium_map_pool_size() -> usize;
 	fn epicinium_map_pool_get(i: usize) -> *const c_char;
 
-	fn epicinium_current_challenge_key() -> *const c_char;
-	fn epicinium_current_challenge_display_name() -> *const c_char;
-	fn epicinium_current_challenge_panel_picture_name() -> *const c_char;
-	fn epicinium_current_challenge_discord_image_key() -> *const c_char;
+	fn epicinium_current_challenge_id() -> u16;
+	fn epicinium_challenge_key(i: u16) -> *const c_char;
+	fn epicinium_challenge_display_name(i: u16) -> *const c_char;
+	fn epicinium_challenge_panel_picture_name(i: u16) -> *const c_char;
+	fn epicinium_challenge_discord_image_key(i: u16) -> *const c_char;
 }

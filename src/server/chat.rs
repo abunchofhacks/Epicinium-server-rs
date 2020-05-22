@@ -1,6 +1,7 @@
 /* Server::Chat */
 
 use crate::common::keycode::*;
+use crate::logic::challenge;
 use crate::logic::challenge::Challenge;
 use crate::server::client;
 use crate::server::lobby;
@@ -56,12 +57,9 @@ pub enum Update
 	Msg(Message),
 }
 
-pub async fn run(
-	current_challenge: Challenge,
-	mut updates: mpsc::Receiver<Update>,
-	canary: mpsc::Sender<()>,
-)
+pub async fn run(mut updates: mpsc::Receiver<Update>, canary: mpsc::Sender<()>)
 {
+	let current_challenge = challenge::load_current();
 	let mut clients: Vec<Client> = Vec::new();
 	let mut lobbies: Vec<Lobby> = Vec::new();
 

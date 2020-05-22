@@ -18,12 +18,18 @@ pub struct Metadata
 	discord_image_key: String,
 }
 
+pub fn get_current_key() -> String
+{
+	epicinium::challenge_key(epicinium::current_challenge_id())
+}
+
 pub fn load_current() -> Challenge
 {
-	let key = epicinium::current_challenge_key();
-	let display_name = epicinium::current_challenge_display_name();
-	let panel_picture_name = epicinium::current_challenge_panel_picture_name();
-	let discord_image_key = epicinium::current_challenge_discord_image_key();
+	let id = epicinium::current_challenge_id();
+	let key = epicinium::challenge_key(id);
+	let display_name = epicinium::challenge_display_name(id);
+	let panel_picture_name = epicinium::challenge_panel_picture_name(id);
+	let discord_image_key = epicinium::challenge_discord_image_key(id);
 
 	Challenge {
 		key,
