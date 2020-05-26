@@ -414,19 +414,22 @@ fn handle_describe_lobby(
 	lobbies: &mut Vec<Lobby>,
 )
 {
+	let lobby = match lobbies.into_iter().find(|x| x.id == lobby_id)
+	{
+		Some(lobby) => lobby,
+		None =>
+		{
+			eprintln!("Fail to describe missing lobby {:?}.", lobby_id);
+			return;
+		}
+	};
+
 	for client in clients.iter_mut()
 	{
 		client.send(description_message.clone());
 	}
 
-	for lobby in lobbies
-	{
-		if lobby.id == lobby_id
-		{
-			lobby.description_message = description_message;
-			return;
-		}
-	}
+	lobby.description_message = description_message;
 }
 
 fn handle_disband_lobby(

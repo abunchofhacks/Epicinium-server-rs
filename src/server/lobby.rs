@@ -111,6 +111,9 @@ struct Lobby
 	is_public: bool,
 	is_replay: bool,
 
+	has_been_listed: bool,
+	last_description_metadata: Option<LobbyMetadata>,
+
 	roles: HashMap<Keycode, Role>,
 
 	map_pool: Vec<(String, map::Metadata)>,
@@ -170,6 +173,8 @@ async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
 		max_players: 2,
 		is_public: true,
 		is_replay: false,
+		has_been_listed: false,
+		last_description_metadata: None,
 		roles: HashMap::new(),
 		map_pool,
 		map_name,
@@ -236,6 +241,8 @@ async fn handle_update(
 		} =>
 		{
 			lobby.name = lobby_name;
+			// Unset the description metadata to force a lobby description.
+			lobby.last_description_metadata = None;
 			describe_lobby(lobby, &mut general_chat).await
 		}
 
@@ -293,14 +300,29 @@ async fn handle_update(
 }
 
 async fn list_lobby(
-	lobby: &Lobby,
+	lobby: &mut Lobby,
 	lobby_sendbuffer: mpsc::Sender<Update>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
+	if lobby.has_been_listed
+	{
+		eprintln!("Refusing to re-list lobby {}.", lobby.id);
+		return Ok(());
+	}
+
+	let metadata = make_description_metadata(lobby);
+	lobby.has_been_listed = true;
+	lobby.last_description_metadata = Some(metadata);
+
+	let description_message = Message::ListLobby {
+		lobby_id: lobby.id,
+		lobby_name: lobby.name.clone(),
+		metadata,
+	};
 	let update = chat::Update::ListLobby {
 		lobby_id: lobby.id,
-		description_message: make_description_message(&lobby),
+		description_message,
 		sendbuffer: lobby_sendbuffer,
 	};
 	general_chat.send(update).await?;
@@ -308,33 +330,49 @@ async fn list_lobby(
 }
 
 async fn describe_lobby(
-	lobby: &Lobby,
+	lobby: &mut Lobby,
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
+	if !lobby.has_been_listed
+	{
+		return Ok(());
+	}
+
+	let metadata = make_description_metadata(lobby);
+	if lobby.last_description_metadata == Some(metadata)
+	{
+		return Ok(());
+	}
+	else
+	{
+		lobby.last_description_metadata = Some(metadata);
+	}
+
+	let description_message = Message::ListLobby {
+		lobby_id: lobby.id,
+		lobby_name: lobby.name.clone(),
+		metadata,
+	};
 	let update = chat::Update::DescribeLobby {
 		lobby_id: lobby.id,
-		description_message: make_description_message(&lobby),
+		description_message,
 	};
 	general_chat.send(update).await?;
 	Ok(())
 }
 
-fn make_description_message(lobby: &Lobby) -> Message
+fn make_description_metadata(lobby: &Lobby) -> LobbyMetadata
 {
 	debug_assert!(lobby.is_replay == (lobby.max_players == 0));
 	debug_assert!(lobby.num_players <= lobby.max_players);
 
 	// TODO num_bot_players
-	Message::ListLobby {
-		lobby_id: lobby.id,
-		lobby_name: lobby.name.clone(),
-		metadata: LobbyMetadata {
-			max_players: lobby.max_players,
-			num_players: lobby.num_players,
-			num_bot_players: 0,
-			is_public: lobby.is_public,
-		},
+	LobbyMetadata {
+		max_players: lobby.max_players,
+		num_players: lobby.num_players,
+		num_bot_players: 0,
+		is_public: lobby.is_public,
 	}
 }
 
@@ -492,6 +530,7 @@ fn do_join(
 	{
 		client.send(message.clone());
 	}
+	newcomer.send(message);
 
 	client_callback
 		.try_send(client::Update::JoinedLobby {
