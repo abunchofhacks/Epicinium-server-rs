@@ -1,5 +1,6 @@
 /* Server */
 
+mod botslot;
 mod chat;
 mod client;
 mod killer;

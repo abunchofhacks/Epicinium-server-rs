@@ -1,7 +1,10 @@
 /* Server::Lobby */
 
 use crate::common::keycode::*;
+use crate::logic::difficulty::*;
 use crate::logic::map;
+use crate::server::botslot;
+use crate::server::botslot::Botslot;
 use crate::server::chat;
 use crate::server::client;
 use crate::server::message::*;
@@ -13,6 +16,7 @@ use std::sync;
 use std::sync::atomic;
 
 use rand::seq::SliceRandom;
+use rand::Rng;
 
 use tokio::sync::mpsc;
 
@@ -62,6 +66,25 @@ pub enum Update
 		general_chat: mpsc::Sender<chat::Update>,
 		username: String,
 		role: Role,
+	},
+	ClaimAi
+	{
+		slot: Option<Botslot>,
+		ai_name: String,
+	},
+	ClaimDifficulty
+	{
+		slot: Option<Botslot>,
+		difficulty: Difficulty,
+	},
+	AddBot
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+	},
+	RemoveBot
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+		slot: Botslot,
 	},
 	PickMap
 	{
@@ -114,6 +137,8 @@ struct Lobby
 	has_been_listed: bool,
 	last_description_metadata: Option<LobbyMetadata>,
 
+	bots: Vec<Bot>,
+	open_botslots: Vec<Botslot>,
 	roles: HashMap<Keycode, Role>,
 
 	map_pool: Vec<(String, map::Metadata)>,
@@ -157,6 +182,8 @@ async fn run(lobby_id: Keycode, mut updates: mpsc::Receiver<Update>)
 
 async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
 {
+	let open_botslots = botslot::pool();
+
 	let map_pool = map::load_pool_with_metadata().await?;
 
 	let defaultmap = map_pool.get(0).ok_or(Error::EmptyMapPool)?;
@@ -175,6 +202,8 @@ async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
 		is_replay: false,
 		has_been_listed: false,
 		last_description_metadata: None,
+		bots: Vec::new(),
+		open_botslots,
 		roles: HashMap::new(),
 		map_pool,
 		map_name,
@@ -255,6 +284,11 @@ async fn handle_update(
 			handle_claim_role(lobby, clients, username, role)?;
 			describe_lobby(lobby, &mut general_chat).await
 		}
+		Update::ClaimAi { .. } => unimplemented!(),
+		Update::ClaimDifficulty { .. } => unimplemented!(),
+
+		Update::AddBot { .. } => unimplemented!(),
+		Update::RemoveBot { .. } => unimplemented!(),
 
 		Update::PickMap {
 			mut general_chat,
@@ -364,16 +398,27 @@ async fn describe_lobby(
 
 fn make_description_metadata(lobby: &Lobby) -> LobbyMetadata
 {
+	debug_assert!(lobby.bots.len() <= 0xFF);
+	let num_bot_players = lobby.bots.len() as i32;
+
 	debug_assert!(lobby.is_replay == (lobby.max_players == 0));
 	debug_assert!(lobby.num_players <= lobby.max_players);
+	debug_assert!(num_bot_players <= lobby.num_players);
 
-	// TODO num_bot_players
 	LobbyMetadata {
 		max_players: lobby.max_players,
 		num_players: lobby.num_players,
-		num_bot_players: 0,
+		num_bot_players,
 		is_public: lobby.is_public,
 	}
+}
+
+#[derive(Debug, Clone)]
+struct Bot
+{
+	slot: Botslot,
+	ai_name: String,
+	difficulty: Difficulty,
 }
 
 struct Client
@@ -498,8 +543,28 @@ fn do_join(
 		// TODO vision types
 	}
 
-	// TODO AI pool
-	// TODO bots
+	if !lobby.is_replay
+	{
+		// Tell the newcomer the AI pool.
+		// TODO AI pool
+	}
+
+	for bot in &lobby.bots
+	{
+		newcomer.send(Message::AddBot {
+			slot: Some(bot.slot),
+		});
+		newcomer.send(Message::ClaimAi {
+			slot: Some(bot.slot),
+			ai_name: bot.ai_name.clone(),
+		});
+		newcomer.send(Message::ClaimDifficulty {
+			slot: Some(bot.slot),
+			difficulty: bot.difficulty,
+		});
+		// TODO colors
+		// TODO vision types
+	}
 
 	if !lobby.is_replay
 	{
@@ -703,7 +768,13 @@ fn change_role(
 		}
 	};
 
-	lobby.roles.insert(client_id, assigned_role);
+	let previous_role = lobby.roles.insert(client_id, assigned_role);
+	match previous_role
+	{
+		Some(Role::Player) => lobby.num_players -= 1,
+		Some(Role::Observer) => (),
+		None => (),
+	}
 
 	let message = Message::ClaimRole {
 		username: client_username,
@@ -730,10 +801,75 @@ fn change_role(
 		// If the lobby used to be an AI lobby, we keep it that way.
 		// A lobby is an AI lobby in this sense if there is at most 1 human
 		// and all other slots are filled by AI players.
-		// TODO bots
+		if lobby.bots.len() == lobby.num_players as usize
+			&& lobby.num_players + 1 == lobby.max_players
+		{
+			add_bot(lobby, clients);
+		}
 	}
 
 	Ok(())
+}
+
+fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
+{
+	if lobby.num_players >= lobby.max_players
+	{
+		eprintln!("Cannot add bot to lobby {}: lobby full", lobby.id);
+		return;
+	}
+
+	let slot = {
+		if lobby.open_botslots.is_empty()
+		{
+			eprintln!("Cannot add bot to lobby {}: all slots taken", lobby.id);
+			return;
+		}
+		let mut rng = rand::thread_rng();
+		let i = rng.gen_range(0, lobby.open_botslots.len());
+		lobby.open_botslots.swap_remove(i)
+	};
+
+	// TODO ai_name
+	let bot = Bot {
+		slot,
+		ai_name: "Dummy".to_string(),
+		difficulty: Difficulty::Medium,
+	};
+
+	for client in clients.into_iter()
+	{
+		client.send(Message::AddBot {
+			slot: Some(bot.slot),
+		});
+		client.send(Message::ClaimAi {
+			slot: Some(bot.slot),
+			ai_name: bot.ai_name.clone(),
+		});
+		client.send(Message::ClaimDifficulty {
+			slot: Some(bot.slot),
+			difficulty: bot.difficulty,
+		});
+	}
+
+	lobby.bots.push(bot);
+	lobby.num_players += 1;
+}
+
+fn remove_bot(lobby: &mut Lobby, clients: &mut Vec<Client>, slot: Botslot)
+{
+	if lobby.bots.iter().find(|x| x.slot == slot).is_some()
+	{
+		lobby.bots.retain(|x| x.slot != slot);
+		lobby.num_players -= 1;
+		// TODO colors
+		lobby.open_botslots.push(slot);
+
+		for client in clients.into_iter()
+		{
+			client.send(Message::RemoveBot { slot });
+		}
+	}
 }
 
 async fn pick_map(
@@ -834,8 +970,8 @@ async fn pick_map(
 	}
 
 	// We may need to remove bots.
-	// TODO remove bots
-	for _ in 0..0
+	let mut removals = Vec::new();
+	for bot in &lobby.bots
 	{
 		if newcount < playercount
 		{
@@ -844,13 +980,16 @@ async fn pick_map(
 		}
 		else
 		{
-			// TODO remove bots
+			removals.push(bot.slot);
 		}
+	}
+	for slot in removals
+	{
+		remove_bot(lobby, clients, slot);
 	}
 
 	// We have a new playercount.
 	lobby.max_players = playercount;
-	// TODO do we need to tell the player?
 
 	// If the lobby used to be an AI lobby, we keep it that way.
 	// A lobby is an AI lobby in this sense if there is at most 1 human
@@ -859,7 +998,7 @@ async fn pick_map(
 	{
 		for _ in oldcount..playercount
 		{
-			// TODO add a bot
+			add_bot(lobby, clients);
 		}
 	}
 

@@ -4,7 +4,9 @@ use crate::common::header::*;
 use crate::common::keycode::*;
 use crate::common::version::*;
 use crate::logic::challenge;
+use crate::logic::difficulty::Difficulty;
 use crate::logic::map;
+use crate::server::botslot::Botslot;
 
 use enumset::*;
 
@@ -89,6 +91,21 @@ pub enum Message
 
 		role: Role,
 	},
+	ClaimAi
+	{
+		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
+		slot: Option<Botslot>,
+
+		#[serde(rename = "content")]
+		ai_name: String,
+	},
+	ClaimDifficulty
+	{
+		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
+		slot: Option<Botslot>,
+
+		difficulty: Difficulty,
+	},
 	PickMap
 	{
 		#[serde(rename = "content")]
@@ -103,6 +120,16 @@ pub enum Message
 	{
 		#[serde(rename = "content")]
 		ruleset_name: String,
+	},
+	AddBot
+	{
+		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
+		slot: Option<Botslot>,
+	},
+	RemoveBot
+	{
+		#[serde(rename = "content")]
+		slot: Botslot,
 	},
 	ListChallenge
 	{

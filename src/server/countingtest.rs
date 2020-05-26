@@ -276,12 +276,16 @@ fn handle_message(
 		| Message::NameLobby { .. }
 		| Message::ListLobby { .. }
 		| Message::ClaimRole { .. }
+		| Message::ClaimAi { .. }
+		| Message::ClaimDifficulty { .. }
 		| Message::ListMap { .. }
 		| Message::ListRuleset { .. }
 		| Message::ListChallenge { .. }
 		| Message::PickMap { .. }
 		| Message::PickTimer { .. }
-		| Message::PickRuleset { .. } =>
+		| Message::PickRuleset { .. }
+		| Message::AddBot { .. }
+		| Message::RemoveBot { .. } =>
 		{
 			unreachable!();
 		}

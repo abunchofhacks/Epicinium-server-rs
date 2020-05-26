@@ -18,7 +18,8 @@ pub fn map_pool() -> Vec<String>
 #[derive(Debug, Clone, Copy)]
 pub struct ChallengeId(u16);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 #[repr(u8)]
 pub enum Difficulty
 {

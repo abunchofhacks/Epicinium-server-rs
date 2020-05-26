@@ -1254,6 +1254,33 @@ async fn handle_message(
 				return Err(Error::Illegal);
 			}
 		},
+		Message::ClaimAi { slot, ai_name } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = lobby::Update::ClaimAi { slot, ai_name };
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid ClaimAi message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
+		Message::ClaimDifficulty { slot, difficulty } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update =
+					lobby::Update::ClaimDifficulty { slot, difficulty };
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid ClaimAi message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
 		Message::PickMap { map_name } => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -1330,6 +1357,57 @@ async fn handle_message(
 			None =>
 			{
 				println!("Invalid ListRuleset message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
+		Message::AddBot { slot: None } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update = lobby::Update::AddBot { general_chat };
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid AddBot message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
+		Message::AddBot { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
+		Message::RemoveBot { slot } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update = lobby::Update::RemoveBot { general_chat, slot };
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid RemoveBot message from unlobbied client");
 				return Err(Error::Illegal);
 			}
 		},
