@@ -58,59 +58,29 @@ pub enum Message
 		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
 		username: Option<String>,
 	},
-	MakeLobby
-	{
-		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
-		lobby_id: Option<Keycode>,
-	},
+	MakeLobby {},
+	SaveLobby {},
 	DisbandLobby
 	{
 		#[serde(rename = "content")]
 		lobby_id: Keycode,
 	},
-	EditLobby
-	{
-		#[serde(rename = "content")]
-		lobby_id: Keycode,
-	},
-	SaveLobby
-	{
-		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
-		lobby_id: Option<Keycode>,
-	},
-	LockLobby
-	{
-		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
-		lobby_id: Option<Keycode>,
-	},
-	UnlockLobby
-	{
-		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
-		lobby_id: Option<Keycode>,
-	},
+	LockLobby {},
+	UnlockLobby {},
 	NameLobby
 	{
 		#[serde(rename = "content")]
 		lobby_name: String,
-
-		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
-		lobby_id: Option<Keycode>,
 	},
-	MaxPlayers
+	ListLobby
 	{
 		#[serde(rename = "content")]
 		lobby_id: Keycode,
 
-		#[serde(rename = "time")]
-		value: i32,
-	},
-	NumPlayers
-	{
-		#[serde(rename = "content")]
-		lobby_id: Keycode,
+		#[serde(rename = "sender")]
+		lobby_name: String,
 
-		#[serde(rename = "time")]
-		value: i32,
+		metadata: LobbyMetadata,
 	},
 	ClaimRole
 	{
@@ -192,6 +162,22 @@ pub struct JoinMetadata
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub guest: bool,
+}
+
+#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]
+pub struct LobbyMetadata
+{
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub max_players: i32,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub num_players: i32,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub num_bot_players: i32,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub is_public: bool,
 }
 
 #[derive(

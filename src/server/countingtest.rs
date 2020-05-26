@@ -269,14 +269,12 @@ fn handle_message(
 		Message::JoinLobby { .. }
 		| Message::LeaveLobby { .. }
 		| Message::MakeLobby { .. }
-		| Message::DisbandLobby { .. }
-		| Message::EditLobby { .. }
 		| Message::SaveLobby { .. }
+		| Message::DisbandLobby { .. }
 		| Message::LockLobby { .. }
 		| Message::UnlockLobby { .. }
 		| Message::NameLobby { .. }
-		| Message::MaxPlayers { .. }
-		| Message::NumPlayers { .. }
+		| Message::ListLobby { .. }
 		| Message::ClaimRole { .. }
 		| Message::ListMap { .. }
 		| Message::ListRuleset { .. }

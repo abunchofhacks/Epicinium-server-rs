@@ -1076,18 +1076,15 @@ async fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(Error::Illegal);
 		}
-		Message::MakeLobby { .. } if client.closing =>
+		Message::MakeLobby {} if client.closing =>
 		{
 			client.sendbuffer.try_send(Message::Closing)?;
 		}
-		Message::MakeLobby { .. } if client.lobby.is_some() =>
+		Message::MakeLobby {} if client.lobby.is_some() =>
 		{
-			println!("Invalid message from lobbied client: {:?}", message);
-			client
-				.sendbuffer
-				.try_send(Message::MakeLobby { lobby_id: None })?;
+			println!("Ignoring message from lobbied client: {:?}", message);
 		}
-		Message::MakeLobby { lobby_id: None } => match client.general_chat
+		Message::MakeLobby {} => match client.general_chat
 		{
 			Some(ref general_chat) =>
 			{
@@ -1119,16 +1116,11 @@ async fn handle_message(
 				return Err(Error::Illegal);
 			}
 		},
-		Message::MakeLobby { .. } =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
-		}
-		Message::SaveLobby { .. } if client.closing =>
+		Message::SaveLobby {} if client.closing =>
 		{
 			client.sendbuffer.try_send(Message::Closing)?;
 		}
-		Message::SaveLobby { lobby_id: None } => match client.lobby
+		Message::SaveLobby {} => match client.lobby
 		{
 			Some(ref mut lobby) =>
 			{
@@ -1157,12 +1149,7 @@ async fn handle_message(
 				return Err(Error::Illegal);
 			}
 		},
-		Message::SaveLobby { .. } =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
-		}
-		Message::LockLobby { lobby_id: None } => match client.lobby
+		Message::LockLobby {} => match client.lobby
 		{
 			Some(ref mut lobby) =>
 			{
@@ -1188,12 +1175,7 @@ async fn handle_message(
 				return Err(Error::Illegal);
 			}
 		},
-		Message::LockLobby { .. } =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
-		}
-		Message::UnlockLobby { lobby_id: None } => match client.lobby
+		Message::UnlockLobby {} => match client.lobby
 		{
 			Some(ref mut lobby) =>
 			{
@@ -1219,15 +1201,7 @@ async fn handle_message(
 				return Err(Error::Illegal);
 			}
 		},
-		Message::UnlockLobby { .. } =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
-		}
-		Message::NameLobby {
-			lobby_name,
-			lobby_id: None,
-		} => match client.lobby
+		Message::NameLobby { lobby_name } => match client.lobby
 		{
 			Some(ref mut lobby) =>
 			{
@@ -1253,11 +1227,6 @@ async fn handle_message(
 				return Err(Error::Illegal);
 			}
 		},
-		Message::NameLobby { .. } =>
-		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
-		}
 		Message::ClaimRole { username, role } => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -1460,9 +1429,7 @@ async fn handle_message(
 			return Err(Error::Illegal);
 		}
 		Message::DisbandLobby { .. }
-		| Message::EditLobby { .. }
-		| Message::MaxPlayers { .. }
-		| Message::NumPlayers { .. }
+		| Message::ListLobby { .. }
 		| Message::ListChallenge { .. }
 		| Message::ListMap { .. }
 		| Message::Closing

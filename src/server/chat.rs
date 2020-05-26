@@ -34,13 +34,13 @@ pub enum Update
 	ListLobby
 	{
 		lobby_id: Keycode,
-		description_messages: Vec<Message>,
+		description_message: Message,
 		sendbuffer: mpsc::Sender<lobby::Update>,
 	},
 	DescribeLobby
 	{
 		lobby_id: Keycode,
-		description_messages: Vec<Message>,
+		description_message: Message,
 	},
 	DisbandLobby
 	{
@@ -103,13 +103,13 @@ fn handle_update(
 
 		Update::ListLobby {
 			lobby_id,
-			description_messages,
+			description_message,
 			sendbuffer,
 		} =>
 		{
 			let lobby = Lobby {
 				id: lobby_id,
-				description_messages,
+				description_message,
 				sendbuffer,
 				dead: false,
 			};
@@ -117,10 +117,10 @@ fn handle_update(
 		}
 		Update::DescribeLobby {
 			lobby_id,
-			description_messages,
+			description_message,
 		} => handle_describe_lobby(
 			lobby_id,
-			description_messages,
+			description_message,
 			clients,
 			lobbies,
 		),
@@ -179,7 +179,7 @@ impl Client
 struct Lobby
 {
 	id: Keycode,
-	description_messages: Vec<Message>,
+	description_message: Message,
 	sendbuffer: mpsc::Sender<lobby::Update>,
 	dead: bool,
 }
@@ -232,10 +232,7 @@ fn handle_join(
 	// Let the client know which lobbies there are.
 	for lobby in lobbies.iter()
 	{
-		for message in lobby.description_messages.iter()
-		{
-			newcomer.send(message.clone())
-		}
+		newcomer.send(lobby.description_message.clone());
 	}
 
 	// Let the client know who else is online.
@@ -326,10 +323,7 @@ fn do_init(
 	// Let the client know which lobbies there are.
 	for lobby in lobbies.iter()
 	{
-		for message in lobby.description_messages.iter()
-		{
-			sendbuffer.try_send(message.clone())?;
-		}
+		sendbuffer.try_send(lobby.description_message.clone())?;
 	}
 
 	// Let the client know who else is online.
@@ -407,10 +401,7 @@ fn handle_list_lobby(
 
 	for client in clients.iter_mut()
 	{
-		for message in newlobby.description_messages.iter()
-		{
-			client.send(message.clone())
-		}
+		client.send(newlobby.description_message.clone());
 	}
 
 	lobbies.push(newlobby);
@@ -418,24 +409,21 @@ fn handle_list_lobby(
 
 fn handle_describe_lobby(
 	lobby_id: Keycode,
-	description_messages: Vec<Message>,
+	description_message: Message,
 	clients: &mut Vec<Client>,
 	lobbies: &mut Vec<Lobby>,
 )
 {
 	for client in clients.iter_mut()
 	{
-		for message in description_messages.iter()
-		{
-			client.send(message.clone())
-		}
+		client.send(description_message.clone());
 	}
 
 	for lobby in lobbies
 	{
 		if lobby.id == lobby_id
 		{
-			lobby.description_messages = description_messages;
+			lobby.description_message = description_message;
 			return;
 		}
 	}

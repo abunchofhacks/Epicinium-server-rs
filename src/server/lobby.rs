@@ -300,7 +300,7 @@ async fn list_lobby(
 {
 	let update = chat::Update::ListLobby {
 		lobby_id: lobby.id,
-		description_messages: make_listing_messages(&lobby),
+		description_message: make_description_message(&lobby),
 		sendbuffer: lobby_sendbuffer,
 	};
 	general_chat.send(update).await?;
@@ -314,47 +314,28 @@ async fn describe_lobby(
 {
 	let update = chat::Update::DescribeLobby {
 		lobby_id: lobby.id,
-		description_messages: make_listing_messages(&lobby),
+		description_message: make_description_message(&lobby),
 	};
 	general_chat.send(update).await?;
 	Ok(())
 }
 
-fn make_listing_messages(lobby: &Lobby) -> Vec<Message>
+fn make_description_message(lobby: &Lobby) -> Message
 {
-	vec![
-		Message::EditLobby { lobby_id: lobby.id },
-		Message::MakeLobby {
-			lobby_id: Some(lobby.id),
+	debug_assert!(lobby.is_replay == (lobby.max_players == 0));
+	debug_assert!(lobby.num_players <= lobby.max_players);
+
+	// TODO num_bot_players
+	Message::ListLobby {
+		lobby_id: lobby.id,
+		lobby_name: lobby.name.clone(),
+		metadata: LobbyMetadata {
+			max_players: lobby.max_players,
+			num_players: lobby.num_players,
+			num_bot_players: 0,
+			is_public: lobby.is_public,
 		},
-		Message::NameLobby {
-			lobby_id: Some(lobby.id),
-			lobby_name: lobby.name.clone(),
-		},
-		Message::MaxPlayers {
-			lobby_id: lobby.id,
-			value: lobby.max_players,
-		},
-		Message::NumPlayers {
-			lobby_id: lobby.id,
-			value: lobby.num_players,
-		},
-		if lobby.is_public
-		{
-			Message::UnlockLobby {
-				lobby_id: Some(lobby.id),
-			}
-		}
-		else
-		{
-			Message::LockLobby {
-				lobby_id: Some(lobby.id),
-			}
-		},
-		Message::SaveLobby {
-			lobby_id: Some(lobby.id),
-		},
-	]
+	}
 }
 
 struct Client
@@ -447,10 +428,7 @@ fn do_join(
 
 	// Tell the newcomer the maximum player count in advance,
 	// so they can reserve the necessary slots in the UI.
-	newcomer.send(Message::MaxPlayers {
-		lobby_id: lobby.id,
-		value: lobby.max_players,
-	});
+	// TODO or is this unnecessary?
 
 	// Tell the newcomer which users are already in the lobby.
 	for other in clients.into_iter()
@@ -543,7 +521,6 @@ async fn handle_leave(
 	}
 	else if removed_role == Some(Role::Player)
 	{
-		lobby.num_players -= 1;
 		describe_lobby(lobby, general_chat).await?;
 	}
 
@@ -589,6 +566,11 @@ fn do_leave(
 	let removed_role = lobby.roles.remove(&client_id);
 	// TODO colors
 	// TODO visiontypes
+
+	if removed_role == Some(Role::Player)
+	{
+		lobby.num_players -= 1;
+	}
 
 	removed_role
 }
@@ -686,14 +668,6 @@ fn change_role(
 	if assigned_role == Role::Player
 	{
 		lobby.num_players += 1;
-		let message = Message::NumPlayers {
-			lobby_id: lobby.id,
-			value: lobby.max_players,
-		};
-		for client in clients.iter_mut()
-		{
-			client.send(message.clone());
-		}
 
 		// If we remembered the player's vision type, they keep it.
 		// TODO vision types
@@ -827,14 +801,7 @@ async fn pick_map(
 
 	// We have a new playercount.
 	lobby.max_players = playercount;
-	let message = Message::MaxPlayers {
-		lobby_id: lobby.id,
-		value: lobby.max_players,
-	};
-	for client in clients.iter_mut()
-	{
-		client.send(message.clone());
-	}
+	// TODO do we need to tell the player?
 
 	// If the lobby used to be an AI lobby, we keep it that way.
 	// A lobby is an AI lobby in this sense if there is at most 1 human
