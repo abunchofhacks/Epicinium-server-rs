@@ -407,6 +407,8 @@ async fn handle_join(
 	clients: &mut Vec<Client>,
 ) -> Result<(), Error>
 {
+	let mut sendbuffer_for_listing = client_sendbuffer.clone();
+
 	match do_join(
 		lobby,
 		client_id,
@@ -433,6 +435,18 @@ async fn handle_join(
 	// TODO forced role if joining through spectate secret
 	let forced_role = None;
 	change_role(lobby, clients, client_id, forced_role)?;
+
+	// Describe the lobby to the client so that Discord presence is updated.
+	let message = Message::ListLobby {
+		lobby_id: lobby.id,
+		lobby_name: lobby.name.clone(),
+		metadata: make_description_metadata(lobby),
+	};
+	match sendbuffer_for_listing.try_send(message)
+	{
+		Ok(()) => (),
+		Err(error) => eprintln!("Send error in join: {}", error),
+	}
 
 	if Some(&Role::Player) == lobby.roles.get(&client_id)
 	{
@@ -463,10 +477,6 @@ fn do_join(
 		sendbuffer: client_sendbuffer,
 		dead: false,
 	};
-
-	// Tell the newcomer the maximum player count in advance,
-	// so they can reserve the necessary slots in the UI.
-	// TODO or is this unnecessary?
 
 	// Tell the newcomer which users are already in the lobby.
 	for other in clients.into_iter()
