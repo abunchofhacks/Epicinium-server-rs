@@ -17,7 +17,8 @@ impl std::fmt::Display for Botslot
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 	{
-		write!(f, "%{}", self.0)
+		debug_assert!(self.0 >= b'A' && self.0 <= b'Z');
+		write!(f, "%{}", self.0 as char)
 	}
 }
 

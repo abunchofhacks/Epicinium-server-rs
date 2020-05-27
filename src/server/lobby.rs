@@ -287,8 +287,19 @@ async fn handle_update(
 		Update::ClaimAi { .. } => unimplemented!(),
 		Update::ClaimDifficulty { .. } => unimplemented!(),
 
-		Update::AddBot { .. } => unimplemented!(),
-		Update::RemoveBot { .. } => unimplemented!(),
+		Update::AddBot { mut general_chat } =>
+		{
+			add_bot(lobby, clients);
+			describe_lobby(lobby, &mut general_chat).await
+		}
+		Update::RemoveBot {
+			mut general_chat,
+			slot,
+		} =>
+		{
+			remove_bot(lobby, clients, slot);
+			describe_lobby(lobby, &mut general_chat).await
+		}
 
 		Update::PickMap {
 			mut general_chat,
