@@ -278,6 +278,7 @@ fn handle_message(
 		| Message::ClaimRole { .. }
 		| Message::ClaimAi { .. }
 		| Message::ClaimDifficulty { .. }
+		| Message::ListAi { .. }
 		| Message::ListMap { .. }
 		| Message::ListRuleset { .. }
 		| Message::ListChallenge { .. }

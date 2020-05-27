@@ -44,7 +44,7 @@ pub fn ai_exists(name: &str) -> bool
 #[derive(Debug, Clone, Copy)]
 pub struct ChallengeId(u16);
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[repr(u8)]
 pub enum Difficulty

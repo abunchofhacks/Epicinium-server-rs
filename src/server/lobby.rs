@@ -285,8 +285,16 @@ async fn handle_update(
 			handle_claim_role(lobby, clients, username, role)?;
 			describe_lobby(lobby, &mut general_chat).await
 		}
-		Update::ClaimAi { .. } => unimplemented!(),
-		Update::ClaimDifficulty { .. } => unimplemented!(),
+		Update::ClaimAi { slot, ai_name } =>
+		{
+			change_ai(lobby, clients, slot, ai_name);
+			Ok(())
+		}
+		Update::ClaimDifficulty { slot, difficulty } =>
+		{
+			change_difficulty(lobby, clients, slot, difficulty);
+			Ok(())
+		}
 
 		Update::AddBot { mut general_chat } =>
 		{
@@ -558,12 +566,12 @@ fn do_join(
 	if !lobby.is_replay
 	{
 		// Tell the newcomer the AI pool.
-		//for name in &lobby.ai_pool
-		//{
-		//	newcomer.send(Message::ListAi {
-		//		ai_name: name.clone(),
-		//	});
-		//}
+		for name in &lobby.ai_pool
+		{
+			newcomer.send(Message::ListAi {
+				ai_name: name.clone(),
+			});
+		}
 	}
 
 	for bot in &lobby.bots
@@ -828,6 +836,104 @@ fn change_role(
 	Ok(())
 }
 
+fn change_ai(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	slot: Option<Botslot>,
+	ai_name: String,
+)
+{
+	let mut bot = {
+		let found = match slot
+		{
+			Some(slot) => lobby.bots.iter_mut().find(|x| x.slot == slot),
+			None => lobby.bots.last_mut(),
+		};
+		match found
+		{
+			Some(bot) => bot,
+			None =>
+			{
+				eprintln!("Failed to find bot '{:?}'.", slot);
+				// TODO let the sender know somehow?
+				return;
+			}
+		}
+	};
+
+	if !ai::exists(&ai_name)
+	{
+		eprintln!("Cannot set AI to non-existing '{}'.", ai_name);
+		// TODO let the sender know somehow?
+		return;
+	}
+
+	if lobby.ai_pool.iter().find(|&x| x == &ai_name).is_none()
+	{
+		lobby.ai_pool.push(ai_name.clone());
+
+		for client in clients.into_iter()
+		{
+			client.send(Message::ListAi {
+				ai_name: ai_name.clone(),
+			});
+		}
+	}
+
+	bot.ai_name = ai_name;
+
+	for client in clients.into_iter()
+	{
+		client.send(Message::ClaimAi {
+			slot: Some(bot.slot),
+			ai_name: bot.ai_name.clone(),
+		});
+	}
+}
+
+fn change_difficulty(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	slot: Option<Botslot>,
+	difficulty: Difficulty,
+)
+{
+	let mut bot = {
+		let found = match slot
+		{
+			Some(slot) => lobby.bots.iter_mut().find(|x| x.slot == slot),
+			None => lobby.bots.last_mut(),
+		};
+		match found
+		{
+			Some(bot) => bot,
+			None =>
+			{
+				eprintln!("Failed to find bot '{:?}'.", slot);
+				// TODO let the sender know somehow?
+				return;
+			}
+		}
+	};
+
+	if difficulty == Difficulty::None && bot.ai_name != "Dummy"
+	{
+		eprintln!("Cannot send difficulty of AI '{}' to none.", bot.ai_name);
+		// TODO let the sender know somehow?
+		return;
+	}
+
+	bot.difficulty = difficulty;
+
+	for client in clients.into_iter()
+	{
+		client.send(Message::ClaimDifficulty {
+			slot: Some(bot.slot),
+			difficulty,
+		});
+	}
+}
+
 fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 {
 	if lobby.num_players >= lobby.max_players
@@ -847,10 +953,14 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 		lobby.open_botslots.swap_remove(i)
 	};
 
-	// TODO ai_name
+	let ai_name = match lobby.ai_pool.first()
+	{
+		Some(name) => name.clone(),
+		None => "Dummy".to_string(),
+	};
 	let bot = Bot {
 		slot,
-		ai_name: "Dummy".to_string(),
+		ai_name,
 		difficulty: Difficulty::Medium,
 	};
 

@@ -1509,6 +1509,7 @@ async fn handle_message(
 		Message::DisbandLobby { .. }
 		| Message::ListLobby { .. }
 		| Message::ListChallenge { .. }
+		| Message::ListAi { .. }
 		| Message::ListMap { .. }
 		| Message::Closing
 		| Message::Closed =>

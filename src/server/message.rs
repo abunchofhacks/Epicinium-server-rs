@@ -138,6 +138,11 @@ pub enum Message
 
 		metadata: challenge::Metadata,
 	},
+	ListAi
+	{
+		#[serde(rename = "content")]
+		ai_name: String,
+	},
 	ListMap
 	{
 		#[serde(rename = "content")]
