@@ -1,6 +1,7 @@
 /* Server::Lobby */
 
 use crate::common::keycode::*;
+use crate::logic::ai;
 use crate::logic::difficulty::*;
 use crate::logic::map;
 use crate::server::botslot;
@@ -141,6 +142,7 @@ struct Lobby
 	open_botslots: Vec<Botslot>,
 	roles: HashMap<Keycode, Role>,
 
+	ai_pool: Vec<String>,
 	map_pool: Vec<(String, map::Metadata)>,
 	map_name: String,
 	ruleset_name: String,
@@ -182,8 +184,6 @@ async fn run(lobby_id: Keycode, mut updates: mpsc::Receiver<Update>)
 
 async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
 {
-	let open_botslots = botslot::pool();
-
 	let map_pool = map::load_pool_with_metadata().await?;
 
 	let defaultmap = map_pool.get(0).ok_or(Error::EmptyMapPool)?;
@@ -203,8 +203,9 @@ async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
 		has_been_listed: false,
 		last_description_metadata: None,
 		bots: Vec::new(),
-		open_botslots,
+		open_botslots: botslot::pool(),
 		roles: HashMap::new(),
+		ai_pool: ai::load_pool(),
 		map_pool,
 		map_name,
 		ruleset_name,
@@ -557,7 +558,12 @@ fn do_join(
 	if !lobby.is_replay
 	{
 		// Tell the newcomer the AI pool.
-		// TODO AI pool
+		//for name in &lobby.ai_pool
+		//{
+		//	newcomer.send(Message::ListAi {
+		//		ai_name: name.clone(),
+		//	});
+		//}
 	}
 
 	for bot in &lobby.bots

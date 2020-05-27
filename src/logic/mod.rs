@@ -1,5 +1,6 @@
 /* Logic */
 
+pub mod ai;
 pub mod challenge;
 pub mod change;
 pub mod cycle;
@@ -15,6 +16,7 @@ pub mod vision;
 
 mod epicinium;
 
+pub use self::ai::*;
 pub use self::change::*;
 pub use self::cycle::*;
 pub use self::descriptor::*;

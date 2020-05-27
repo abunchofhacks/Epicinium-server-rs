@@ -1,7 +1,7 @@
 /* Epicinium-as-a-library */
 
 use libc::c_char;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 
 pub fn map_pool() -> Vec<String>
 {
@@ -13,6 +13,32 @@ pub fn map_pool() -> Vec<String>
 		pool.push(s.to_string_lossy().to_string());
 	}
 	pool
+}
+
+pub fn ai_pool() -> Vec<String>
+{
+	let len = unsafe { epicinium_ai_pool_size() };
+	let mut pool = Vec::with_capacity(len);
+	for i in 0..len
+	{
+		let s: &CStr = unsafe { CStr::from_ptr(epicinium_ai_pool_get(i)) };
+		pool.push(s.to_string_lossy().to_string());
+	}
+	pool
+}
+
+pub fn ai_exists(name: &str) -> bool
+{
+	let name = match CString::new(name)
+	{
+		Ok(name) => name,
+		Err(error) =>
+		{
+			eprintln!("AI with nul character: {}, {:?}", name, error);
+			return false;
+		}
+	};
+	unsafe { epicinium_ai_exists(name.as_ptr()) }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -124,6 +150,10 @@ pub fn challenge_mission_briefing(id: ChallengeId) -> serde_json::Value
 extern "C" {
 	fn epicinium_map_pool_size() -> usize;
 	fn epicinium_map_pool_get(i: usize) -> *const c_char;
+
+	fn epicinium_ai_pool_size() -> usize;
+	fn epicinium_ai_pool_get(i: usize) -> *const c_char;
+	fn epicinium_ai_exists(name: *const c_char) -> bool;
 
 	fn epicinium_current_challenge_id() -> u16;
 	fn epicinium_challenge_key(id: u16) -> *const c_char;
