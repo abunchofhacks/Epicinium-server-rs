@@ -5,7 +5,6 @@ use crate::logic::player::PlayerColor;
 #[derive(Default, Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub struct Vision(Vec<PlayerColor>);
-// TODO replace with a bit_set::BitSet once the serde pull request is merged
 
 impl Vision
 {

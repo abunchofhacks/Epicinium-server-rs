@@ -41,6 +41,77 @@ pub fn ai_exists(name: &str) -> bool
 	unsafe { epicinium_ai_exists(name.as_ptr()) }
 }
 
+pub fn allocate_ai(
+	name: &str,
+	player: PlayerColor,
+	difficulty: Difficulty,
+	ruleset_name: &str,
+	character: u8,
+) -> Result<AllocatedAi, AllocationError>
+{
+	let ai_name_as_cstr = CString::new(name)?;
+	let player_as_u8 = unsafe { std::mem::transmute(player) };
+	let difficulty_as_u8 = unsafe { std::mem::transmute(difficulty) };
+	let ruleset_name_as_cstr = CString::new(ruleset_name)?;
+	let character_as_char = unsafe { std::mem::transmute(character) };
+	let ptr = unsafe {
+		epicinium_ai_allocate(
+			ai_name_as_cstr.as_ptr(),
+			player_as_u8,
+			difficulty_as_u8,
+			ruleset_name_as_cstr.as_ptr(),
+			character_as_char,
+		)
+	};
+	if ptr != std::ptr::null_mut()
+	{
+		Ok(AllocatedAi(ptr))
+	}
+	else
+	{
+		Err(AllocationError::AllocationFailed)
+	}
+}
+
+#[derive(Debug)]
+pub enum AllocationError
+{
+	AllocationFailed,
+	ArgumentNulError(std::ffi::NulError),
+}
+
+impl From<std::ffi::NulError> for AllocationError
+{
+	fn from(error: std::ffi::NulError) -> Self
+	{
+		AllocationError::ArgumentNulError(error)
+	}
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[repr(u8)]
+pub enum PlayerColor
+{
+	/* No player. */
+	None = 0,
+	/* Player colors. */
+	Red,
+	Blue,
+	Yellow,
+	Teal,
+	Black,
+	Pink,
+	Indigo,
+	Purple,
+	/* Non-player vision types used by the Automaton. */
+	Blind,
+	Observer,
+	// Non-player vision type used by the Board/Level to keep track of its
+	// owner's vision.
+	SELF, // DO NOT USE
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ChallengeId(u16);
 
@@ -146,6 +217,21 @@ pub fn challenge_mission_briefing(id: ChallengeId) -> serde_json::Value
 	serde_json::Value::Object(data)
 }
 
+#[derive(Debug)]
+pub struct AllocatedAi(*mut AICommander);
+
+unsafe impl Send for AllocatedAi {}
+
+impl Drop for AllocatedAi
+{
+	fn drop(&mut self)
+	{
+		unsafe { epicinium_ai_deallocate(self.0) }
+	}
+}
+
+enum AICommander {}
+
 #[link(name = "epicinium", kind = "static")]
 extern "C" {
 	fn epicinium_map_pool_size() -> usize;
@@ -154,6 +240,15 @@ extern "C" {
 	fn epicinium_ai_pool_size() -> usize;
 	fn epicinium_ai_pool_get(i: usize) -> *const c_char;
 	fn epicinium_ai_exists(name: *const c_char) -> bool;
+
+	fn epicinium_ai_allocate(
+		name: *const c_char,
+		player: u8,
+		difficulty: u8,
+		ruleset_name: *const c_char,
+		character: c_char,
+	) -> *mut AICommander;
+	fn epicinium_ai_deallocate(ai: *mut AICommander);
 
 	fn epicinium_current_challenge_id() -> u16;
 	fn epicinium_challenge_key(id: u16) -> *const c_char;

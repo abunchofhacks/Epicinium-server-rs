@@ -13,6 +13,14 @@ pub fn pool() -> Vec<Botslot>
 	(b'A'..=b'Z').map(|x| Botslot(x)).collect()
 }
 
+impl Botslot
+{
+	pub fn get_character(&self) -> u8
+	{
+		self.0
+	}
+}
+
 impl std::fmt::Display for Botslot
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result

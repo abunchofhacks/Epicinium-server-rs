@@ -26,7 +26,7 @@ pub struct PlayerClient
 pub struct Bot
 {
 	pub slot: Botslot,
-	pub ai: ai::Commander,
+	pub ai: ai::AllocatedAi,
 
 	pub color: PlayerColor,
 	pub vision: VisionType,

@@ -14,7 +14,6 @@ use crate::server::game;
 use crate::server::message::*;
 
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 use std::io;
 use std::sync;
 use std::sync::atomic;
@@ -1540,8 +1539,20 @@ async fn try_start(
 		// TODO visiontypes
 		let vision = VisionType::Normal;
 
-		// TODO construct AI
-		let ai = ai::Commander {};
+		let character = bot.slot.get_character();
+
+		let allocated_ai = ai::allocate_ai(
+			&bot.ai_name,
+			color,
+			bot.difficulty,
+			&lobby.ruleset_name,
+			character,
+		);
+		let ai = match allocated_ai
+		{
+			Ok(ai) => ai,
+			Err(error) => return Err(Error::AiAllocationError { error }),
+		};
 
 		bots.push(game::Bot {
 			slot: bot.slot,
@@ -1642,6 +1653,10 @@ enum Error
 	{
 		error: mpsc::error::SendError<chat::Update>,
 	},
+	AiAllocationError
+	{
+		error: ai::AllocationError,
+	},
 }
 
 impl From<io::Error> for Error
@@ -1657,23 +1672,6 @@ impl From<mpsc::error::SendError<chat::Update>> for Error
 	fn from(error: mpsc::error::SendError<chat::Update>) -> Self
 	{
 		Error::GeneralChat { error }
-	}
-}
-
-impl fmt::Display for Error
-{
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
-	{
-		match self
-		{
-			Error::EmptyMapPool => write!(f, "{:#?}", self),
-			Error::NoPlayerCount => write!(f, "{:#?}", self),
-			Error::ClientMissing => write!(f, "{:#?}", self),
-			Error::StartGameNotEnoughColors => write!(f, "{:#?}", self),
-			Error::GameEndedWithoutStarting => write!(f, "{:#?}", self),
-			Error::Io { error } => error.fmt(f),
-			Error::GeneralChat { error } => error.fmt(f),
-		}
 	}
 }
 
