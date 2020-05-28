@@ -1,5 +1,7 @@
 /* Epicinium-as-a-library */
 
+use crate::logic::ruleset::InitializationError;
+
 use libc::c_char;
 use std::ffi::{CStr, CString};
 
@@ -13,6 +15,19 @@ pub fn map_pool() -> Vec<String>
 		pool.push(s.to_string_lossy().to_string());
 	}
 	pool
+}
+
+pub fn initialize_ruleset_collection() -> Result<(), InitializationError>
+{
+	let success = unsafe { epicinium_initialize_ruleset_collection() };
+	if success
+	{
+		Ok(())
+	}
+	else
+	{
+		Err(InitializationError::Failed)
+	}
 }
 
 pub fn ai_pool() -> Vec<String>
@@ -87,6 +102,20 @@ impl From<std::ffi::NulError> for AllocationError
 		AllocationError::ArgumentNulError(error)
 	}
 }
+
+impl std::fmt::Display for AllocationError
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
+	{
+		match self
+		{
+			AllocationError::AllocationFailed => write!(f, "allocation failed"),
+			AllocationError::ArgumentNulError(error) => error.fmt(f),
+		}
+	}
+}
+
+impl std::error::Error for AllocationError {}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -236,6 +265,8 @@ enum AICommander {}
 extern "C" {
 	fn epicinium_map_pool_size() -> usize;
 	fn epicinium_map_pool_get(i: usize) -> *const c_char;
+
+	fn epicinium_initialize_ruleset_collection() -> bool;
 
 	fn epicinium_ai_pool_size() -> usize;
 	fn epicinium_ai_pool_get(i: usize) -> *const c_char;

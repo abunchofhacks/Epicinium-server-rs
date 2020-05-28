@@ -3,6 +3,7 @@
 use crate::common::coredump::enable_coredumps;
 use crate::common::keycode::*;
 use crate::logic::challenge;
+use crate::logic::ruleset;
 use crate::server::chat;
 use crate::server::client;
 use crate::server::killer;
@@ -39,6 +40,8 @@ pub async fn run_server(
 {
 	enable_coredumps()?;
 	increase_sockets()?;
+
+	ruleset::initialize_collection()?;
 
 	let login_server = login::connect(settings, challenge::get_current_key())?;
 	let login = sync::Arc::new(login_server);

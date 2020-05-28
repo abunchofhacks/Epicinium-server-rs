@@ -14,6 +14,7 @@ use crate::server::game;
 use crate::server::message::*;
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::io;
 use std::sync;
 use std::sync::atomic;
@@ -1674,6 +1675,29 @@ impl From<mpsc::error::SendError<chat::Update>> for Error
 		Error::GeneralChat { error }
 	}
 }
+
+impl fmt::Display for Error
+{
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
+	{
+		match self
+		{
+			Error::EmptyMapPool => write!(f, "{:#?}", self),
+			Error::NoPlayerCount => write!(f, "{:#?}", self),
+			Error::ClientMissing => write!(f, "{:#?}", self),
+			Error::StartGameNotEnoughColors => write!(f, "{:#?}", self),
+			Error::GameEndedWithoutStarting => write!(f, "{:#?}", self),
+			Error::Io { error } => error.fmt(f),
+			Error::GeneralChat { error } => error.fmt(f),
+			Error::AiAllocationError { error } =>
+			{
+				write!(f, "Error while allocating AI: {}", error)
+			}
+		}
+	}
+}
+
+impl std::error::Error for Error {}
 
 fn initial_name() -> String
 {
