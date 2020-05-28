@@ -56,6 +56,7 @@ pub enum Update
 
 	InGame
 	{
+		lobby_id: Keycode,
 		client_id: Keycode,
 		role: Role,
 	},
@@ -145,11 +146,12 @@ fn handle_update(
 		}
 
 		Update::InGame {
-			client_id: _,
-			role: _,
+			lobby_id,
+			client_id,
+			role,
 		} =>
 		{
-			// TODO broadcast Message:InGame
+			handle_in_game(clients, lobby_id, client_id, role);
 		}
 
 		Update::Msg(message) =>
@@ -491,5 +493,32 @@ fn handle_find_lobby(
 	{
 		Ok(()) => (),
 		Err(e) => eprintln!("Send error while finding lobby: {:?}", e),
+	}
+}
+
+fn handle_in_game(
+	clients: &mut Vec<Client>,
+	lobby_id: Keycode,
+	client_id: Keycode,
+	role: Role,
+)
+{
+	let found = clients
+		.iter()
+		.find(|client| client.id == client_id)
+		.map(|client| client.username.clone());
+	let username = match found
+	{
+		Some(username) => username,
+		None => return,
+	};
+	let message = Message::InGame {
+		lobby_id: lobby_id.to_string(),
+		username,
+		role,
+	};
+	for client in clients.iter_mut()
+	{
+		client.send(message.clone());
 	}
 }

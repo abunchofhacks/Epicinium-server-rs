@@ -1351,6 +1351,7 @@ async fn handle_message(
 					client_id: client.id,
 					general_chat,
 					ruleset_name,
+					lobby_sendbuffer: lobby.clone(),
 				};
 				lobby.send(update).await?;
 			}
@@ -1411,6 +1412,42 @@ async fn handle_message(
 				return Err(Error::Illegal);
 			}
 		},
+		Message::Game {
+			role: None,
+			player: None,
+			ruleset_name: None,
+			timer_in_seconds: None,
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update = lobby::Update::Start {
+					general_chat,
+					lobby_sendbuffer: lobby.clone(),
+				};
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid Game message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
+		Message::Game { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
 		Message::Challenge => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -1430,12 +1467,15 @@ async fn handle_message(
 				};
 				lobby.send(update).await?;
 
-				let update = lobby::Update::Start { general_chat };
+				let update = lobby::Update::Start {
+					general_chat,
+					lobby_sendbuffer: lobby.clone(),
+				};
 				lobby.send(update).await?;
 			}
 			None =>
 			{
-				println!("Invalid PickChallenge message from unlobbied client");
+				println!("Invalid Challenge message from unlobbied client");
 				return Err(Error::Illegal);
 			}
 		},
@@ -1540,6 +1580,7 @@ async fn handle_message(
 		| Message::ListAi { .. }
 		| Message::ListMap { .. }
 		| Message::PickChallenge { .. }
+		| Message::InGame { .. }
 		| Message::Closing
 		| Message::Closed =>
 		{

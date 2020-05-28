@@ -5,11 +5,12 @@ use crate::logic::ai;
 use crate::logic::challenge;
 use crate::logic::difficulty::*;
 use crate::logic::map;
-use crate::logic::player::Player;
+use crate::logic::player::PlayerColor;
 use crate::server::botslot;
 use crate::server::botslot::Botslot;
 use crate::server::chat;
 use crate::server::client;
+use crate::server::game;
 use crate::server::message::*;
 
 use std::collections::{HashMap, HashSet};
@@ -109,14 +110,18 @@ pub enum Update
 	ConfirmRuleset
 	{
 		client_id: Keycode,
-		general_chat: mpsc::Sender<chat::Update>,
 		ruleset_name: String,
+		general_chat: mpsc::Sender<chat::Update>,
+		lobby_sendbuffer: mpsc::Sender<Update>,
 	},
 
 	Start
 	{
 		general_chat: mpsc::Sender<chat::Update>,
+		lobby_sendbuffer: mpsc::Sender<Update>,
 	},
+
+	GameEnded,
 
 	Msg(Message),
 }
@@ -184,6 +189,7 @@ struct Lobby
 	timer_in_seconds: u32,
 
 	stage: Stage,
+	game_in_progress: Option<mpsc::Sender<game::Update>>,
 }
 
 async fn run(lobby_id: Keycode, mut updates: mpsc::Receiver<Update>)
@@ -246,6 +252,7 @@ async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
 		ruleset_confirmations: HashSet::new(),
 		timer_in_seconds: 60,
 		stage: Stage::Setup,
+		game_in_progress: None,
 	})
 }
 
@@ -367,25 +374,38 @@ async fn handle_update(
 		}
 		Update::ConfirmRuleset {
 			client_id,
-			mut general_chat,
 			ruleset_name,
+			mut general_chat,
+			lobby_sendbuffer,
 		} =>
 		{
 			handle_ruleset_confirmation(
 				lobby,
 				clients,
 				client_id,
-				&mut general_chat,
 				ruleset_name,
+				&mut general_chat,
+				lobby_sendbuffer,
 			)
 			.await
 		}
 
-		Update::Start { mut general_chat } =>
+		Update::Start {
+			mut general_chat,
+			lobby_sendbuffer: sendbuffer,
+		} =>
 		{
-			//try_start(lobby, clients, &mut general_chat).await?;
+			try_start(lobby, clients, &mut general_chat, sendbuffer).await?;
 			describe_lobby(lobby, &mut general_chat).await
 		}
+
+		Update::GameEnded if lobby.stage == Stage::GameStarted =>
+		{
+			// TODO announce to general chat somehow
+			lobby.stage = Stage::GameEnded;
+			Ok(())
+		}
+		Update::GameEnded => Err(Error::GameEndedWithoutStarting),
 
 		Update::Msg(message) =>
 		{
@@ -486,6 +506,7 @@ struct Bot
 	difficulty: Difficulty,
 }
 
+#[derive(Debug, Clone)]
 struct Client
 {
 	id: Keycode,
@@ -1216,7 +1237,7 @@ async fn become_challenge_lobby(
 	if clients.len() > 1
 	{
 		eprintln!(
-			"Cannot turn lobby {} with {} human players into challenge.",
+			"Cannot turn lobby {} with {} clients into challenge.",
 			lobby.id,
 			clients.len()
 		);
@@ -1353,8 +1374,9 @@ async fn handle_ruleset_confirmation(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
 	client_id: Keycode,
-	general_chat: &mut mpsc::Sender<chat::Update>,
 	ruleset_name: String,
+	general_chat: &mut mpsc::Sender<chat::Update>,
+	lobby_sendbuffer: mpsc::Sender<Update>,
 ) -> Result<(), Error>
 {
 	if ruleset_name != lobby.ruleset_name
@@ -1378,7 +1400,7 @@ async fn handle_ruleset_confirmation(
 		&& is_ruleset_confirmed(lobby, clients)
 	{
 		// Start the game once everyone has confirmed.
-		try_start(lobby, clients, general_chat).await
+		try_start(lobby, clients, general_chat, lobby_sendbuffer).await
 	}
 	else
 	{
@@ -1390,7 +1412,7 @@ fn is_ruleset_confirmed(lobby: &Lobby, clients: &Vec<Client>) -> bool
 {
 	for client in clients
 	{
-		if lobby.ruleset_confirmations.contains(&client.id)
+		if !lobby.ruleset_confirmations.contains(&client.id)
 		{
 			return false;
 		}
@@ -1402,6 +1424,7 @@ async fn try_start(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
+	lobby_sendbuffer: mpsc::Sender<Update>,
 ) -> Result<(), Error>
 {
 	// We cannot start a game if it is already in progress.
@@ -1428,21 +1451,19 @@ async fn try_start(
 
 	// TODO replace with lobby.open_colors
 	let mut open_colors = vec![
-		Player::Red,
-		Player::Blue,
-		Player::Yellow,
-		Player::Teal,
-		Player::Black,
-		Player::Pink,
-		Player::Indigo,
-		Player::Purple,
+		PlayerColor::Red,
+		PlayerColor::Blue,
+		PlayerColor::Yellow,
+		PlayerColor::Teal,
+		PlayerColor::Black,
+		PlayerColor::Pink,
+		PlayerColor::Indigo,
+		PlayerColor::Purple,
 	];
 
-	// Assign player colors to clients and bots.
-	let num = clients.len() + lobby.bots.len();
-	let mut roles = Vec::new();
-	let mut colors = Vec::new();
-	let mut visiontypes = Vec::new();
+	// Assign colors and roles to clients.
+	let mut player_clients = Vec::new();
+	let mut watcher_clients = Vec::new();
 	for client in clients.iter()
 	{
 		let role = match lobby.roles.get(&client.id)
@@ -1454,35 +1475,54 @@ async fn try_start(
 				Role::Observer
 			}
 		};
-		roles.push(role);
 
-		let color = if role == Role::Player
+		match role
 		{
-			// TODO color claims
-			let assigned = open_colors.pop();
-			debug_assert!(assigned.is_some());
-			match assigned
+			Role::Player =>
 			{
-				Some(color) => color,
-				None =>
-				{
-					return Err(Error::StartGameNotEnoughColors);
-				}
+				let color = {
+					// TODO color claims
+					let assigned = open_colors.pop();
+					debug_assert!(assigned.is_some());
+					match assigned
+					{
+						Some(color) => color,
+						None =>
+						{
+							return Err(Error::StartGameNotEnoughColors);
+						}
+					}
+				};
+
+				// TODO visiontypes
+				let vision = VisionType::Normal;
+
+				player_clients.push(game::PlayerClient {
+					id: client.id,
+					username: client.username.clone(),
+					sendbuffer: client.sendbuffer.clone(),
+
+					color,
+					vision,
+				});
+			}
+			Role::Observer =>
+			{
+				watcher_clients.push(game::WatcherClient {
+					id: client.id,
+					username: client.username.clone(),
+					sendbuffer: client.sendbuffer.clone(),
+
+					role,
+				});
 			}
 		}
-		else
-		{
-			Player::None
-		};
-		colors.push(color);
-
-		// TODO visiontypes
-		visiontypes.push(VisionType::Normal);
 	}
-	for _bot in lobby.bots.iter()
-	{
-		roles.push(Role::Player);
 
+	// Assign colors and roles to bots.
+	let mut bots = Vec::new();
+	for bot in lobby.bots.iter()
+	{
 		let color = {
 			// TODO color claims
 			let assigned = open_colors.pop();
@@ -1496,18 +1536,20 @@ async fn try_start(
 				}
 			}
 		};
-		colors.push(color);
 
 		// TODO visiontypes
-		visiontypes.push(VisionType::Normal);
-	}
+		let vision = VisionType::Normal;
 
-	debug_assert!(roles.len() == num);
-	debug_assert!(colors.len() == num);
-	debug_assert!(visiontypes.len() == num);
-	if roles.len() != num || colors.len() != num || visiontypes.len() != num
-	{
-		return Err(Error::StartGameVectorMismatch);
+		// TODO construct AI
+		let ai = ai::Commander {};
+
+		bots.push(game::Bot {
+			slot: bot.slot,
+			ai,
+
+			color,
+			vision,
+		});
 	}
 
 	// TODO if (_replay && _replayname.empty()) return false;
@@ -1515,6 +1557,8 @@ async fn try_start(
 	// Check that all clients have access to the ruleset that we will use.
 	if !is_ruleset_confirmed(lobby, clients)
 	{
+		println!("Delaying start in lobby {}: ruleset unconfirmed.", lobby.id);
+
 		// List the new ruleset to trigger additional confirmations.
 		let message = Message::ListRuleset {
 			ruleset_name: lobby.ruleset_name.clone(),
@@ -1529,22 +1573,54 @@ async fn try_start(
 		return Ok(());
 	}
 
+	let planning_timer = Some(lobby.timer_in_seconds).filter(|&x| x > 0);
+	// TODO lobby.challenge_id
+	let challenge = None;
+	// TODO tutorial
+	let is_tutorial = false;
+	// TODO rating
+	let is_rated = false;
+
 	// We are truly starting.
+	let (updates_in, updates_out) = mpsc::channel::<game::Update>(1000);
+	let task = game::run(
+		lobby.id,
+		lobby_sendbuffer,
+		updates_out,
+		player_clients,
+		bots,
+		watcher_clients,
+		lobby.map_name.clone(),
+		lobby.ruleset_name.clone(),
+		planning_timer,
+		challenge,
+		is_tutorial,
+		is_rated,
+	);
+	tokio::spawn(task);
+	lobby.game_in_progress = Some(updates_in);
+
+	println!("Game started in lobby {}.", lobby.id);
 	lobby.stage = Stage::GameStarted;
-	// TODO actually start
 
 	for client in clients.iter()
 	{
-		let assigned_role = lobby.roles.get(&client.id);
-		debug_assert!(assigned_role.is_some());
-		if let Some(&role) = assigned_role
+		let role = match lobby.roles.get(&client.id)
 		{
-			let update = chat::Update::InGame {
-				client_id: client.id,
-				role,
-			};
-			general_chat.send(update).await?;
-		}
+			Some(&role) => role,
+			None =>
+			{
+				debug_assert!(false, "role should be assigned above");
+				continue;
+			}
+		};
+
+		let update = chat::Update::InGame {
+			lobby_id: lobby.id,
+			client_id: client.id,
+			role,
+		};
+		general_chat.send(update).await?;
 	}
 
 	Ok(())
@@ -1556,8 +1632,8 @@ enum Error
 	EmptyMapPool,
 	NoPlayerCount,
 	ClientMissing,
-	StartGameVectorMismatch,
 	StartGameNotEnoughColors,
+	GameEndedWithoutStarting,
 	Io
 	{
 		error: io::Error,
@@ -1593,8 +1669,8 @@ impl fmt::Display for Error
 			Error::EmptyMapPool => write!(f, "{:#?}", self),
 			Error::NoPlayerCount => write!(f, "{:#?}", self),
 			Error::ClientMissing => write!(f, "{:#?}", self),
-			Error::StartGameVectorMismatch => write!(f, "{:#?}", self),
 			Error::StartGameNotEnoughColors => write!(f, "{:#?}", self),
+			Error::GameEndedWithoutStarting => write!(f, "{:#?}", self),
 			Error::Io { error } => error.fmt(f),
 			Error::GeneralChat { error } => error.fmt(f),
 		}

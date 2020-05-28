@@ -2,7 +2,7 @@
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Enum)]
 #[serde(rename_all = "lowercase")]
-pub enum Player
+pub enum PlayerColor
 {
 	/* No player. */
 	None = 0,
@@ -16,18 +16,16 @@ pub enum Player
 	Indigo,
 	Purple,
 	/* Non-player vision types used by the Automaton. */
-	BLIND,
-	OBSERVER,
-	/* Non-player vision type used by the Board/Level. */
-	SELF,
+	Blind,
+	Observer,
 }
 
 pub const PLAYER_MAX: usize = 8;
 
-impl Default for Player
+impl Default for PlayerColor
 {
-	fn default() -> Player
+	fn default() -> PlayerColor
 	{
-		Player::None
+		PlayerColor::None
 	}
 }

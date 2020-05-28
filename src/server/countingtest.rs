@@ -266,29 +266,7 @@ fn handle_message(
 			eprintln!("[{}] Server closed unexpectedly", number);
 			Err(())
 		}
-		Message::JoinLobby { .. }
-		| Message::LeaveLobby { .. }
-		| Message::MakeLobby { .. }
-		| Message::SaveLobby { .. }
-		| Message::DisbandLobby { .. }
-		| Message::LockLobby { .. }
-		| Message::UnlockLobby { .. }
-		| Message::NameLobby { .. }
-		| Message::ListLobby { .. }
-		| Message::ClaimRole { .. }
-		| Message::ClaimAi { .. }
-		| Message::ClaimDifficulty { .. }
-		| Message::ListAi { .. }
-		| Message::ListMap { .. }
-		| Message::ListRuleset { .. }
-		| Message::ListChallenge { .. }
-		| Message::PickMap { .. }
-		| Message::PickTimer { .. }
-		| Message::PickChallenge { .. }
-		| Message::PickRuleset { .. }
-		| Message::AddBot { .. }
-		| Message::RemoveBot { .. }
-		| Message::Challenge =>
+		_ =>
 		{
 			unreachable!();
 		}

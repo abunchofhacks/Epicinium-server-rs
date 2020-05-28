@@ -1,16 +1,15 @@
 /* Order */
 
-use crate::logic::player::Player;
-
+use crate::logic::player::PlayerColor;
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
-pub struct Vision(Vec<Player>);
+pub struct Vision(Vec<PlayerColor>);
 // TODO replace with a bit_set::BitSet once the serde pull request is merged
 
 impl Vision
 {
-	pub fn and(mut self, player : Player) -> Vision
+	pub fn and(mut self, player: PlayerColor) -> Vision
 	{
 		if !self.0.contains(&player)
 		{
@@ -19,7 +18,7 @@ impl Vision
 		self
 	}
 
-	pub fn add(&mut self, player : Player) -> &mut Vision
+	pub fn add(&mut self, player: PlayerColor) -> &mut Vision
 	{
 		if !self.0.contains(&player)
 		{
@@ -28,13 +27,13 @@ impl Vision
 		self
 	}
 
-	pub fn remove(&mut self, player : Player) -> &mut Vision
+	pub fn remove(&mut self, player: PlayerColor) -> &mut Vision
 	{
 		self.0.retain(|p| p != &player);
 		self
 	}
 
-	pub fn contains(& self, player : Player) -> bool
+	pub fn contains(&self, player: PlayerColor) -> bool
 	{
 		self.0.contains(&player)
 	}

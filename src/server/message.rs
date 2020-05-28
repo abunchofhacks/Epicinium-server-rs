@@ -6,6 +6,7 @@ use crate::common::version::*;
 use crate::logic::challenge;
 use crate::logic::difficulty::Difficulty;
 use crate::logic::map;
+use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
 
 use enumset::*;
@@ -159,6 +160,30 @@ pub enum Message
 	{
 		#[serde(rename = "content")]
 		ruleset_name: String,
+	},
+	InGame
+	{
+		#[serde(rename = "content")]
+		lobby_id: String,
+
+		#[serde(rename = "sender")]
+		username: String,
+
+		role: Role,
+	},
+	Game
+	{
+		#[serde(default, skip_serializing_if = "is_zero")]
+		role: Option<Role>,
+
+		#[serde(default, skip_serializing_if = "is_zero")]
+		player: Option<PlayerColor>,
+
+		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
+		ruleset_name: Option<String>,
+
+		#[serde(default, skip_serializing_if = "is_zero", rename = "time")]
+		timer_in_seconds: Option<u32>,
 	},
 	Challenge,
 	Init,

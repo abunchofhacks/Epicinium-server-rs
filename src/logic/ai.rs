@@ -11,3 +11,6 @@ pub fn load_pool() -> Vec<String>
 {
 	epicinium::ai_pool()
 }
+
+#[derive(Debug)]
+pub struct Commander;
