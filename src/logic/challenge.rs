@@ -1,7 +1,9 @@
 /* Challenge */
 
+pub use crate::logic::epicinium::ChallengeId;
+
+use crate::logic::difficulty::Difficulty;
 use crate::logic::epicinium;
-use crate::logic::epicinium::ChallengeId;
 
 #[derive(Debug)]
 pub struct Challenge
@@ -17,6 +19,11 @@ pub struct Metadata
 	display_name: String,
 	panel_picture_name: String,
 	discord_image_key: String,
+}
+
+pub fn current_id() -> ChallengeId
+{
+	epicinium::current_challenge_id()
 }
 
 pub fn get_current_key() -> String
@@ -40,6 +47,31 @@ pub fn load_current() -> Challenge
 			discord_image_key,
 		},
 	}
+}
+
+pub fn num_bots(id: ChallengeId) -> usize
+{
+	epicinium::challenge_num_bots(id)
+}
+
+pub fn bot_name(id: ChallengeId) -> String
+{
+	epicinium::challenge_bot_name(id)
+}
+
+pub fn bot_difficulty(id: ChallengeId) -> Difficulty
+{
+	epicinium::challenge_bot_difficulty(id)
+}
+
+pub fn map_name(id: ChallengeId) -> String
+{
+	epicinium::challenge_map_name(id)
+}
+
+pub fn ruleset_name(id: ChallengeId) -> Option<String>
+{
+	epicinium::challenge_ruleset_name(id)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -2,6 +2,7 @@
 
 use crate::common::keycode::*;
 use crate::logic::ai;
+use crate::logic::challenge;
 use crate::logic::difficulty::*;
 use crate::logic::map;
 use crate::server::botslot;
@@ -92,6 +93,10 @@ pub enum Update
 		general_chat: mpsc::Sender<chat::Update>,
 		map_name: String,
 	},
+	PickChallenge
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+	},
 	PickTimer
 	{
 		seconds: u32,
@@ -105,6 +110,11 @@ pub enum Update
 		client_id: Keycode,
 		general_chat: mpsc::Sender<chat::Update>,
 		ruleset_name: String,
+	},
+
+	Start
+	{
+		general_chat: mpsc::Sender<chat::Update>,
 	},
 
 	Msg(Message),
@@ -318,6 +328,11 @@ async fn handle_update(
 			pick_map(lobby, clients, map_name).await?;
 			describe_lobby(lobby, &mut general_chat).await
 		}
+		Update::PickChallenge { mut general_chat } =>
+		{
+			become_challenge_lobby(lobby, clients).await?;
+			describe_lobby(lobby, &mut general_chat).await
+		}
 		Update::PickTimer { seconds } =>
 		{
 			pick_timer(lobby, clients, seconds).await
@@ -340,6 +355,12 @@ async fn handle_update(
 				ruleset_name,
 			)
 			.await
+		}
+
+		Update::Start { mut general_chat } =>
+		{
+			//try_start(lobby, clients, &mut general_chat).await?;
+			describe_lobby(lobby, &mut general_chat).await
 		}
 
 		Update::Msg(message) =>
@@ -1010,6 +1031,7 @@ async fn pick_map(
 	// Is this a game lobby?
 	if lobby.is_replay
 	{
+		eprintln!("Cannot pick map for replay lobby {}.", lobby.id);
 		return Ok(());
 	}
 
@@ -1023,6 +1045,16 @@ async fn pick_map(
 	else if map::exists(&map_name)
 	{
 		let metadata = map::load_metadata(&map_name).await?;
+
+		let message = Message::ListMap {
+			map_name: map_name.clone(),
+			metadata: metadata.clone(),
+		};
+		for client in clients.iter_mut()
+		{
+			client.send(message.clone());
+		}
+
 		lobby.map_pool.push((map_name.clone(), metadata));
 		lobby.map_pool.last()
 	}
@@ -1132,6 +1164,72 @@ async fn pick_map(
 	Ok(())
 }
 
+async fn become_challenge_lobby(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+) -> Result<(), Error>
+{
+	// TODO check if client is host
+
+	// Is this a game lobby?
+	if lobby.is_replay
+	{
+		eprintln!("Cannot turn replay lobby {} into challenge.", lobby.id);
+		return Ok(());
+	}
+
+	// Prevent lobbies from being turned to challenge lobbies if there are
+	// multiple human players present.
+	if clients.len() > 1
+	{
+		eprintln!(
+			"Cannot turn lobby {} with {} human players into challenge.",
+			lobby.id,
+			clients.len()
+		);
+		return Ok(());
+	}
+
+	// Challenges are unrated because you cannot get 100 points.
+	// TODO lobby.rated = false;
+
+	let id = challenge::current_id();
+	let challenge_key = challenge::get_current_key();
+
+	// TODO lobby.challenge_id = Some(id)
+
+	for client in clients.iter_mut()
+	{
+		client.send(Message::PickChallenge {
+			challenge_key: challenge_key.clone(),
+		});
+	}
+
+	pick_map(lobby, clients, challenge::map_name(id)).await?;
+	match challenge::ruleset_name(id)
+	{
+		Some(ruleset_name) =>
+		{
+			pick_ruleset(lobby, clients, ruleset_name).await?;
+		}
+		None =>
+		{}
+	}
+	pick_timer(lobby, clients, 0).await?;
+
+	let ai_name = challenge::bot_name(id);
+	let difficulty = challenge::bot_difficulty(id);
+	let num = challenge::num_bots(id);
+	for _ in 0..num
+	{
+		add_bot(lobby, clients);
+		change_ai(lobby, clients, None, ai_name.clone());
+		change_difficulty(lobby, clients, None, difficulty);
+	}
+
+	Ok(())
+}
+
 async fn pick_timer(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
@@ -1179,6 +1277,7 @@ async fn pick_ruleset(
 	// Is this a game lobby?
 	if lobby.is_replay
 	{
+		eprintln!("Cannot pick ruleset in replay lobby {}.", lobby.id);
 		return Ok(());
 	}
 

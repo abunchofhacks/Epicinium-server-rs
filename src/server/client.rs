@@ -1411,6 +1411,34 @@ async fn handle_message(
 				return Err(Error::Illegal);
 			}
 		},
+		Message::Challenge => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update = lobby::Update::PickChallenge {
+					general_chat: general_chat.clone(),
+				};
+				lobby.send(update).await?;
+
+				let update = lobby::Update::Start { general_chat };
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid PickChallenge message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
 		Message::Init => match client.general_chat
 		{
 			Some(ref mut general_chat) =>
@@ -1511,6 +1539,7 @@ async fn handle_message(
 		| Message::ListChallenge { .. }
 		| Message::ListAi { .. }
 		| Message::ListMap { .. }
+		| Message::PickChallenge { .. }
 		| Message::Closing
 		| Message::Closed =>
 		{

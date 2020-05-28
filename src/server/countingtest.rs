@@ -284,9 +284,11 @@ fn handle_message(
 		| Message::ListChallenge { .. }
 		| Message::PickMap { .. }
 		| Message::PickTimer { .. }
+		| Message::PickChallenge { .. }
 		| Message::PickRuleset { .. }
 		| Message::AddBot { .. }
-		| Message::RemoveBot { .. } =>
+		| Message::RemoveBot { .. }
+		| Message::Challenge =>
 		{
 			unreachable!();
 		}

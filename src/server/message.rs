@@ -116,6 +116,11 @@ pub enum Message
 		#[serde(rename = "time")]
 		seconds: u32,
 	},
+	PickChallenge
+	{
+		#[serde(rename = "content")]
+		challenge_key: String,
+	},
 	PickRuleset
 	{
 		#[serde(rename = "content")]
@@ -155,6 +160,7 @@ pub enum Message
 		#[serde(rename = "content")]
 		ruleset_name: String,
 	},
+	Challenge,
 	Init,
 	Closing,
 	Closed,
