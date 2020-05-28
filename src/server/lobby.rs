@@ -5,6 +5,7 @@ use crate::logic::ai;
 use crate::logic::challenge;
 use crate::logic::difficulty::*;
 use crate::logic::map;
+use crate::logic::player::Player;
 use crate::server::botslot;
 use crate::server::botslot::Botslot;
 use crate::server::chat;
@@ -135,6 +136,29 @@ pub fn create(ticker: &mut sync::Arc<atomic::AtomicU64>)
 	updates_in
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum Stage
+{
+	Setup,
+	WaitingForConfirmation,
+	GameStarted,
+	GameEnded,
+}
+
+impl Stage
+{
+	pub fn has_game_started(&self) -> bool
+	{
+		match self
+		{
+			Stage::Setup => false,
+			Stage::WaitingForConfirmation => false,
+			Stage::GameStarted => true,
+			Stage::GameEnded => true,
+		}
+	}
+}
+
 #[derive(Debug, Clone)]
 struct Lobby
 {
@@ -159,7 +183,7 @@ struct Lobby
 	ruleset_confirmations: HashSet<Keycode>,
 	timer_in_seconds: u32,
 
-	is_waiting_for_confirmation: bool,
+	stage: Stage,
 }
 
 async fn run(lobby_id: Keycode, mut updates: mpsc::Receiver<Update>)
@@ -221,7 +245,7 @@ async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
 		ruleset_name,
 		ruleset_confirmations: HashSet::new(),
 		timer_in_seconds: 60,
-		is_waiting_for_confirmation: false,
+		stage: Stage::Setup,
 	})
 }
 
@@ -467,7 +491,7 @@ struct Client
 	id: Keycode,
 	username: String,
 	sendbuffer: mpsc::Sender<Message>,
-	dead: bool,
+	is_dead: bool,
 }
 
 impl Client
@@ -477,7 +501,7 @@ impl Client
 		match self.sendbuffer.try_send(message)
 		{
 			Ok(()) => (),
-			Err(_error) => self.dead = true,
+			Err(_error) => self.is_dead = true,
 		}
 	}
 }
@@ -561,7 +585,7 @@ fn do_join(
 		id: client_id,
 		username: client_username,
 		sendbuffer: client_sendbuffer,
-		dead: false,
+		is_dead: false,
 	};
 
 	// Tell the newcomer which users are already in the lobby.
@@ -671,7 +695,7 @@ async fn handle_leave(
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
-	let removed_role = do_leave(lobby, client_id, clients);
+	do_leave(lobby, client_id, clients);
 
 	// TODO dont disband if rejoinable etcetera
 	if clients.is_empty()
@@ -679,7 +703,7 @@ async fn handle_leave(
 		let update = chat::Update::DisbandLobby { lobby_id: lobby.id };
 		general_chat.send(update).await?;
 	}
-	else if removed_role == Some(Role::Player)
+	else
 	{
 		describe_lobby(lobby, general_chat).await?;
 	}
@@ -687,23 +711,28 @@ async fn handle_leave(
 	Ok(())
 }
 
-fn do_leave(
-	lobby: &mut Lobby,
-	client_id: Keycode,
-	clients: &mut Vec<Client>,
-) -> Option<Role>
+fn do_leave(lobby: &mut Lobby, client_id: Keycode, clients: &mut Vec<Client>)
 {
 	let removed: Vec<Client> = clients
 		.e_drain_where(|client| client.id == client_id)
 		.collect();
 
+	handle_removed(lobby, clients, removed)
+}
+
+fn handle_removed(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	removed: Vec<Client>,
+)
+{
 	for removed_client in removed
 	{
 		let Client {
-			id: _,
+			id,
 			username,
 			mut sendbuffer,
-			dead: _,
+			is_dead,
 		} = removed_client;
 
 		let message = Message::LeaveLobby {
@@ -716,23 +745,27 @@ fn do_leave(
 			client.send(message.clone());
 		}
 
-		match sendbuffer.try_send(message)
+		if !is_dead
 		{
-			Ok(()) => (),
-			Err(e) => eprintln!("Send error while processing leave: {:?}", e),
+			match sendbuffer.try_send(message)
+			{
+				Ok(()) => (),
+				Err(e) =>
+				{
+					eprintln!("Send error while processing leave: {:?}", e)
+				}
+			}
+		}
+
+		let removed_role = lobby.roles.remove(&id);
+		// TODO colors
+		// TODO visiontypes
+
+		if removed_role == Some(Role::Player)
+		{
+			lobby.num_players -= 1;
 		}
 	}
-
-	let removed_role = lobby.roles.remove(&client_id);
-	// TODO colors
-	// TODO visiontypes
-
-	if removed_role == Some(Role::Player)
-	{
-		lobby.num_players -= 1;
-	}
-
-	removed_role
 }
 
 fn handle_claim_role(
@@ -1341,7 +1374,8 @@ async fn handle_ruleset_confirmation(
 
 	lobby.ruleset_confirmations.insert(client_id);
 
-	if lobby.is_waiting_for_confirmation && is_ruleset_confirmed(lobby, clients)
+	if lobby.stage == Stage::WaitingForConfirmation
+		&& is_ruleset_confirmed(lobby, clients)
 	{
 		// Start the game once everyone has confirmed.
 		try_start(lobby, clients, general_chat).await
@@ -1365,12 +1399,155 @@ fn is_ruleset_confirmed(lobby: &Lobby, clients: &Vec<Client>) -> bool
 }
 
 async fn try_start(
-	_lobby: &mut Lobby,
-	_clients: &mut Vec<Client>,
-	_general_chat: &mut mpsc::Sender<chat::Update>,
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
-	unimplemented!()
+	// We cannot start a game if it is already in progress.
+	if lobby.stage.has_game_started()
+	{
+		return Ok(());
+	}
+
+	// Make sure all the clients are still valid.
+	let removed = clients.e_drain_where(|client| client.is_dead).collect();
+	handle_removed(lobby, clients, removed);
+
+	if clients.len() < 1
+	{
+		eprintln!("Cannot start lobby {} without clients.", lobby.id);
+		return Ok(());
+	}
+
+	if lobby.num_players < lobby.max_players
+	{
+		println!("Cannot start lobby {}: not enough players.", lobby.id);
+		return Ok(());
+	}
+
+	// TODO replace with lobby.open_colors
+	let mut open_colors = vec![
+		Player::Red,
+		Player::Blue,
+		Player::Yellow,
+		Player::Teal,
+		Player::Black,
+		Player::Pink,
+		Player::Indigo,
+		Player::Purple,
+	];
+
+	// Assign player colors to clients and bots.
+	let num = clients.len() + lobby.bots.len();
+	let mut roles = Vec::new();
+	let mut colors = Vec::new();
+	let mut visiontypes = Vec::new();
+	for client in clients.iter()
+	{
+		let role = match lobby.roles.get(&client.id)
+		{
+			Some(&role) => role,
+			None =>
+			{
+				lobby.roles.insert(client.id, Role::Observer);
+				Role::Observer
+			}
+		};
+		roles.push(role);
+
+		let color = if role == Role::Player
+		{
+			// TODO color claims
+			let assigned = open_colors.pop();
+			debug_assert!(assigned.is_some());
+			match assigned
+			{
+				Some(color) => color,
+				None =>
+				{
+					return Err(Error::StartGameNotEnoughColors);
+				}
+			}
+		}
+		else
+		{
+			Player::None
+		};
+		colors.push(color);
+
+		// TODO visiontypes
+		visiontypes.push(VisionType::Normal);
+	}
+	for _bot in lobby.bots.iter()
+	{
+		roles.push(Role::Player);
+
+		let color = {
+			// TODO color claims
+			let assigned = open_colors.pop();
+			debug_assert!(assigned.is_some());
+			match assigned
+			{
+				Some(color) => color,
+				None =>
+				{
+					return Err(Error::StartGameNotEnoughColors);
+				}
+			}
+		};
+		colors.push(color);
+
+		// TODO visiontypes
+		visiontypes.push(VisionType::Normal);
+	}
+
+	debug_assert!(roles.len() == num);
+	debug_assert!(colors.len() == num);
+	debug_assert!(visiontypes.len() == num);
+	if roles.len() != num || colors.len() != num || visiontypes.len() != num
+	{
+		return Err(Error::StartGameVectorMismatch);
+	}
+
+	// TODO if (_replay && _replayname.empty()) return false;
+
+	// Check that all clients have access to the ruleset that we will use.
+	if !is_ruleset_confirmed(lobby, clients)
+	{
+		// List the new ruleset to trigger additional confirmations.
+		let message = Message::ListRuleset {
+			ruleset_name: lobby.ruleset_name.clone(),
+		};
+		for client in clients.iter_mut()
+		{
+			client.send(message.clone());
+		}
+
+		// Cannot continue until all player have confirmed the ruleset.
+		lobby.stage = Stage::WaitingForConfirmation;
+		return Ok(());
+	}
+
+	// We are truly starting.
+	lobby.stage = Stage::GameStarted;
+	// TODO actually start
+
+	for client in clients.iter()
+	{
+		let assigned_role = lobby.roles.get(&client.id);
+		debug_assert!(assigned_role.is_some());
+		if let Some(&role) = assigned_role
+		{
+			let update = chat::Update::InGame {
+				client_id: client.id,
+				role,
+			};
+			general_chat.send(update).await?;
+		}
+	}
+
+	Ok(())
 }
 
 #[derive(Debug)]
@@ -1379,6 +1556,8 @@ enum Error
 	EmptyMapPool,
 	NoPlayerCount,
 	ClientMissing,
+	StartGameVectorMismatch,
+	StartGameNotEnoughColors,
 	Io
 	{
 		error: io::Error,
@@ -1411,9 +1590,11 @@ impl fmt::Display for Error
 	{
 		match self
 		{
-			Error::EmptyMapPool => write!(f, "The map pool is empty"),
-			Error::NoPlayerCount => write!(f, "No player count defined"),
-			Error::ClientMissing => write!(f, "Client missing"),
+			Error::EmptyMapPool => write!(f, "{:#?}", self),
+			Error::NoPlayerCount => write!(f, "{:#?}", self),
+			Error::ClientMissing => write!(f, "{:#?}", self),
+			Error::StartGameVectorMismatch => write!(f, "{:#?}", self),
+			Error::StartGameNotEnoughColors => write!(f, "{:#?}", self),
 			Error::Io { error } => error.fmt(f),
 			Error::GeneralChat { error } => error.fmt(f),
 		}

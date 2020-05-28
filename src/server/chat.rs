@@ -54,6 +54,12 @@ pub enum Update
 		general_chat: mpsc::Sender<Update>,
 	},
 
+	InGame
+	{
+		client_id: Keycode,
+		role: Role,
+	},
+
 	Msg(Message),
 }
 
@@ -136,6 +142,14 @@ fn handle_update(
 		} =>
 		{
 			handle_find_lobby(lobbies, lobby_id, callback, general_chat);
+		}
+
+		Update::InGame {
+			client_id: _,
+			role: _,
+		} =>
+		{
+			// TODO broadcast Message:InGame
 		}
 
 		Update::Msg(message) =>

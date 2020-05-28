@@ -5,16 +5,16 @@
 pub enum Player
 {
 	/* No player. */
-	NONE = 0,
+	None = 0,
 	/* Player colors. */
-	RED,
-	BLUE,
-	YELLOW,
-	TEAL,
-	BLACK,
-	PINK,
-	INDIGO,
-	PURPLE,
+	Red,
+	Blue,
+	Yellow,
+	Teal,
+	Black,
+	Pink,
+	Indigo,
+	Purple,
 	/* Non-player vision types used by the Automaton. */
 	BLIND,
 	OBSERVER,
@@ -28,6 +28,6 @@ impl Default for Player
 {
 	fn default() -> Player
 	{
-		Player::NONE
+		Player::None
 	}
 }

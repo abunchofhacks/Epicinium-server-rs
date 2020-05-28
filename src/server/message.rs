@@ -192,6 +192,14 @@ pub enum Role
 	Observer,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Enum)]
+#[serde(rename_all = "lowercase")]
+pub enum VisionType
+{
+	Normal,
+	Global,
+}
+
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]
 pub struct JoinMetadata
 {
