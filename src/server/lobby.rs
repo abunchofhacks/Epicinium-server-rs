@@ -95,6 +95,10 @@ pub enum Update
 		general_chat: mpsc::Sender<chat::Update>,
 		map_name: String,
 	},
+	PickTutorial
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+	},
 	PickChallenge
 	{
 		general_chat: mpsc::Sender<chat::Update>,
@@ -187,6 +191,9 @@ struct Lobby
 	ruleset_name: String,
 	ruleset_confirmations: HashSet<Keycode>,
 	timer_in_seconds: u32,
+	challenge_id: Option<challenge::ChallengeId>,
+	is_tutorial: bool,
+	is_rated: bool,
 
 	stage: Stage,
 	game_in_progress: Option<mpsc::Sender<game::Update>>,
@@ -251,6 +258,9 @@ async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
 		ruleset_name,
 		ruleset_confirmations: HashSet::new(),
 		timer_in_seconds: 60,
+		challenge_id: None,
+		is_tutorial: false,
+		is_rated: true,
 		stage: Stage::Setup,
 		game_in_progress: None,
 	})
@@ -357,6 +367,11 @@ async fn handle_update(
 		} =>
 		{
 			pick_map(lobby, clients, map_name).await?;
+			describe_lobby(lobby, &mut general_chat).await
+		}
+		Update::PickTutorial { mut general_chat } =>
+		{
+			become_tutorial_lobby(lobby, clients).await?;
 			describe_lobby(lobby, &mut general_chat).await
 		}
 		Update::PickChallenge { mut general_chat } =>
@@ -1218,6 +1233,52 @@ async fn pick_map(
 	Ok(())
 }
 
+async fn become_tutorial_lobby(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+) -> Result<(), Error>
+{
+	// TODO check if client is host
+
+	// Is this a game lobby?
+	if lobby.is_replay
+	{
+		eprintln!("Cannot turn replay lobby {} into tutorial.", lobby.id);
+		return Ok(());
+	}
+
+	// Prevent lobbies from being turned to tutorial lobbies if there are
+	// multiple human players present.
+	if clients.len() > 1
+	{
+		eprintln!(
+			"Cannot turn lobby {} with {} clients into tutorial.",
+			lobby.id,
+			clients.len()
+		);
+		return Ok(());
+	}
+
+	pick_map(lobby, clients, "tutorial".to_string()).await?;
+	pick_timer(lobby, clients, 0).await?;
+
+	// TODO global vision
+
+	let ai_name = "TutorialTurtle";
+	let difficulty = Difficulty::Easy;
+	let num = 1;
+	for _ in 0..num
+	{
+		add_bot(lobby, clients);
+		change_ai(lobby, clients, None, ai_name.to_string());
+		change_difficulty(lobby, clients, None, difficulty);
+	}
+
+	lobby.is_tutorial = true;
+
+	Ok(())
+}
+
 async fn become_challenge_lobby(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
@@ -1245,12 +1306,12 @@ async fn become_challenge_lobby(
 	}
 
 	// Challenges are unrated because you cannot get 100 points.
-	// TODO lobby.rated = false;
+	lobby.is_rated = false;
 
 	let id = challenge::current_id();
 	let challenge_key = challenge::get_current_key();
 
-	// TODO lobby.challenge_id = Some(id)
+	lobby.challenge_id = Some(id);
 
 	for client in clients.iter_mut()
 	{
@@ -1500,7 +1561,7 @@ async fn try_start(
 				player_clients.push(game::PlayerClient {
 					id: client.id,
 					username: client.username.clone(),
-					sendbuffer: client.sendbuffer.clone(),
+					sendbuffer: Some(client.sendbuffer.clone()),
 
 					color,
 					vision,
@@ -1511,7 +1572,7 @@ async fn try_start(
 				watcher_clients.push(game::WatcherClient {
 					id: client.id,
 					username: client.username.clone(),
-					sendbuffer: client.sendbuffer.clone(),
+					sendbuffer: Some(client.sendbuffer.clone()),
 
 					role,
 				});
@@ -1586,12 +1647,6 @@ async fn try_start(
 	}
 
 	let planning_timer = Some(lobby.timer_in_seconds).filter(|&x| x > 0);
-	// TODO lobby.challenge_id
-	let challenge = None;
-	// TODO tutorial
-	let is_tutorial = false;
-	// TODO rating
-	let is_rated = false;
 
 	// We are truly starting.
 	let (updates_in, updates_out) = mpsc::channel::<game::Update>(1000);
@@ -1605,9 +1660,9 @@ async fn try_start(
 		lobby.map_name.clone(),
 		lobby.ruleset_name.clone(),
 		planning_timer,
-		challenge,
-		is_tutorial,
-		is_rated,
+		lobby.challenge_id,
+		lobby.is_tutorial,
+		lobby.is_rated,
 	);
 	tokio::spawn(task);
 	lobby.game_in_progress = Some(updates_in);

@@ -185,6 +185,20 @@ pub enum Message
 		#[serde(default, skip_serializing_if = "is_zero", rename = "time")]
 		timer_in_seconds: Option<u32>,
 	},
+	Tutorial
+	{
+		#[serde(default, skip_serializing_if = "is_zero")]
+		role: Option<Role>,
+
+		#[serde(default, skip_serializing_if = "is_zero")]
+		player: Option<PlayerColor>,
+
+		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
+		ruleset_name: Option<String>,
+
+		#[serde(default, skip_serializing_if = "is_zero", rename = "time")]
+		timer_in_seconds: Option<u32>,
+	},
 	Challenge,
 	Init,
 	Closing,

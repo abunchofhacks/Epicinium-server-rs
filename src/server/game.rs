@@ -19,11 +19,29 @@ pub struct PlayerClient
 {
 	pub id: Keycode,
 	pub username: String,
-	pub sendbuffer: mpsc::Sender<Message>,
+	pub sendbuffer: Option<mpsc::Sender<Message>>,
 
 	pub color: PlayerColor,
 	pub vision: VisionType,
 	// TODO flags
+}
+
+impl PlayerClient
+{
+	fn send(&mut self, message: Message)
+	{
+		let result = match &mut self.sendbuffer
+		{
+			Some(sendbuffer) => sendbuffer.try_send(message),
+			None => Ok(()),
+		};
+
+		match result
+		{
+			Ok(()) => (),
+			Err(_error) => self.sendbuffer = None,
+		}
+	}
 }
 
 #[derive(Debug)]
@@ -42,10 +60,28 @@ pub struct WatcherClient
 {
 	pub id: Keycode,
 	pub username: String,
-	pub sendbuffer: mpsc::Sender<Message>,
+	pub sendbuffer: Option<mpsc::Sender<Message>>,
 
 	pub role: Role,
 	// TODO flags
+}
+
+impl WatcherClient
+{
+	fn send(&mut self, message: Message)
+	{
+		let result = match &mut self.sendbuffer
+		{
+			Some(sendbuffer) => sendbuffer.try_send(message),
+			None => Ok(()),
+		};
+
+		match result
+		{
+			Ok(()) => (),
+			Err(_error) => self.sendbuffer = None,
+		}
+	}
 }
 
 pub async fn start(
@@ -100,23 +136,17 @@ pub async fn start(
 
 async fn run(
 	_updates: mpsc::Receiver<Update>,
-	players: Vec<PlayerClient>,
-	bots: Vec<Bot>,
-	_watchers: Vec<WatcherClient>,
+	mut players: Vec<PlayerClient>,
+	mut bots: Vec<Bot>,
+	mut watchers: Vec<WatcherClient>,
 	_map_name: String,
 	ruleset_name: String,
-	_planning_time_in_seconds: Option<u32>,
+	planning_time_in_seconds: Option<u32>,
 	_challenge: Option<ChallengeId>,
-	_is_tutorial: bool,
-	_is_rated: bool,
+	is_tutorial: bool,
+	is_rated: bool,
 ) -> Result<(), Error>
 {
-	// TODO challenge
-	// TODO tutorial
-	// TODO rated
-
-	// TODO use planning time
-
 	// TODO metadata
 
 	let mut playercolors = Vec::new();
@@ -131,6 +161,7 @@ async fn run(
 
 	let mut automaton = Automaton::create(playercolors, &ruleset_name)?;
 
+	// Certain players might have global vision.
 	for player in &players
 	{
 		match player.vision
@@ -146,6 +177,56 @@ async fn run(
 			VisionType::Normal => (),
 			VisionType::Global => automaton.grant_global_vision(bot.color),
 		}
+	}
+
+	for client in &mut players
+	{
+		if is_tutorial
+		{
+			client.send(Message::Tutorial {
+				role: Some(Role::Player),
+				player: Some(client.color),
+				ruleset_name: Some(ruleset_name.clone()),
+				timer_in_seconds: planning_time_in_seconds,
+			});
+		}
+		else
+		{
+			client.send(Message::Game {
+				role: Some(Role::Player),
+				player: Some(client.color),
+				ruleset_name: Some(ruleset_name.clone()),
+				timer_in_seconds: planning_time_in_seconds,
+			});
+		}
+	}
+
+	for client in &mut watchers
+	{
+		client.send(Message::Game {
+			role: Some(Role::Observer),
+			player: None,
+			ruleset_name: Some(ruleset_name.clone()),
+			timer_in_seconds: planning_time_in_seconds,
+		});
+	}
+
+	// Tell everyone who is playing as which color.
+	// TODO colors
+
+	// Tell everyone which skins are being used.
+	// TODO skins
+
+	// A challenge might be set.
+	// TODO set in automaton
+	// TODO tell clients mission briefing
+
+	// Load the map or replay.
+	// TODO
+
+	if is_rated
+	{
+		// TODO rating
 	}
 
 	Ok(())

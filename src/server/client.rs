@@ -1448,6 +1448,47 @@ async fn handle_message(
 			println!("Invalid message from client: {:?}", message);
 			return Err(Error::Illegal);
 		}
+		Message::Tutorial {
+			role: None,
+			player: None,
+			ruleset_name: None,
+			timer_in_seconds: None,
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						eprintln!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update = lobby::Update::PickTutorial {
+					general_chat: general_chat.clone(),
+				};
+				lobby.send(update).await?;
+
+				let update = lobby::Update::Start {
+					general_chat,
+					lobby_sendbuffer: lobby.clone(),
+				};
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid Tutorial message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
+		Message::Tutorial { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
 		Message::Challenge => match client.lobby
 		{
 			Some(ref mut lobby) =>
