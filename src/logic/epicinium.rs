@@ -5,6 +5,30 @@ use crate::logic::ruleset::InitializationError;
 use libc::c_char;
 use std::ffi::{CStr, CString};
 
+pub fn allocate_automaton(
+	players: Vec<PlayerColor>,
+	ruleset_name: &str,
+) -> Result<AllocatedAutomaton, AllocationError>
+{
+	let playercount = players.len();
+	let ruleset_name_as_cstr = CString::new(ruleset_name)?;
+	let ptr = unsafe {
+		epicinium_automaton_allocate(playercount, ruleset_name_as_cstr.as_ptr())
+	};
+	if ptr == std::ptr::null_mut()
+	{
+		return Err(AllocationError::AllocationFailed);
+	}
+	for player in players
+	{
+		unsafe {
+			let player_as_u8: u8 = std::mem::transmute(player);
+			epicinium_automaton_add_player(ptr, player_as_u8);
+		}
+	}
+	Ok(AllocatedAutomaton(ptr))
+}
+
 pub fn map_pool() -> Vec<String>
 {
 	let len = unsafe { epicinium_map_pool_size() };
@@ -247,6 +271,21 @@ pub fn challenge_mission_briefing(id: ChallengeId) -> serde_json::Value
 }
 
 #[derive(Debug)]
+pub struct AllocatedAutomaton(*mut Automaton);
+
+unsafe impl Send for AllocatedAutomaton {}
+
+impl Drop for AllocatedAutomaton
+{
+	fn drop(&mut self)
+	{
+		unsafe { epicinium_automaton_deallocate(self.0) }
+	}
+}
+
+enum Automaton {}
+
+#[derive(Debug)]
 pub struct AllocatedAi(*mut AICommander);
 
 unsafe impl Send for AllocatedAi {}
@@ -263,6 +302,13 @@ enum AICommander {}
 
 #[link(name = "epicinium", kind = "static")]
 extern "C" {
+	fn epicinium_automaton_allocate(
+		playercount: usize,
+		ruleset_name: *const c_char,
+	) -> *mut Automaton;
+	fn epicinium_automaton_add_player(automaton: *mut Automaton, player: u8);
+	fn epicinium_automaton_deallocate(automaton: *mut Automaton);
+
 	fn epicinium_map_pool_size() -> usize;
 	fn epicinium_map_pool_get(i: usize) -> *const c_char;
 

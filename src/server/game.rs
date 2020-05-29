@@ -2,6 +2,7 @@
 
 use crate::common::keycode::*;
 use crate::logic::ai;
+use crate::logic::automaton::Automaton;
 use crate::logic::challenge::ChallengeId;
 use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
@@ -48,11 +49,11 @@ pub async fn run(
 	lobby_id: Keycode,
 	mut end_update: mpsc::Sender<lobby::Update>,
 	_updates: mpsc::Receiver<Update>,
-	_players: Vec<PlayerClient>,
-	_bots: Vec<Bot>,
+	players: Vec<PlayerClient>,
+	bots: Vec<Bot>,
 	_watchers: Vec<WatcherClient>,
 	_map_name: String,
-	_ruleset_name: String,
+	ruleset_name: String,
 	_planning_time_in_seconds: Option<u32>,
 	_challenge: Option<ChallengeId>,
 	_is_tutorial: bool,
@@ -64,6 +65,18 @@ pub async fn run(
 	// TODO rated
 
 	// TODO use planning time
+
+	let mut playercolors = Vec::new();
+	for player in players
+	{
+		playercolors.push(player.color);
+	}
+	for bot in bots
+	{
+		playercolors.push(bot.color);
+	}
+
+	let _automaton = Automaton::create(playercolors, &ruleset_name);
 
 	match end_update.send(lobby::Update::GameEnded).await
 	{

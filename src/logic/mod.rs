@@ -1,6 +1,7 @@
 /* Logic */
 
 pub mod ai;
+pub mod automaton;
 pub mod challenge;
 pub mod difficulty;
 pub mod map;
