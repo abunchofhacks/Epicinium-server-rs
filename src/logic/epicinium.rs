@@ -29,6 +29,17 @@ pub fn allocate_automaton(
 	Ok(AllocatedAutomaton(ptr))
 }
 
+pub fn grant_global_vision(
+	automaton: &mut AllocatedAutomaton,
+	player: PlayerColor,
+)
+{
+	unsafe {
+		let player_as_u8: u8 = std::mem::transmute(player);
+		epicinium_grant_global_vision(automaton.0, player_as_u8)
+	}
+}
+
 pub fn map_pool() -> Vec<String>
 {
 	let len = unsafe { epicinium_map_pool_size() };
@@ -307,6 +318,7 @@ extern "C" {
 		ruleset_name: *const c_char,
 	) -> *mut Automaton;
 	fn epicinium_automaton_add_player(automaton: *mut Automaton, player: u8);
+	fn epicinium_grant_global_vision(automaton: *mut Automaton, player: u8);
 	fn epicinium_automaton_deallocate(automaton: *mut Automaton);
 
 	fn epicinium_map_pool_size() -> usize;

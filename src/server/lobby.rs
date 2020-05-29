@@ -1595,7 +1595,7 @@ async fn try_start(
 
 	// We are truly starting.
 	let (updates_in, updates_out) = mpsc::channel::<game::Update>(1000);
-	let task = game::run(
+	let task = game::start(
 		lobby.id,
 		lobby_sendbuffer,
 		updates_out,

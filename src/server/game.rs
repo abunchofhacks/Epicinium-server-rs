@@ -2,12 +2,15 @@
 
 use crate::common::keycode::*;
 use crate::logic::ai;
+use crate::logic::automaton;
 use crate::logic::automaton::Automaton;
 use crate::logic::challenge::ChallengeId;
 use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
 use crate::server::lobby;
 use crate::server::message::*;
+
+use std::fmt;
 
 use tokio::sync::mpsc;
 
@@ -45,9 +48,57 @@ pub struct WatcherClient
 	// TODO flags
 }
 
-pub async fn run(
+pub async fn start(
 	lobby_id: Keycode,
 	mut end_update: mpsc::Sender<lobby::Update>,
+	updates: mpsc::Receiver<Update>,
+	players: Vec<PlayerClient>,
+	bots: Vec<Bot>,
+	watchers: Vec<WatcherClient>,
+	map_name: String,
+	ruleset_name: String,
+	planning_time_in_seconds: Option<u32>,
+	challenge: Option<ChallengeId>,
+	is_tutorial: bool,
+	is_rated: bool,
+)
+{
+	let result = run(
+		updates,
+		players,
+		bots,
+		watchers,
+		map_name,
+		ruleset_name,
+		planning_time_in_seconds,
+		challenge,
+		is_tutorial,
+		is_rated,
+	)
+	.await;
+
+	match result
+	{
+		Ok(()) =>
+		{}
+		Err(error) =>
+		{
+			eprintln!("Game in lobby {} crashed: {:#?}", lobby_id, error);
+		}
+	}
+
+	match end_update.send(lobby::Update::GameEnded).await
+	{
+		Ok(()) =>
+		{}
+		Err(error) =>
+		{
+			eprintln!("Game ended after its lobby {}: {:#?}", lobby_id, error);
+		}
+	}
+}
+
+async fn run(
 	_updates: mpsc::Receiver<Update>,
 	players: Vec<PlayerClient>,
 	bots: Vec<Bot>,
@@ -58,7 +109,7 @@ pub async fn run(
 	_challenge: Option<ChallengeId>,
 	_is_tutorial: bool,
 	_is_rated: bool,
-)
+) -> Result<(), Error>
 {
 	// TODO challenge
 	// TODO tutorial
@@ -66,33 +117,71 @@ pub async fn run(
 
 	// TODO use planning time
 
+	// TODO metadata
+
 	let mut playercolors = Vec::new();
-	for player in players
+	for player in &players
 	{
 		playercolors.push(player.color);
 	}
-	for bot in bots
+	for bot in &bots
 	{
 		playercolors.push(bot.color);
 	}
 
-	let _automaton = Automaton::create(playercolors, &ruleset_name);
+	let mut automaton = Automaton::create(playercolors, &ruleset_name)?;
 
-	match end_update.send(lobby::Update::GameEnded).await
+	for player in &players
 	{
-		Ok(()) =>
-		{}
-		Err(error) =>
+		match player.vision
 		{
-			eprintln!(
-				"Game ended after lobby {} crashed: {:?}",
-				lobby_id, error
-			);
+			VisionType::Normal => (),
+			VisionType::Global => automaton.grant_global_vision(player.color),
 		}
 	}
+	for bot in &bots
+	{
+		match bot.vision
+		{
+			VisionType::Normal => (),
+			VisionType::Global => automaton.grant_global_vision(bot.color),
+		}
+	}
+
+	Ok(())
 }
 
 #[derive(Debug)]
 pub enum Update {
 	// TODO
 }
+
+#[derive(Debug)]
+enum Error
+{
+	AllocationError(automaton::AllocationError),
+}
+
+impl From<automaton::AllocationError> for Error
+{
+	fn from(error: automaton::AllocationError) -> Self
+	{
+		Error::AllocationError(error)
+	}
+}
+
+impl fmt::Display for Error
+{
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
+	{
+		match self
+		{
+			Error::AllocationError(error) =>
+			{
+				write!(f, "Error while allocating: {}", error)
+			}
+		}
+	}
+}
+
+impl std::error::Error for Error {}

@@ -18,4 +18,9 @@ impl Automaton
 		let allocated = epicinium::allocate_automaton(players, ruleset_name)?;
 		Ok(Automaton(allocated))
 	}
+
+	pub fn grant_global_vision(&mut self, player: PlayerColor)
+	{
+		epicinium::grant_global_vision(&mut self.0, player);
+	}
 }
