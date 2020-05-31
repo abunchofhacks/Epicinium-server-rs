@@ -5,8 +5,8 @@ use crate::logic::ai;
 use crate::logic::automaton;
 use crate::logic::automaton::Automaton;
 use crate::logic::challenge::ChallengeId;
-use crate::logic::change::*;
-use crate::logic::order::*;
+use crate::logic::change::ChangeSet;
+use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
 use crate::server::lobby;
@@ -241,7 +241,7 @@ async fn run(
 		let shuffleplayers = challenge.is_none()
 			&& !map_name.contains("demo")
 			&& !map_name.contains("tutorial");
-		automaton.load(map_name, shuffleplayers, metadata);
+		automaton.load(map_name, shuffleplayers, metadata)?;
 	}
 
 	if is_rated
@@ -311,8 +311,8 @@ async fn iterate(
 {
 	while automaton.is_active()
 	{
-		let cset = automaton.act();
-		broadcast(players, bots, watchers, cset);
+		let cset = automaton.act()?;
+		broadcast(players, bots, watchers, cset)?;
 	}
 
 	// If players are defeated, we no longer wait for them in the
@@ -363,8 +363,8 @@ async fn iterate(
 		client.send(message.clone());
 	}
 
-	let cset = automaton.hibernate();
-	broadcast(players, bots, watchers, cset);
+	let cset = automaton.hibernate()?;
+	broadcast(players, bots, watchers, cset)?;
 
 	// Allow the bots to calculate their next move.
 	for bot in bots.into_iter()
@@ -374,8 +374,8 @@ async fn iterate(
 
 	sleep(players, watchers, updates).await?;
 
-	let cset = automaton.awake();
-	broadcast(players, bots, watchers, cset);
+	let cset = automaton.awake()?;
+	broadcast(players, bots, watchers, cset)?;
 
 	wait_for_staging(players, watchers, updates).await?;
 
@@ -383,7 +383,7 @@ async fn iterate(
 	{
 		if let Some(orders) = player.received_orders.take()
 		{
-			automaton.receive(player.color, orders);
+			automaton.receive(player.color, orders)?;
 		}
 	}
 
@@ -391,12 +391,13 @@ async fn iterate(
 	{
 		if !bot.is_defeated
 		{
-			automaton.receive(bot.color, bot.ai.retrieve_orders());
+			let orders = bot.ai.retrieve_orders()?;
+			automaton.receive(bot.color, orders)?;
 		}
 	}
 
-	let cset = automaton.prepare();
-	broadcast(players, bots, watchers, cset);
+	let cset = automaton.prepare()?;
+	broadcast(players, bots, watchers, cset)?;
 
 	Ok(State::InProgress)
 }
@@ -406,7 +407,7 @@ fn broadcast(
 	bots: &mut Vec<Bot>,
 	watchers: &mut Vec<WatcherClient>,
 	cset: ChangeSet,
-)
+) -> Result<(), Error>
 {
 	for client in players
 	{
@@ -418,7 +419,7 @@ fn broadcast(
 	for bot in bots
 	{
 		let changes = cset.get(bot.color);
-		bot.ai.receive(changes);
+		bot.ai.receive(changes)?;
 	}
 
 	for client in watchers
@@ -427,6 +428,8 @@ fn broadcast(
 		let message = Message::Changes { changes };
 		client.send(message);
 	}
+
+	Ok(())
 }
 
 async fn rest(
@@ -506,14 +509,14 @@ async fn wait_for_staging(
 #[derive(Debug)]
 enum Error
 {
-	AllocationError(automaton::AllocationError),
+	Interface(automaton::InterfaceError),
 }
 
-impl From<automaton::AllocationError> for Error
+impl From<automaton::InterfaceError> for Error
 {
-	fn from(error: automaton::AllocationError) -> Self
+	fn from(error: automaton::InterfaceError) -> Self
 	{
-		Error::AllocationError(error)
+		Error::Interface(error)
 	}
 }
 
@@ -523,10 +526,7 @@ impl fmt::Display for Error
 	{
 		match self
 		{
-			Error::AllocationError(error) =>
-			{
-				write!(f, "Error while allocating: {}", error)
-			}
+			Error::Interface(error) => error.fmt(f),
 		}
 	}
 }

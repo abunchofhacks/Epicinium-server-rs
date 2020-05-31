@@ -1,12 +1,12 @@
 /* AI */
 
-pub use crate::logic::epicinium::AllocationError;
+pub use crate::logic::epicinium::InterfaceError;
 
-use crate::logic::change::*;
+use crate::logic::change::Change;
 use crate::logic::difficulty::Difficulty;
 use crate::logic::epicinium;
 use crate::logic::epicinium::AllocatedAi;
-use crate::logic::order::*;
+use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 
 pub fn exists(ainame: &str) -> bool
@@ -30,7 +30,7 @@ impl Commander
 		difficulty: Difficulty,
 		ruleset_name: &str,
 		character: u8,
-	) -> Result<Commander, AllocationError>
+	) -> Result<Commander, InterfaceError>
 	{
 		let allocated = epicinium::allocate_ai(
 			name,
@@ -42,18 +42,21 @@ impl Commander
 		Ok(Commander(allocated))
 	}
 
-	pub fn receive(&mut self, _changes: Vec<Change>)
+	pub fn receive(
+		&mut self,
+		changes: Vec<Change>,
+	) -> Result<(), InterfaceError>
 	{
-		unimplemented!()
+		epicinium::ai_receive(&mut self.0, changes)
 	}
 
 	pub fn prepare_orders(&mut self)
 	{
-		unimplemented!()
+		epicinium::ai_prepare_orders(&mut self.0)
 	}
 
-	pub fn retrieve_orders(&mut self) -> Vec<Order>
+	pub fn retrieve_orders(&mut self) -> Result<Vec<Order>, InterfaceError>
 	{
-		unimplemented!()
+		epicinium::ai_retrieve_orders(&mut self.0)
 	}
 }

@@ -1744,7 +1744,7 @@ enum Error
 	},
 	AiAllocationError
 	{
-		error: ai::AllocationError,
+		error: ai::InterfaceError,
 	},
 }
 

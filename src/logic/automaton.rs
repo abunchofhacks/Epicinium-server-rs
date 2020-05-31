@@ -1,11 +1,11 @@
 /* Automaton */
 
-pub use crate::logic::epicinium::AllocationError;
+pub use crate::logic::epicinium::InterfaceError;
 
-use crate::logic::change::*;
+use crate::logic::change::ChangeSet;
 use crate::logic::epicinium;
 use crate::logic::epicinium::AllocatedAutomaton;
-use crate::logic::order::*;
+use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 
 #[derive(Debug)]
@@ -16,7 +16,7 @@ impl Automaton
 	pub fn create(
 		players: Vec<PlayerColor>,
 		ruleset_name: &str,
-	) -> Result<Automaton, AllocationError>
+	) -> Result<Automaton, InterfaceError>
 	{
 		let allocated = epicinium::allocate_automaton(players, ruleset_name)?;
 		Ok(Automaton(allocated))
@@ -29,52 +29,56 @@ impl Automaton
 
 	pub fn load(
 		&mut self,
-		_map_name: String,
-		_shuffleplayers: bool,
-		_metadata: Metadata,
-	)
+		map_name: String,
+		shuffleplayers: bool,
+		metadata: Metadata,
+	) -> Result<(), InterfaceError>
 	{
-		unimplemented!()
+		epicinium::load_map(&mut self.0, map_name, shuffleplayers, metadata)
 	}
 
-	pub fn is_active(&self) -> bool
+	pub fn is_active(&mut self) -> bool
 	{
-		unimplemented!()
+		epicinium::automaton_is_active(&mut self.0)
 	}
 
-	pub fn act(&mut self) -> ChangeSet
+	pub fn act(&mut self) -> Result<ChangeSet, InterfaceError>
 	{
-		unimplemented!()
+		epicinium::automaton_act(&mut self.0)
 	}
 
-	pub fn is_gameover(&self) -> bool
+	pub fn is_gameover(&mut self) -> bool
 	{
-		unimplemented!()
+		epicinium::automaton_is_gameover(&mut self.0)
 	}
 
-	pub fn is_defeated(&self, _player: PlayerColor) -> bool
+	pub fn is_defeated(&mut self, player: PlayerColor) -> bool
 	{
-		unimplemented!()
+		epicinium::automaton_is_defeated(&mut self.0, player)
 	}
 
-	pub fn hibernate(&mut self) -> ChangeSet
+	pub fn hibernate(&mut self) -> Result<ChangeSet, InterfaceError>
 	{
-		unimplemented!()
+		epicinium::automaton_hibernate(&mut self.0)
 	}
 
-	pub fn awake(&mut self) -> ChangeSet
+	pub fn awake(&mut self) -> Result<ChangeSet, InterfaceError>
 	{
-		unimplemented!()
+		epicinium::automaton_awake(&mut self.0)
 	}
 
-	pub fn receive(&mut self, _player: PlayerColor, _orders: Vec<Order>)
+	pub fn receive(
+		&mut self,
+		player: PlayerColor,
+		orders: Vec<Order>,
+	) -> Result<(), InterfaceError>
 	{
-		unimplemented!()
+		epicinium::automaton_receive(&mut self.0, player, orders)
 	}
 
-	pub fn prepare(&mut self) -> ChangeSet
+	pub fn prepare(&mut self) -> Result<ChangeSet, InterfaceError>
 	{
-		unimplemented!()
+		epicinium::automaton_prepare(&mut self.0)
 	}
 }
 
