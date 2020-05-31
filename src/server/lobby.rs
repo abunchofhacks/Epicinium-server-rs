@@ -127,6 +127,8 @@ pub enum Update
 
 	GameEnded,
 
+	ForwardToGame(game::Update),
+
 	Msg(Message),
 }
 
@@ -421,6 +423,23 @@ async fn handle_update(
 			Ok(())
 		}
 		Update::GameEnded => Err(Error::GameEndedWithoutStarting),
+
+		Update::ForwardToGame(update) =>
+		{
+			match &mut lobby.game_in_progress
+			{
+				Some(game) =>
+				{
+					game.send(update).await?;
+					Ok(())
+				}
+				None =>
+				{
+					eprintln!("Discarding game update {:?} after game ended in lobby {}", update, lobby.id);
+					Ok(())
+				}
+			}
+		}
 
 		Update::Msg(message) =>
 		{
@@ -1565,6 +1584,11 @@ async fn try_start(
 
 					color,
 					vision,
+
+					is_defeated: false,
+					is_retired: false,
+					has_synced: false,
+					received_orders: None,
 				});
 			}
 			Role::Observer =>
@@ -1575,6 +1599,9 @@ async fn try_start(
 					sendbuffer: Some(client.sendbuffer.clone()),
 
 					role,
+					vision_level: role.vision_level(),
+
+					has_synced: false,
 				});
 			}
 		}
@@ -1603,7 +1630,7 @@ async fn try_start(
 
 		let character = bot.slot.get_character();
 
-		let allocated_ai = ai::allocate_ai(
+		let allocated_ai = ai::Commander::create(
 			&bot.ai_name,
 			color,
 			bot.difficulty,
@@ -1622,6 +1649,8 @@ async fn try_start(
 
 			color,
 			vision,
+
+			is_defeated: false,
 		});
 	}
 
@@ -1709,6 +1738,10 @@ enum Error
 	{
 		error: mpsc::error::SendError<chat::Update>,
 	},
+	Game
+	{
+		error: mpsc::error::SendError<game::Update>,
+	},
 	AiAllocationError
 	{
 		error: ai::AllocationError,
@@ -1731,6 +1764,14 @@ impl From<mpsc::error::SendError<chat::Update>> for Error
 	}
 }
 
+impl From<mpsc::error::SendError<game::Update>> for Error
+{
+	fn from(error: mpsc::error::SendError<game::Update>) -> Self
+	{
+		Error::Game { error }
+	}
+}
+
 impl fmt::Display for Error
 {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
@@ -1744,6 +1785,7 @@ impl fmt::Display for Error
 			Error::GameEndedWithoutStarting => write!(f, "{:#?}", self),
 			Error::Io { error } => error.fmt(f),
 			Error::GeneralChat { error } => error.fmt(f),
+			Error::Game { error } => error.fmt(f),
 			Error::AiAllocationError { error } =>
 			{
 				write!(f, "Error while allocating AI: {}", error)

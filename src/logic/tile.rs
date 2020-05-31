@@ -1,54 +1,28 @@
 /* Tile */
 
 use crate::common::header::*;
-use crate::logic::player::Player;
+use crate::logic::player::PlayerColor;
 
-#[derive(
-	Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug, Enum,
-)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
-pub enum TileType
-{
-	NONE = 0,
-	GRASS,
-	DIRT,
-	DESERT,
-	STONE,
-	RUBBLE,
-	RIDGE,
-	MOUNTAIN,
-	WATER,
-	FOREST,
-	CITY,
-	TOWN,
-	SETTLEMENT,
-	INDUSTRY,
-	EMBASSY,
-	BARRACKS,
-	AIRFIELD,
-	REACTOR,
-	FARM,
-	SOIL,
-	CROPS,
-	TRENCHES,
-}
+pub struct TileType(Option<String>);
 
 impl Default for TileType
 {
 	fn default() -> TileType
 	{
-		TileType::NONE
+		TileType(None)
 	}
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct TileToken
 {
 	#[serde(rename = "type")]
 	pub typ: TileType,
 
 	#[serde(default, skip_serializing_if = "is_zero")]
-	pub owner: Player,
+	pub owner: PlayerColor,
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub stacks: i8,

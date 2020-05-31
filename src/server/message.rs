@@ -4,8 +4,10 @@ use crate::common::header::*;
 use crate::common::keycode::*;
 use crate::common::version::*;
 use crate::logic::challenge;
+use crate::logic::change::Change;
 use crate::logic::difficulty::Difficulty;
 use crate::logic::map;
+use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
 
@@ -200,6 +202,26 @@ pub enum Message
 		timer_in_seconds: Option<u32>,
 	},
 	Challenge,
+	#[serde(rename = "change")]
+	Changes
+	{
+		changes: Vec<Change>,
+	},
+	#[serde(rename = "order_old")]
+	OrdersOld
+	{
+		orders: Vec<Order>,
+	},
+	#[serde(rename = "order_new")]
+	OrdersNew
+	{
+		orders: Vec<Order>,
+	},
+	Sync
+	{
+		#[serde(default, skip_serializing_if = "is_zero", rename = "time")]
+		planning_time_in_seconds: Option<u32>,
+	},
 	Init,
 	Closing,
 	Closed,
@@ -229,6 +251,18 @@ pub enum Role
 {
 	Player,
 	Observer,
+}
+
+impl Role
+{
+	pub fn vision_level(&self) -> PlayerColor
+	{
+		match self
+		{
+			Role::Observer => PlayerColor::Observer,
+			Role::Player => PlayerColor::Blind,
+		}
+	}
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Enum)]

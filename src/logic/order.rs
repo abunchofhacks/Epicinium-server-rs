@@ -4,7 +4,6 @@ use crate::logic::descriptor::Descriptor;
 use crate::logic::tile::TileType;
 use crate::logic::unit::UnitType;
 
-
 #[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Move
@@ -20,8 +19,7 @@ pub enum Move
 #[serde(rename_all = "lowercase")]
 pub enum Order
 {
-	NONE
-	{},
+	NONE {},
 	MOVE
 	{
 		subject: Descriptor,
@@ -34,6 +32,11 @@ pub enum Order
 		target: Descriptor,
 	},
 	FOCUS
+	{
+		subject: Descriptor,
+		target: Descriptor,
+	},
+	LOCKDOWN
 	{
 		subject: Descriptor,
 		target: Descriptor,
@@ -95,5 +98,8 @@ pub enum Order
 
 impl Default for Order
 {
-	fn default() -> Order { Order::NONE {} }
+	fn default() -> Order
+	{
+		Order::NONE {}
+	}
 }

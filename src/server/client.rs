@@ -3,6 +3,7 @@
 use crate::common::keycode::Keycode;
 use crate::common::version::*;
 use crate::server::chat;
+use crate::server::game;
 use crate::server::lobby;
 use crate::server::login;
 use crate::server::message::*;
@@ -1520,6 +1521,46 @@ async fn handle_message(
 				return Err(Error::Illegal);
 			}
 		},
+		Message::OrdersNew { orders } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = game::Update::Orders {
+					client_id: client.id,
+					orders,
+				};
+				let update = lobby::Update::ForwardToGame(update);
+				lobby.send(update).await?
+			}
+			None =>
+			{
+				println!("Invalid Sync message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
+		Message::Sync {
+			planning_time_in_seconds: None,
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = game::Update::Sync {
+					client_id: client.id,
+				};
+				let update = lobby::Update::ForwardToGame(update);
+				lobby.send(update).await?
+			}
+			None =>
+			{
+				println!("Invalid Sync message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
+		Message::Sync { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
 		Message::Init => match client.general_chat
 		{
 			Some(ref mut general_chat) =>
@@ -1622,6 +1663,8 @@ async fn handle_message(
 		| Message::ListMap { .. }
 		| Message::PickChallenge { .. }
 		| Message::InGame { .. }
+		| Message::Changes { .. }
+		| Message::OrdersOld { .. }
 		| Message::Closing
 		| Message::Closed =>
 		{

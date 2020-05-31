@@ -1,15 +1,14 @@
 /* Change */
 
 use crate::common::header::*;
+use crate::logic::cycle::*;
+use crate::logic::descriptor::*;
+use crate::logic::order::*;
 use crate::logic::player::*;
 use crate::logic::position::*;
-use crate::logic::descriptor::*;
 use crate::logic::tile::*;
 use crate::logic::unit::*;
-use crate::logic::cycle::*;
-use crate::logic::order::*;
 use crate::logic::vision::*;
-
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
@@ -159,7 +158,7 @@ pub enum Change
 	CAPTURED
 	{
 		subject: Descriptor,
-		player: Player,
+		player: PlayerColor,
 	},
 	// <subject> tile produces a unit and spends <power>
 	PRODUCES
@@ -421,7 +420,7 @@ pub enum Change
 		subject: Descriptor,
 
 		#[serde(default)]
-		player: Player,
+		player: PlayerColor,
 
 		initiative: i8,
 	},
@@ -429,7 +428,7 @@ pub enum Change
 	FUNDS
 	{
 		#[serde(default)]
-		player: Player,
+		player: PlayerColor,
 
 		money: i16,
 	},
@@ -439,7 +438,7 @@ pub enum Change
 		subject: Descriptor,
 
 		#[serde(default)]
-		player: Player,
+		player: PlayerColor,
 
 		money: i16,
 	},
@@ -449,13 +448,12 @@ pub enum Change
 		subject: Descriptor,
 
 		#[serde(default)]
-		player: Player,
+		player: PlayerColor,
 
 		money: i16,
 	},
 	// your orders are delayed because you gave a sleep order
-	SLEEPING
-	{},
+	SLEEPING {},
 	// your <subject> is currently acting out its order
 	ACTING
 	{
@@ -496,25 +494,24 @@ pub enum Change
 		subject: Descriptor,
 	},
 	// declare that the entire map has been announced
-	BORDER
-	{},
+	BORDER {},
 	// <player> gained <score> from <subject>
 	SCORED
 	{
 		subject: Descriptor,
-		player: Player,
+		player: PlayerColor,
 		score: i16,
 	},
 	// <player> was defeated and got <score>
 	DEFEAT
 	{
-		player: Player,
+		player: PlayerColor,
 		score: i16,
 	},
 	// <player> was victorious and got <score>
 	VICTORY
 	{
-		player: Player,
+		player: PlayerColor,
 		score: i16,
 	},
 	// the game has ended; the world was worth <score>
@@ -529,26 +526,39 @@ pub enum Change
 pub enum Notice
 {
 	NONE = 0,
+	ORDERINVALID,
+	HALTED,
 	DESTINATIONOCCUPIED,
 	SUBJECTOCCUPIED,
 	TARGETOCCUPIED,
+	SUBJECTKILLED,
 	NOTARGET,
+	UNBUILDABLE,
+	UNWALKABLE,
+	INACCESSIBLE,
 	LACKINGSTACKS,
 	LACKINGPOWER,
 	LACKINGMONEY,
+	OCCUPIEDBYENEMY,
 	ACTIVEATTACK,
 	RETALIATIONATTACK,
 	FOCUSATTACK,
 	TRIGGEREDFOCUSATTACK,
+	TRIGGEREDLOCKDOWNATTACK,
 	OPPORTUNITYATTACK,
+	RESIGNED,
+	ROUNDLIMIT,
 }
 
 impl Default for Notice
 {
-	fn default() -> Notice { Notice::NONE }
+	fn default() -> Notice
+	{
+		Notice::NONE
+	}
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Attacker
 {
 	#[serde(rename = "type")]
@@ -557,7 +567,7 @@ pub struct Attacker
 	pub position: Position,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Bombarder
 {
 	#[serde(rename = "type")]
@@ -569,14 +579,15 @@ pub struct ChangeSet(Vec<(Change, Vision)>);
 
 impl ChangeSet
 {
-	pub fn push(&mut self, change : Change, vision : Vision)
+	pub fn push(&mut self, change: Change, vision: Vision)
 	{
 		self.0.push((change, vision));
 	}
 
-	pub fn get(& self, player : Player) -> Vec<Change>
+	pub fn get(&self, player: PlayerColor) -> Vec<Change>
 	{
-		self.0.iter()
+		self.0
+			.iter()
 			.filter(|&&(_, ref vision)| vision.contains(player))
 			.map(|&(ref change, _)| (*change).clone())
 			.collect()

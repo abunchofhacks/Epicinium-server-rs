@@ -5,6 +5,8 @@ use crate::logic::ai;
 use crate::logic::automaton;
 use crate::logic::automaton::Automaton;
 use crate::logic::challenge::ChallengeId;
+use crate::logic::change::*;
+use crate::logic::order::*;
 use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
 use crate::server::lobby;
@@ -23,11 +25,20 @@ pub struct PlayerClient
 
 	pub color: PlayerColor,
 	pub vision: VisionType,
-	// TODO flags
+
+	pub is_defeated: bool,
+	pub is_retired: bool,
+	pub has_synced: bool,
+	pub received_orders: Option<Vec<Order>>,
 }
 
 impl PlayerClient
 {
+	fn is_disconnected(&self) -> bool
+	{
+		self.sendbuffer.is_some()
+	}
+
 	fn send(&mut self, message: Message)
 	{
 		let result = match &mut self.sendbuffer
@@ -48,11 +59,12 @@ impl PlayerClient
 pub struct Bot
 {
 	pub slot: Botslot,
-	pub ai: ai::AllocatedAi,
+	pub ai: ai::Commander,
 
 	pub color: PlayerColor,
 	pub vision: VisionType,
-	// TODO flags
+
+	pub is_defeated: bool,
 }
 
 #[derive(Debug)]
@@ -63,7 +75,9 @@ pub struct WatcherClient
 	pub sendbuffer: Option<mpsc::Sender<Message>>,
 
 	pub role: Role,
-	// TODO flags
+	pub vision_level: PlayerColor,
+
+	pub has_synced: bool,
 }
 
 impl WatcherClient
@@ -135,19 +149,20 @@ pub async fn start(
 }
 
 async fn run(
-	_updates: mpsc::Receiver<Update>,
+	mut updates: mpsc::Receiver<Update>,
 	mut players: Vec<PlayerClient>,
 	mut bots: Vec<Bot>,
 	mut watchers: Vec<WatcherClient>,
-	_map_name: String,
+	map_name: String,
 	ruleset_name: String,
 	planning_time_in_seconds: Option<u32>,
-	_challenge: Option<ChallengeId>,
+	challenge: Option<ChallengeId>,
 	is_tutorial: bool,
 	is_rated: bool,
 ) -> Result<(), Error>
 {
 	// TODO metadata
+	let metadata = automaton::Metadata {};
 
 	let mut playercolors = Vec::new();
 	for player in &players
@@ -221,20 +236,271 @@ async fn run(
 	// TODO set in automaton
 	// TODO tell clients mission briefing
 
-	// Load the map or replay.
-	// TODO
+	// Load the map.
+	{
+		let shuffleplayers = challenge.is_none()
+			&& !map_name.contains("demo")
+			&& !map_name.contains("tutorial");
+		automaton.load(map_name, shuffleplayers, metadata);
+	}
 
 	if is_rated
 	{
 		// TODO rating
 	}
 
+	loop
+	{
+		let state = iterate(
+			&mut automaton,
+			&mut players,
+			&mut bots,
+			&mut watchers,
+			&mut updates,
+			planning_time_in_seconds,
+		)
+		.await?;
+
+		match state
+		{
+			State::InProgress => (),
+			State::Finished => break,
+		}
+	}
+
+	// TODO handle rejoins of observers that joined at the last moment
+
+	// Is this a competitive 1v1 match with two humans?
+	// TODO rating
+
+	// If there are non-bot non-observer participants, adjust their ratings.
+	// TODO retire
+
 	Ok(())
 }
 
 #[derive(Debug)]
-pub enum Update {
-	// TODO
+pub enum Update
+{
+	Orders
+	{
+		client_id: Keycode,
+		orders: Vec<Order>,
+	},
+	Sync
+	{
+		client_id: Keycode
+	},
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum State
+{
+	InProgress,
+	Finished,
+}
+
+async fn iterate(
+	automaton: &mut Automaton,
+	players: &mut Vec<PlayerClient>,
+	bots: &mut Vec<Bot>,
+	watchers: &mut Vec<WatcherClient>,
+	updates: &mut mpsc::Receiver<Update>,
+	planning_time_in_seconds: Option<u32>,
+) -> Result<State, Error>
+{
+	while automaton.is_active()
+	{
+		let cset = automaton.act();
+		broadcast(players, bots, watchers, cset);
+	}
+
+	// If players are defeated, we no longer wait for them in the
+	// planning phase.
+	for player in players.into_iter()
+	{
+		if automaton.is_defeated(player.color)
+		{
+			player.is_defeated = true;
+		}
+	}
+	// If bots are defeated, we no longer ask them for orders in the
+	// action phase.
+	for bot in bots.into_iter()
+	{
+		if automaton.is_defeated(bot.color)
+		{
+			bot.is_defeated = true;
+		}
+	}
+
+	rest(players, watchers, updates).await?;
+
+	// If the game has ended, we are done.
+	// We waited with this check until all players have finished animating,
+	// to avoid spoiling the outcome by changing ratings or posting to Discord.
+	if automaton.is_gameover()
+	{
+		return Ok(State::Finished);
+	}
+
+	// If all live players are disconnected during the resting phase,
+	// the game cannot continue until at least one player reconnects
+	// and has finished rejoining.
+	ensure_at_least_one_live_player(players, watchers, updates).await?;
+
+	let message = Message::Sync {
+		planning_time_in_seconds,
+	};
+	for client in players.into_iter()
+	{
+		client.has_synced = false;
+		client.send(message.clone());
+	}
+	for client in watchers.into_iter()
+	{
+		client.has_synced = false;
+		client.send(message.clone());
+	}
+
+	let cset = automaton.hibernate();
+	broadcast(players, bots, watchers, cset);
+
+	// Allow the bots to calculate their next move.
+	for bot in bots.into_iter()
+	{
+		bot.ai.prepare_orders();
+	}
+
+	sleep(players, watchers, updates).await?;
+
+	let cset = automaton.awake();
+	broadcast(players, bots, watchers, cset);
+
+	wait_for_staging(players, watchers, updates).await?;
+
+	for player in players.into_iter()
+	{
+		if let Some(orders) = player.received_orders.take()
+		{
+			automaton.receive(player.color, orders);
+		}
+	}
+
+	for bot in bots.into_iter()
+	{
+		if !bot.is_defeated
+		{
+			automaton.receive(bot.color, bot.ai.retrieve_orders());
+		}
+	}
+
+	let cset = automaton.prepare();
+	broadcast(players, bots, watchers, cset);
+
+	Ok(State::InProgress)
+}
+
+fn broadcast(
+	players: &mut Vec<PlayerClient>,
+	bots: &mut Vec<Bot>,
+	watchers: &mut Vec<WatcherClient>,
+	cset: ChangeSet,
+)
+{
+	for client in players
+	{
+		let changes = cset.get(client.color);
+		let message = Message::Changes { changes };
+		client.send(message);
+	}
+
+	for bot in bots
+	{
+		let changes = cset.get(bot.color);
+		bot.ai.receive(changes);
+	}
+
+	for client in watchers
+	{
+		let changes = cset.get(client.vision_level);
+		let message = Message::Changes { changes };
+		client.send(message);
+	}
+}
+
+async fn rest(
+	_players: &mut Vec<PlayerClient>,
+	_watchers: &mut Vec<WatcherClient>,
+	_updates: &mut mpsc::Receiver<Update>,
+) -> Result<(), Error>
+{
+	// Start the planning phase when all players (or all watchers if
+	// if this is a replay lobby) are ready. Players and watchers can
+	// reconnect in the resting phase while others are animating.
+	// Players will wait until other players have fully rejoined,
+	// and watchers wait until other watchers have rejoined.
+	// TODO handle rejoins
+	// TODO select
+
+	Ok(())
+}
+
+async fn ensure_at_least_one_live_player(
+	players: &mut Vec<PlayerClient>,
+	_watchers: &mut Vec<WatcherClient>,
+	_updates: &mut mpsc::Receiver<Update>,
+) -> Result<(), Error>
+{
+	if players.is_empty()
+	{
+		return Ok(());
+	}
+
+	for player in players
+	{
+		if !player.is_defeated
+			&& !player.is_retired
+			&& !player.is_disconnected()
+		{
+			return Ok(());
+		}
+	}
+
+	// TODO handle rejoins
+	// TODO select
+	Ok(())
+}
+
+async fn sleep(
+	_players: &mut Vec<PlayerClient>,
+	_watchers: &mut Vec<WatcherClient>,
+	_updates: &mut mpsc::Receiver<Update>,
+) -> Result<(), Error>
+{
+	// Start staging when either the timer runs out or all non-defeated
+	// players are ready, or when all players except one are undefeated
+	// or have retired. Players and watchers can reconnect in the
+	// planning phase if there is still time.
+	// TODO handle rejoins
+	// TODO select
+
+	Ok(())
+}
+
+async fn wait_for_staging(
+	_players: &mut Vec<PlayerClient>,
+	_watchers: &mut Vec<WatcherClient>,
+	_updates: &mut mpsc::Receiver<Update>,
+) -> Result<(), Error>
+{
+	// There is a 10 second grace period for anyone whose orders we
+	// haven't received; they might have sent their orders before
+	// receiving the staging announcement.
+	// TODO defer rejoins until later (separate mpsc?)
+	// TODO select
+
+	Ok(())
 }
 
 #[derive(Debug)]
