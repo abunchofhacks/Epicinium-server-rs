@@ -11,9 +11,4 @@ pub mod player;
 pub mod ruleset;
 pub mod vision;
 
-mod cycle;
-mod descriptor;
 mod epicinium;
-mod position;
-mod tile;
-mod unit;
