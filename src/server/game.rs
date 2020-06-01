@@ -29,14 +29,14 @@ pub struct PlayerClient
 	pub is_defeated: bool,
 	pub is_retired: bool,
 	pub has_synced: bool,
-	pub received_orders: Option<Vec<Order>>,
+	pub submitted_orders: Option<Vec<Order>>,
 }
 
 impl PlayerClient
 {
 	fn is_disconnected(&self) -> bool
 	{
-		self.sendbuffer.is_some()
+		self.sendbuffer.is_none()
 	}
 
 	fn send(&mut self, message: Message)
@@ -82,6 +82,11 @@ pub struct WatcherClient
 
 impl WatcherClient
 {
+	fn is_disconnected(&self) -> bool
+	{
+		self.sendbuffer.is_some()
+	}
+
 	fn send(&mut self, message: Message)
 	{
 		let result = match &mut self.sendbuffer
@@ -291,6 +296,10 @@ pub enum Update
 	{
 		client_id: Keycode
 	},
+	Resign
+	{
+		client_id: Keycode
+	},
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -372,16 +381,17 @@ async fn iterate(
 		bot.ai.prepare_orders();
 	}
 
-	sleep(players, watchers, updates).await?;
+	let num_bots = bots.len();
+	sleep(players, num_bots, watchers, updates).await?;
 
 	let cset = automaton.awake()?;
 	broadcast(players, bots, watchers, cset)?;
 
-	wait_for_staging(players, watchers, updates).await?;
+	stage(players, watchers, updates).await?;
 
 	for player in players.into_iter()
 	{
-		if let Some(orders) = player.received_orders.take()
+		if let Some(orders) = player.submitted_orders.take()
 		{
 			automaton.receive(player.color, orders)?;
 		}
@@ -433,9 +443,9 @@ fn broadcast(
 }
 
 async fn rest(
-	_players: &mut Vec<PlayerClient>,
-	_watchers: &mut Vec<WatcherClient>,
-	_updates: &mut mpsc::Receiver<Update>,
+	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
+	updates: &mut mpsc::Receiver<Update>,
 ) -> Result<(), Error>
 {
 	// Start the planning phase when all players (or all watchers if
@@ -443,16 +453,73 @@ async fn rest(
 	// reconnect in the resting phase while others are animating.
 	// Players will wait until other players have fully rejoined,
 	// and watchers wait until other watchers have rejoined.
-	// TODO handle rejoins
-	// TODO select
+	while !all_players_or_watchers_have_synced(players, watchers)
+	{
+		let update = match updates.recv().await
+		{
+			Some(update) => update,
+			None => return Err(Error::LobbyGone),
+		};
+
+		// TODO handle rejoins
+		match update
+		{
+			Update::Orders { client_id, .. } =>
+			{
+				eprintln!("Ignoring orders from {} while resting", client_id);
+			}
+			Update::Sync { client_id } =>
+			{
+				for client in players.iter_mut()
+				{
+					if client.id == client_id
+					{
+						client.has_synced = true;
+					}
+				}
+				for client in watchers.iter_mut()
+				{
+					if client.id == client_id
+					{
+						client.has_synced = true;
+					}
+				}
+			}
+			Update::Resign { client_id: _ } =>
+			{
+				// TODO handle resign
+			}
+		}
+	}
 
 	Ok(())
+}
+
+fn all_players_or_watchers_have_synced(
+	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
+) -> bool
+{
+	if players.iter().find(|x| !x.is_disconnected()).is_some()
+	{
+		players
+			.iter()
+			.find(|x| !x.is_disconnected() && !x.has_synced)
+			.is_none()
+	}
+	else
+	{
+		watchers
+			.iter()
+			.find(|x| !x.is_disconnected() && !x.has_synced)
+			.is_none()
+	}
 }
 
 async fn ensure_at_least_one_live_player(
 	players: &mut Vec<PlayerClient>,
 	_watchers: &mut Vec<WatcherClient>,
-	_updates: &mut mpsc::Receiver<Update>,
+	updates: &mut mpsc::Receiver<Update>,
 ) -> Result<(), Error>
 {
 	if players.is_empty()
@@ -460,48 +527,166 @@ async fn ensure_at_least_one_live_player(
 		return Ok(());
 	}
 
-	for player in players
+	while !at_least_one_live_player(players)
 	{
-		if !player.is_defeated
-			&& !player.is_retired
-			&& !player.is_disconnected()
+		let update = match updates.recv().await
 		{
-			return Ok(());
+			Some(update) => update,
+			None => return Err(Error::LobbyGone),
+		};
+
+		// TODO handle rejoins
+		match update
+		{
+			Update::Orders { client_id, .. } =>
+			{
+				eprintln!("Ignoring orders from {} after resting", client_id);
+			}
+			Update::Sync { client_id } =>
+			{
+				eprintln!("Ignoring sync from {} after resting", client_id);
+			}
+			Update::Resign { client_id: _ } =>
+			{
+				// TODO handle resign
+			}
 		}
 	}
 
-	// TODO handle rejoins
-	// TODO select
 	Ok(())
 }
 
+fn at_least_one_live_player(players: &mut Vec<PlayerClient>) -> bool
+{
+	players
+		.iter()
+		.find(|x| !x.is_defeated && !x.is_retired && !x.is_disconnected())
+		.is_some()
+}
+
 async fn sleep(
-	_players: &mut Vec<PlayerClient>,
+	players: &mut Vec<PlayerClient>,
+	num_bots: usize,
 	_watchers: &mut Vec<WatcherClient>,
-	_updates: &mut mpsc::Receiver<Update>,
+	updates: &mut mpsc::Receiver<Update>,
 ) -> Result<(), Error>
 {
+	if too_few_potential_winners(players, num_bots)
+	{
+		println!("Ending sleep early");
+		return Ok(());
+	}
+
 	// Start staging when either the timer runs out or all non-defeated
 	// players are ready, or when all players except one are undefeated
 	// or have retired. Players and watchers can reconnect in the
 	// planning phase if there is still time.
-	// TODO handle rejoins
-	// TODO select
+	// TODO timer
+	while !all_players_have_submitted_orders(players)
+	{
+		let update = match updates.recv().await
+		{
+			Some(update) => update,
+			None => return Err(Error::LobbyGone),
+		};
+
+		// TODO handle rejoins
+		match update
+		{
+			Update::Orders { client_id, orders } =>
+			{
+				for client in players.iter_mut()
+				{
+					if client.id == client_id
+					{
+						client.submitted_orders = Some(orders);
+						break;
+					}
+				}
+			}
+			Update::Sync { client_id } =>
+			{
+				eprintln!("Ignoring sync from {} while sleeping", client_id);
+			}
+			Update::Resign { client_id: _ } =>
+			{
+				// TODO handle resign
+				if too_few_potential_winners(players, num_bots)
+				{
+					println!("Ending sleep early");
+					return Ok(());
+				}
+			}
+		}
+	}
 
 	Ok(())
 }
 
-async fn wait_for_staging(
-	_players: &mut Vec<PlayerClient>,
+fn too_few_potential_winners(
+	players: &mut Vec<PlayerClient>,
+	num_bots: usize,
+) -> bool
+{
+	let potentialwinners = players
+		.iter()
+		.filter(|x| !x.is_defeated && !x.is_retired)
+		.count();
+
+	potentialwinners + num_bots < 2
+}
+
+fn all_players_have_submitted_orders(players: &mut Vec<PlayerClient>) -> bool
+{
+	players
+		.iter()
+		.filter(|x| !x.is_defeated && !x.is_retired && !x.is_disconnected())
+		.all(|x| x.submitted_orders.is_some())
+}
+
+async fn stage(
+	players: &mut Vec<PlayerClient>,
 	_watchers: &mut Vec<WatcherClient>,
-	_updates: &mut mpsc::Receiver<Update>,
+	updates: &mut mpsc::Receiver<Update>,
 ) -> Result<(), Error>
 {
 	// There is a 10 second grace period for anyone whose orders we
 	// haven't received; they might have sent their orders before
 	// receiving the staging announcement.
+	// TODO timer
 	// TODO defer rejoins until later (separate mpsc?)
-	// TODO select
+	while !all_players_have_submitted_orders(players)
+	{
+		let update = match updates.recv().await
+		{
+			Some(update) => update,
+			None => return Err(Error::LobbyGone),
+		};
+
+		// TODO handle rejoins
+		match update
+		{
+			Update::Orders { client_id, orders } =>
+			{
+				for client in players.iter_mut()
+				{
+					if client.id == client_id
+					{
+						client.submitted_orders = Some(orders);
+						break;
+					}
+				}
+			}
+			Update::Sync { client_id } =>
+			{
+				eprintln!("Ignoring sync from {} while staging", client_id);
+			}
+			Update::Resign { client_id: _ } =>
+			{
+				// TODO handle resign
+			}
+		}
+	}
 
 	Ok(())
 }
@@ -509,6 +694,7 @@ async fn wait_for_staging(
 #[derive(Debug)]
 enum Error
 {
+	LobbyGone,
 	Interface(automaton::InterfaceError),
 }
 
@@ -526,6 +712,7 @@ impl fmt::Display for Error
 	{
 		match self
 		{
+			Error::LobbyGone => write!(f, "{:#?}", &self),
 			Error::Interface(error) => error.fmt(f),
 		}
 	}

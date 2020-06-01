@@ -1521,6 +1521,27 @@ async fn handle_message(
 				return Err(Error::Illegal);
 			}
 		},
+		Message::Resign { username: None } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = game::Update::Resign {
+					client_id: client.id,
+				};
+				let update = lobby::Update::ForwardToGame(update);
+				lobby.send(update).await?
+			}
+			None =>
+			{
+				println!("Invalid Sync message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
+		Message::Resign { .. } =>
+		{
+			println!("Invalid message from client: {:?}", message);
+			return Err(Error::Illegal);
+		}
 		Message::OrdersNew { orders } => match client.lobby
 		{
 			Some(ref mut lobby) =>

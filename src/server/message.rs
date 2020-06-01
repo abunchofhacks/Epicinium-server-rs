@@ -202,6 +202,11 @@ pub enum Message
 		timer_in_seconds: Option<u32>,
 	},
 	Challenge,
+	Resign
+	{
+		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
+		username: Option<String>,
+	},
 	#[serde(rename = "change")]
 	Changes
 	{

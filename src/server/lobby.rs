@@ -1588,7 +1588,7 @@ async fn try_start(
 					is_defeated: false,
 					is_retired: false,
 					has_synced: false,
-					received_orders: None,
+					submitted_orders: None,
 				});
 			}
 			Role::Observer =>
