@@ -7,21 +7,28 @@ use crate::logic::vision::*;
 pub struct Change(serde_json::Value);
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ChangeSet(Vec<(Change, Vision)>);
+pub struct ChangeSet(Vec<ChangeSetItem>);
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ChangeSetItem
+{
+	change: Change,
+	vision: Vision,
+}
 
 impl ChangeSet
 {
 	pub fn push(&mut self, change: Change, vision: Vision)
 	{
-		self.0.push((change, vision));
+		self.0.push(ChangeSetItem { change, vision });
 	}
 
 	pub fn get(&self, player: PlayerColor) -> Vec<Change>
 	{
 		self.0
 			.iter()
-			.filter(|&&(_, ref vision)| vision.contains(player))
-			.map(|&(ref change, _)| (*change).clone())
+			.filter(|&item| item.vision.contains(player))
+			.map(|item| item.change.clone())
 			.collect()
 	}
 }

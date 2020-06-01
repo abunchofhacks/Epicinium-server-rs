@@ -489,6 +489,8 @@ extern "C" {
 		playercount: usize,
 		ruleset_name: *const c_char,
 	) -> *mut Automaton;
+	fn epicinium_automaton_deallocate(automaton: *mut Automaton);
+
 	fn epicinium_automaton_add_player(automaton: *mut Automaton, player: u8);
 	fn epicinium_grant_global_vision(automaton: *mut Automaton, player: u8);
 	fn epicinium_load_map(
@@ -524,7 +526,6 @@ extern "C" {
 		automaton: *mut Automaton,
 		buffer: *mut Buffer,
 	) -> *const c_char;
-	fn epicinium_automaton_deallocate(automaton: *mut Automaton);
 
 	fn epicinium_map_pool_size() -> usize;
 	fn epicinium_map_pool_get(i: usize) -> *const c_char;
@@ -542,13 +543,14 @@ extern "C" {
 		ruleset_name: *const c_char,
 		character: c_char,
 	) -> *mut AICommander;
+	fn epicinium_ai_deallocate(ai: *mut AICommander);
+
 	fn epicinium_ai_receive(ai: *mut AICommander, changes: *const c_char);
 	fn epicinium_ai_prepare_orders(ai: *mut AICommander);
 	fn epicinium_ai_retrieve_orders(
 		ai: *mut AICommander,
 		buffer: *mut Buffer,
 	) -> *const c_char;
-	fn epicinium_ai_deallocate(ai: *mut AICommander);
 
 	fn epicinium_current_challenge_id() -> u16;
 	fn epicinium_challenge_key(id: u16) -> *const c_char;
