@@ -80,6 +80,12 @@ impl Automaton
 	{
 		epicinium::automaton_prepare(&mut self.0)
 	}
+
+	pub fn resign(&mut self, player: PlayerColor)
+	{
+		// TODO implement
+		println!("{:?} resigns", player);
+	}
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

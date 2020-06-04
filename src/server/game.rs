@@ -103,9 +103,50 @@ impl WatcherClient
 	}
 }
 
-pub async fn start(
+pub fn start(
+	lobby_id: Keycode,
+	end_update: mpsc::Sender<lobby::Update>,
+	players: Vec<PlayerClient>,
+	bots: Vec<Bot>,
+	watchers: Vec<WatcherClient>,
+	map_name: String,
+	ruleset_name: String,
+	planning_time_in_seconds: Option<u32>,
+	challenge: Option<ChallengeId>,
+	is_tutorial: bool,
+	is_rated: bool,
+) -> mpsc::Sender<Update>
+{
+	let (results_in, results_out) = mpsc::channel::<PlayerResult>(100);
+	let result_task = run_result_task(lobby_id, results_out);
+
+	let (updates_in, updates_out) = mpsc::channel::<Update>(1000);
+	let game_task = run_game_task(
+		lobby_id,
+		end_update,
+		results_in,
+		updates_out,
+		players,
+		bots,
+		watchers,
+		map_name,
+		ruleset_name,
+		planning_time_in_seconds,
+		challenge,
+		is_tutorial,
+		is_rated,
+	);
+
+	let task = futures::future::join(game_task, result_task);
+	tokio::spawn(task);
+
+	updates_in
+}
+
+async fn run_game_task(
 	lobby_id: Keycode,
 	mut end_update: mpsc::Sender<lobby::Update>,
+	results: mpsc::Sender<PlayerResult>,
 	updates: mpsc::Receiver<Update>,
 	players: Vec<PlayerClient>,
 	bots: Vec<Bot>,
@@ -119,6 +160,7 @@ pub async fn start(
 )
 {
 	let result = run(
+		results,
 		updates,
 		players,
 		bots,
@@ -145,7 +187,9 @@ pub async fn start(
 	match end_update.send(lobby::Update::GameEnded).await
 	{
 		Ok(()) =>
-		{}
+		{
+			println!("Game ended in lobby {}", lobby_id);
+		}
 		Err(error) =>
 		{
 			eprintln!("Game ended after its lobby {}: {:#?}", lobby_id, error);
@@ -154,6 +198,7 @@ pub async fn start(
 }
 
 async fn run(
+	mut results: mpsc::Sender<PlayerResult>,
 	mut updates: mpsc::Receiver<Update>,
 	mut players: Vec<PlayerClient>,
 	mut bots: Vec<Bot>,
@@ -262,6 +307,7 @@ async fn run(
 			&mut bots,
 			&mut watchers,
 			&mut updates,
+			&mut results,
 			planning_time_in_seconds,
 		)
 		.await?;
@@ -279,7 +325,10 @@ async fn run(
 	// TODO rating
 
 	// If there are non-bot non-observer participants, adjust their ratings.
-	// TODO retire
+	for client in players.iter_mut()
+	{
+		retire(&mut automaton, &mut results, client).await?;
+	}
 
 	Ok(())
 }
@@ -315,6 +364,7 @@ async fn iterate(
 	bots: &mut Vec<Bot>,
 	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
+	results: &mut mpsc::Sender<PlayerResult>,
 	planning_time_in_seconds: Option<u32>,
 ) -> Result<State, Error>
 {
@@ -343,7 +393,7 @@ async fn iterate(
 		}
 	}
 
-	rest(players, watchers, updates).await?;
+	rest(automaton, players, watchers, updates, results).await?;
 
 	// If the game has ended, we are done.
 	// We waited with this check until all players have finished animating,
@@ -356,7 +406,7 @@ async fn iterate(
 	// If all live players are disconnected during the resting phase,
 	// the game cannot continue until at least one player reconnects
 	// and has finished rejoining.
-	ensure_at_least_one_live_player(players, watchers, updates).await?;
+	ensure_live_players(automaton, players, watchers, updates, results).await?;
 
 	let message = Message::Sync {
 		planning_time_in_seconds,
@@ -382,12 +432,12 @@ async fn iterate(
 	}
 
 	let num_bots = bots.len();
-	sleep(players, num_bots, watchers, updates).await?;
+	sleep(automaton, players, num_bots, watchers, updates, results).await?;
 
 	let cset = automaton.awake()?;
 	broadcast(players, bots, watchers, cset)?;
 
-	stage(players, watchers, updates).await?;
+	stage(automaton, players, watchers, updates, results).await?;
 
 	for player in players.into_iter()
 	{
@@ -443,9 +493,11 @@ fn broadcast(
 }
 
 async fn rest(
+	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
+	results: &mut mpsc::Sender<PlayerResult>,
 ) -> Result<(), Error>
 {
 	// Start the planning phase when all players (or all watchers if
@@ -485,9 +537,9 @@ async fn rest(
 					}
 				}
 			}
-			Update::Resign { client_id: _ } =>
+			Update::Resign { client_id } =>
 			{
-				// TODO handle resign
+				handle_resign(automaton, players, results, client_id).await?;
 			}
 		}
 	}
@@ -516,10 +568,12 @@ fn all_players_or_watchers_have_synced(
 	}
 }
 
-async fn ensure_at_least_one_live_player(
+async fn ensure_live_players(
+	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	_watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
+	results: &mut mpsc::Sender<PlayerResult>,
 ) -> Result<(), Error>
 {
 	if players.is_empty()
@@ -546,9 +600,9 @@ async fn ensure_at_least_one_live_player(
 			{
 				eprintln!("Ignoring sync from {} after resting", client_id);
 			}
-			Update::Resign { client_id: _ } =>
+			Update::Resign { client_id } =>
 			{
-				// TODO handle resign
+				handle_resign(automaton, players, results, client_id).await?;
 			}
 		}
 	}
@@ -565,10 +619,12 @@ fn at_least_one_live_player(players: &mut Vec<PlayerClient>) -> bool
 }
 
 async fn sleep(
+	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	num_bots: usize,
 	_watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
+	results: &mut mpsc::Sender<PlayerResult>,
 ) -> Result<(), Error>
 {
 	if too_few_potential_winners(players, num_bots)
@@ -608,9 +664,10 @@ async fn sleep(
 			{
 				eprintln!("Ignoring sync from {} while sleeping", client_id);
 			}
-			Update::Resign { client_id: _ } =>
+			Update::Resign { client_id } =>
 			{
-				// TODO handle resign
+				handle_resign(automaton, players, results, client_id).await?;
+
 				if too_few_potential_winners(players, num_bots)
 				{
 					println!("Ending sleep early");
@@ -645,9 +702,11 @@ fn all_players_have_submitted_orders(players: &mut Vec<PlayerClient>) -> bool
 }
 
 async fn stage(
+	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	_watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
+	results: &mut mpsc::Sender<PlayerResult>,
 ) -> Result<(), Error>
 {
 	// There is a 10 second grace period for anyone whose orders we
@@ -681,9 +740,9 @@ async fn stage(
 			{
 				eprintln!("Ignoring sync from {} while staging", client_id);
 			}
-			Update::Resign { client_id: _ } =>
+			Update::Resign { client_id } =>
 			{
-				// TODO handle resign
+				handle_resign(automaton, players, results, client_id).await?;
 			}
 		}
 	}
@@ -691,11 +750,74 @@ async fn stage(
 	Ok(())
 }
 
+async fn handle_resign(
+	automaton: &mut Automaton,
+	players: &mut Vec<PlayerClient>,
+	results: &mut mpsc::Sender<PlayerResult>,
+	client_id: Keycode,
+) -> Result<(), Error>
+{
+	let client = match players.iter_mut().find(|x| x.id == client_id)
+	{
+		Some(client) => client,
+		None => return Err(Error::ClientGone { client_id }),
+	};
+
+	automaton.resign(client.color);
+
+	retire(automaton, results, client).await
+}
+
+async fn retire(
+	automaton: &mut Automaton,
+	results: &mut mpsc::Sender<PlayerResult>,
+	client: &mut PlayerClient,
+) -> Result<(), Error>
+{
+	if client.is_retired
+	{
+		return Ok(());
+	}
+	client.is_retired = true;
+
+	// Resigning while not yet being defeated is not rated
+	// as a defeat until they reach the third action phase,
+	// which is when the Automaton updates its _round variable.
+	// Note that this means it is possible for someone to resign while unrated
+	// even though their opponent keeps playing a rated game.
+	// TODO is_rated && (defeated || round >= 3)
+	let is_rated = automaton.is_defeated(client.color);
+	// TODO add stars
+	let result = PlayerResult {
+		client_id: client.id,
+		client_username: client.username.clone(),
+		is_rated,
+	};
+	results.send(result).await?;
+	Ok(())
+}
+
 #[derive(Debug)]
 enum Error
 {
 	LobbyGone,
+	ClientGone
+	{
+		client_id: Keycode,
+	},
+	ResultTaskDropped
+	{
+		error: mpsc::error::SendError<PlayerResult>,
+	},
 	Interface(automaton::InterfaceError),
+}
+
+impl From<mpsc::error::SendError<PlayerResult>> for Error
+{
+	fn from(error: mpsc::error::SendError<PlayerResult>) -> Self
+	{
+		Error::ResultTaskDropped { error }
+	}
 }
 
 impl From<automaton::InterfaceError> for Error
@@ -713,9 +835,32 @@ impl fmt::Display for Error
 		match self
 		{
 			Error::LobbyGone => write!(f, "{:#?}", &self),
+			Error::ClientGone { .. } => write!(f, "{:#?}", &self),
+			Error::ResultTaskDropped { .. } => write!(f, "{:#?}", &self),
 			Error::Interface(error) => error.fmt(f),
 		}
 	}
 }
 
 impl std::error::Error for Error {}
+
+#[derive(Debug)]
+struct PlayerResult
+{
+	client_id: Keycode,
+	client_username: String,
+	is_rated: bool,
+}
+
+async fn run_result_task(
+	lobby_id: Keycode,
+	mut results: mpsc::Receiver<PlayerResult>,
+)
+{
+	while let Some(result) = results.recv().await
+	{
+		println!("result: {:?}", result);
+		// TODO calls to the database
+	}
+	println!("All results are in for lobby {}", lobby_id)
+}

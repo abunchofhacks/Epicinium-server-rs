@@ -1678,11 +1678,9 @@ async fn try_start(
 	let planning_timer = Some(lobby.timer_in_seconds).filter(|&x| x > 0);
 
 	// We are truly starting.
-	let (updates_in, updates_out) = mpsc::channel::<game::Update>(1000);
-	let task = game::start(
+	let game = game::start(
 		lobby.id,
 		lobby_sendbuffer,
-		updates_out,
 		player_clients,
 		bots,
 		watcher_clients,
@@ -1693,8 +1691,7 @@ async fn try_start(
 		lobby.is_tutorial,
 		lobby.is_rated,
 	);
-	tokio::spawn(task);
-	lobby.game_in_progress = Some(updates_in);
+	lobby.game_in_progress = Some(game);
 
 	println!("Game started in lobby {}.", lobby.id);
 	lobby.stage = Stage::GameStarted;
