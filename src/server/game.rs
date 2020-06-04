@@ -186,15 +186,11 @@ async fn run_game_task(
 
 	match end_update.send(lobby::Update::GameEnded).await
 	{
-		Ok(()) =>
-		{
-			println!("Game ended in lobby {}", lobby_id);
-		}
-		Err(error) =>
-		{
-			eprintln!("Game ended after its lobby {}: {:#?}", lobby_id, error);
-		}
+		Ok(()) => (),
+		Err(_error) => (),
 	}
+
+	println!("Game ended in lobby {}", lobby_id);
 }
 
 async fn run(
@@ -349,6 +345,10 @@ pub enum Update
 	{
 		client_id: Keycode
 	},
+	Leave
+	{
+		client_id: Keycode
+	},
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -436,6 +436,12 @@ async fn iterate(
 
 	let cset = automaton.awake()?;
 	broadcast(players, bots, watchers, cset)?;
+
+	// If the game has ended due to players resigning, we are done.
+	if automaton.is_gameover()
+	{
+		return Ok(State::Finished);
+	}
 
 	stage(automaton, players, watchers, updates, results).await?;
 
@@ -541,6 +547,10 @@ async fn rest(
 			{
 				handle_resign(automaton, players, results, client_id).await?;
 			}
+			Update::Leave { client_id } =>
+			{
+				handle_leave(players, client_id).await?;
+			}
 		}
 	}
 
@@ -603,6 +613,10 @@ async fn ensure_live_players(
 			Update::Resign { client_id } =>
 			{
 				handle_resign(automaton, players, results, client_id).await?;
+			}
+			Update::Leave { client_id } =>
+			{
+				handle_leave(players, client_id).await?;
 			}
 		}
 	}
@@ -674,6 +688,10 @@ async fn sleep(
 					return Ok(());
 				}
 			}
+			Update::Leave { client_id } =>
+			{
+				handle_leave(players, client_id).await?;
+			}
 		}
 	}
 
@@ -744,6 +762,10 @@ async fn stage(
 			{
 				handle_resign(automaton, players, results, client_id).await?;
 			}
+			Update::Leave { client_id } =>
+			{
+				handle_leave(players, client_id).await?;
+			}
 		}
 	}
 
@@ -794,6 +816,21 @@ async fn retire(
 		is_rated,
 	};
 	results.send(result).await?;
+	Ok(())
+}
+
+async fn handle_leave(
+	players: &mut Vec<PlayerClient>,
+	client_id: Keycode,
+) -> Result<(), Error>
+{
+	let client = match players.iter_mut().find(|x| x.id == client_id)
+	{
+		Some(client) => client,
+		None => return Err(Error::ClientGone { client_id }),
+	};
+
+	client.sendbuffer = None;
 	Ok(())
 }
 
@@ -859,7 +896,7 @@ async fn run_result_task(
 {
 	while let Some(result) = results.recv().await
 	{
-		println!("result: {:?}", result);
+		println!("Lobby {}, result: {:?}", lobby_id, result);
 		// TODO calls to the database
 	}
 	println!("All results are in for lobby {}", lobby_id)

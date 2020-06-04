@@ -152,7 +152,7 @@ enum Stage
 {
 	Setup,
 	WaitingForConfirmation,
-	GameStarted,
+	GameInProgress,
 	GameEnded,
 }
 
@@ -164,7 +164,7 @@ impl Stage
 		{
 			Stage::Setup => false,
 			Stage::WaitingForConfirmation => false,
-			Stage::GameStarted => true,
+			Stage::GameInProgress => true,
 			Stage::GameEnded => true,
 		}
 	}
@@ -416,9 +416,10 @@ async fn handle_update(
 			describe_lobby(lobby, &mut general_chat).await
 		}
 
-		Update::GameEnded if lobby.stage == Stage::GameStarted =>
+		Update::GameEnded if lobby.stage == Stage::GameInProgress =>
 		{
-			// TODO announce to general chat somehow
+			// TODO disband lobby here? needs general chat somehow
+			lobby.game_in_progress = None;
 			lobby.stage = Stage::GameEnded;
 			Ok(())
 		}
@@ -750,7 +751,11 @@ async fn handle_leave(
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
-	do_leave(lobby, client_id, clients);
+	let removed: Vec<Client> = clients
+		.e_drain_where(|client| client.id == client_id)
+		.collect();
+
+	handle_removed(lobby, clients, removed).await?;
 
 	// TODO dont disband if rejoinable etcetera
 	if clients.is_empty()
@@ -766,20 +771,11 @@ async fn handle_leave(
 	Ok(())
 }
 
-fn do_leave(lobby: &mut Lobby, client_id: Keycode, clients: &mut Vec<Client>)
-{
-	let removed: Vec<Client> = clients
-		.e_drain_where(|client| client.id == client_id)
-		.collect();
-
-	handle_removed(lobby, clients, removed)
-}
-
-fn handle_removed(
+async fn handle_removed(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
 	removed: Vec<Client>,
-)
+) -> Result<(), Error>
 {
 	for removed_client in removed
 	{
@@ -820,7 +816,15 @@ fn handle_removed(
 		{
 			lobby.num_players -= 1;
 		}
+
+		if let Some(game) = &mut lobby.game_in_progress
+		{
+			let update = game::Update::Leave { client_id: id };
+			game.send(update).await?;
+		}
 	}
+
+	Ok(())
 }
 
 fn handle_claim_role(
@@ -1515,7 +1519,7 @@ async fn try_start(
 
 	// Make sure all the clients are still valid.
 	let removed = clients.e_drain_where(|client| client.is_dead).collect();
-	handle_removed(lobby, clients, removed);
+	handle_removed(lobby, clients, removed).await?;
 
 	if clients.len() < 1
 	{
@@ -1694,7 +1698,7 @@ async fn try_start(
 	lobby.game_in_progress = Some(game);
 
 	println!("Game started in lobby {}.", lobby.id);
-	lobby.stage = Stage::GameStarted;
+	lobby.stage = Stage::GameInProgress;
 
 	for client in clients.iter()
 	{
