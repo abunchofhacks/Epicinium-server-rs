@@ -160,6 +160,7 @@ async fn run_game_task(
 )
 {
 	let result = run(
+		lobby_id,
 		results,
 		updates,
 		players,
@@ -194,6 +195,7 @@ async fn run_game_task(
 }
 
 async fn run(
+	lobby_id: Keycode,
 	mut results: mpsc::Sender<PlayerResult>,
 	mut updates: mpsc::Receiver<Update>,
 	mut players: Vec<PlayerClient>,
@@ -283,12 +285,11 @@ async fn run(
 	// TODO tell clients mission briefing
 
 	// Load the map.
-	{
-		let shuffleplayers = challenge.is_none()
-			&& !map_name.contains("demo")
-			&& !map_name.contains("tutorial");
-		automaton.load(map_name, shuffleplayers, metadata)?;
-	}
+	let shuffleplayers = challenge.is_none()
+		&& !map_name.contains("demo")
+		&& !map_name.contains("tutorial");
+	automaton.load(map_name, shuffleplayers)?;
+	automaton.start_recording(metadata, lobby_id.to_string())?;
 
 	if is_rated
 	{

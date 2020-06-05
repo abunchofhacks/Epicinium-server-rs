@@ -37,39 +37,92 @@ pub fn allocate_automaton(
 	Ok(AllocatedAutomaton { ptr, buffer })
 }
 
-pub fn grant_global_vision(
+pub fn automaton_grant_global_vision(
 	automaton: &mut AllocatedAutomaton,
 	player: PlayerColor,
 )
 {
 	let player: u8 = unsafe { std::mem::transmute(player) };
-	unsafe { epicinium_grant_global_vision(automaton.ptr, player) }
+	unsafe { epicinium_automaton_grant_global_vision(automaton.ptr, player) }
 }
 
-pub fn load_map(
+pub fn automaton_load_map(
 	automaton: &mut AllocatedAutomaton,
 	map_name: String,
 	shuffleplayers: bool,
-	metadata: automaton::Metadata,
 ) -> Result<(), InterfaceError>
 {
 	let map_name: CString = CString::new(map_name)?;
-	let metadata: String = serde_json::to_string(&metadata)?;
-	let metadata: CString = CString::new(metadata)?;
 	unsafe {
-		epicinium_load_map(
+		epicinium_automaton_load_map(
 			automaton.ptr,
 			map_name.as_ptr(),
 			shuffleplayers,
-			metadata.as_ptr(),
 		)
 	}
+	Ok(())
+}
+
+pub fn automaton_restore(
+	automaton: &mut AllocatedAutomaton,
+	recording_name: String,
+) -> Result<(), InterfaceError>
+{
+	let recording_name: CString = CString::new(recording_name)?;
+	unsafe {
+		epicinium_automaton_restore(automaton.ptr, recording_name.as_ptr())
+	}
+	Ok(())
+}
+
+pub fn automaton_load_replay(
+	automaton: &mut AllocatedAutomaton,
+	recording_name: String,
+) -> Result<(), InterfaceError>
+{
+	let recording_name: CString = CString::new(recording_name)?;
+	unsafe {
+		epicinium_automaton_load_replay(automaton.ptr, recording_name.as_ptr())
+	}
+	Ok(())
+}
+
+pub fn automaton_start_recording(
+	automaton: &mut AllocatedAutomaton,
+	metadata: automaton::Metadata,
+	recording_name: String,
+) -> Result<(), InterfaceError>
+{
+	let metadata: String = serde_json::to_string(&metadata)?;
+	let metadata: CString = CString::new(metadata)?;
+	let recording_name: CString = CString::new(recording_name)?;
+	unsafe {
+		epicinium_automaton_start_recording(
+			automaton.ptr,
+			metadata.as_ptr(),
+			recording_name.as_ptr(),
+		)
+	}
+	Ok(())
+}
+
+pub fn automaton_set_challenge(
+	automaton: &mut AllocatedAutomaton,
+	challenge_id: ChallengeId,
+) -> Result<(), InterfaceError>
+{
+	unsafe { epicinium_automaton_set_challenge(automaton.ptr, challenge_id.0) }
 	Ok(())
 }
 
 pub fn automaton_is_active(automaton: &mut AllocatedAutomaton) -> bool
 {
 	unsafe { epicinium_automaton_is_active(automaton.ptr) }
+}
+
+pub fn automaton_is_replay_active(automaton: &mut AllocatedAutomaton) -> bool
+{
+	unsafe { epicinium_automaton_is_replay_active(automaton.ptr) }
 }
 
 pub fn automaton_act(
@@ -96,6 +149,35 @@ pub fn automaton_is_defeated(
 {
 	let player: u8 = unsafe { std::mem::transmute(player) };
 	unsafe { epicinium_automaton_is_defeated(automaton.ptr, player) }
+}
+
+pub fn automaton_global_score(automaton: &mut AllocatedAutomaton) -> i32
+{
+	unsafe { epicinium_automaton_global_score(automaton.ptr) }
+}
+
+pub fn automaton_score(
+	automaton: &mut AllocatedAutomaton,
+	player: PlayerColor,
+) -> i32
+{
+	let player: u8 = unsafe { std::mem::transmute(player) };
+	unsafe { epicinium_automaton_score(automaton.ptr, player) }
+}
+
+pub fn automaton_award(
+	automaton: &mut AllocatedAutomaton,
+	player: PlayerColor,
+) -> i32
+{
+	let player: u8 = unsafe { std::mem::transmute(player) };
+	unsafe { epicinium_automaton_award(automaton.ptr, player) }
+}
+
+pub fn automaton_resign(automaton: &mut AllocatedAutomaton, player: PlayerColor)
+{
+	let player: u8 = unsafe { std::mem::transmute(player) };
+	unsafe { epicinium_automaton_resign(automaton.ptr, player) }
 }
 
 pub fn automaton_hibernate(
@@ -150,6 +232,24 @@ pub fn automaton_prepare(
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_automaton_prepare(
 			automaton.ptr,
+			automaton.buffer,
+		))
+	};
+	let jsonstr: String = s.to_string_lossy().to_string();
+	let cset: ChangeSet = serde_json::from_str(&jsonstr)?;
+	Ok(cset)
+}
+
+pub fn automaton_rejoin(
+	automaton: &mut AllocatedAutomaton,
+	player: PlayerColor,
+) -> Result<ChangeSet, InterfaceError>
+{
+	let player: u8 = unsafe { std::mem::transmute(player) };
+	let s: &CStr = unsafe {
+		CStr::from_ptr(epicinium_automaton_rejoin(
+			automaton.ptr,
+			player,
 			automaton.buffer,
 		))
 	};
@@ -492,14 +592,34 @@ extern "C" {
 	fn epicinium_automaton_deallocate(automaton: *mut Automaton);
 
 	fn epicinium_automaton_add_player(automaton: *mut Automaton, player: u8);
-	fn epicinium_grant_global_vision(automaton: *mut Automaton, player: u8);
-	fn epicinium_load_map(
+	fn epicinium_automaton_grant_global_vision(
+		automaton: *mut Automaton,
+		player: u8,
+	);
+	fn epicinium_automaton_load_map(
 		automaton: *mut Automaton,
 		map_name: *const c_char,
 		shuffleplayers: bool,
+	);
+	fn epicinium_automaton_restore(
+		automaton: *mut Automaton,
+		recording_name: *const c_char,
+	);
+	fn epicinium_automaton_load_replay(
+		automaton: *mut Automaton,
+		recording_name: *const c_char,
+	);
+	fn epicinium_automaton_start_recording(
+		automaton: *mut Automaton,
 		metadata: *const c_char,
+		recording_name: *const c_char,
+	);
+	fn epicinium_automaton_set_challenge(
+		automaton: *mut Automaton,
+		challenge_id: u16,
 	);
 	fn epicinium_automaton_is_active(automaton: *mut Automaton) -> bool;
+	fn epicinium_automaton_is_replay_active(automaton: *mut Automaton) -> bool;
 	fn epicinium_automaton_act(
 		automaton: *mut Automaton,
 		buffer: *mut Buffer,
@@ -509,6 +629,10 @@ extern "C" {
 		automaton: *mut Automaton,
 		player: u8,
 	) -> bool;
+	fn epicinium_automaton_global_score(automaton: *mut Automaton) -> i32;
+	fn epicinium_automaton_score(automaton: *mut Automaton, player: u8) -> i32;
+	fn epicinium_automaton_award(automaton: *mut Automaton, player: u8) -> i32;
+	fn epicinium_automaton_resign(automaton: *mut Automaton, player: u8);
 	fn epicinium_automaton_hibernate(
 		automaton: *mut Automaton,
 		buffer: *mut Buffer,
@@ -524,6 +648,11 @@ extern "C" {
 	);
 	fn epicinium_automaton_prepare(
 		automaton: *mut Automaton,
+		buffer: *mut Buffer,
+	) -> *const c_char;
+	fn epicinium_automaton_rejoin(
+		automaton: *mut Automaton,
+		player: u8,
 		buffer: *mut Buffer,
 	) -> *const c_char;
 

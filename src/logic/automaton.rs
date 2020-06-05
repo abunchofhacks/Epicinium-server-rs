@@ -1,5 +1,6 @@
 /* Automaton */
 
+pub use crate::logic::challenge::ChallengeId;
 pub use crate::logic::epicinium::InterfaceError;
 
 use crate::logic::change::ChangeSet;
@@ -24,22 +25,63 @@ impl Automaton
 
 	pub fn grant_global_vision(&mut self, player: PlayerColor)
 	{
-		epicinium::grant_global_vision(&mut self.0, player);
+		epicinium::automaton_grant_global_vision(&mut self.0, player);
 	}
 
 	pub fn load(
 		&mut self,
 		map_name: String,
 		shuffleplayers: bool,
-		metadata: Metadata,
 	) -> Result<(), InterfaceError>
 	{
-		epicinium::load_map(&mut self.0, map_name, shuffleplayers, metadata)
+		epicinium::automaton_load_map(&mut self.0, map_name, shuffleplayers)
+	}
+
+	pub fn restore(
+		&mut self,
+		recording_name: String,
+	) -> Result<(), InterfaceError>
+	{
+		epicinium::automaton_restore(&mut self.0, recording_name)
+	}
+
+	pub fn load_replay(
+		&mut self,
+		recording_name: String,
+	) -> Result<(), InterfaceError>
+	{
+		epicinium::automaton_load_replay(&mut self.0, recording_name)
+	}
+
+	pub fn start_recording(
+		&mut self,
+		metadata: Metadata,
+		recording_name: String,
+	) -> Result<(), InterfaceError>
+	{
+		epicinium::automaton_start_recording(
+			&mut self.0,
+			metadata,
+			recording_name,
+		)
+	}
+
+	pub fn set_challenge(
+		&mut self,
+		challenge_id: ChallengeId,
+	) -> Result<(), InterfaceError>
+	{
+		epicinium::automaton_set_challenge(&mut self.0, challenge_id)
 	}
 
 	pub fn is_active(&mut self) -> bool
 	{
 		epicinium::automaton_is_active(&mut self.0)
+	}
+
+	pub fn is_replay_active(&mut self) -> bool
+	{
+		epicinium::automaton_is_replay_active(&mut self.0)
 	}
 
 	pub fn act(&mut self) -> Result<ChangeSet, InterfaceError>
@@ -55,6 +97,21 @@ impl Automaton
 	pub fn is_defeated(&mut self, player: PlayerColor) -> bool
 	{
 		epicinium::automaton_is_defeated(&mut self.0, player)
+	}
+
+	pub fn global_score(&mut self) -> i32
+	{
+		epicinium::automaton_global_score(&mut self.0)
+	}
+
+	pub fn score(&mut self, player: PlayerColor) -> i32
+	{
+		epicinium::automaton_score(&mut self.0, player)
+	}
+
+	pub fn award(&mut self, player: PlayerColor) -> i32
+	{
+		epicinium::automaton_award(&mut self.0, player)
 	}
 
 	pub fn hibernate(&mut self) -> Result<ChangeSet, InterfaceError>
@@ -83,8 +140,15 @@ impl Automaton
 
 	pub fn resign(&mut self, player: PlayerColor)
 	{
-		// TODO implement
-		println!("{:?} resigns", player);
+		epicinium::automaton_resign(&mut self.0, player)
+	}
+
+	pub fn rejoin(
+		&mut self,
+		player: PlayerColor,
+	) -> Result<ChangeSet, InterfaceError>
+	{
+		epicinium::automaton_rejoin(&mut self.0, player)
 	}
 }
 
