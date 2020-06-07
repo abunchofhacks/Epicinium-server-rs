@@ -7,6 +7,7 @@ use crate::server::game;
 use crate::server::lobby;
 use crate::server::login;
 use crate::server::message::*;
+use crate::server::rating;
 use crate::server::tokio::State as ServerState;
 
 use std::fmt;
@@ -44,6 +45,8 @@ struct Client
 	login: mpsc::Sender<login::Request>,
 	general_chat_reserve: Option<mpsc::Sender<chat::Update>>,
 	general_chat: Option<mpsc::Sender<chat::Update>>,
+	rating_database: mpsc::Sender<rating::Update>,
+	canary_for_lobbies: mpsc::Sender<()>,
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
 	lobby_callback: Option<mpsc::Sender<Update>>,
 	lobby: Option<mpsc::Sender<lobby::Update>>,
@@ -114,6 +117,7 @@ pub fn accept(
 	id: Keycode,
 	login_server: sync::Arc<login::Server>,
 	chat_server: mpsc::Sender<chat::Update>,
+	rating_database: mpsc::Sender<rating::Update>,
 	server_state: watch::Receiver<ServerState>,
 	canary: mpsc::Sender<()>,
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
@@ -130,6 +134,7 @@ pub fn accept(
 	let (timebuffer_in, timebuffer_out) = watch::channel(());
 	let (loginbuffer_in, loginbuffer_out) = mpsc::channel::<login::Request>(1);
 	let (reader, writer) = tokio::io::split(socket);
+	let canary_for_lobbies = canary.clone();
 
 	let client = Client {
 		sendbuffer: sendbuffer_in,
@@ -139,8 +144,10 @@ pub fn accept(
 		login: loginbuffer_in,
 		general_chat_reserve: Some(chat_server),
 		general_chat: None,
+		rating_database,
 		lobby_authority: lobby_authority,
 		lobby_callback: Some(updatebuffer_lobby),
+		canary_for_lobbies,
 		lobby: None,
 		has_proper_version: false,
 		has_proper_version_a: sync::Arc::new(atomic::AtomicBool::new(false)),
@@ -197,8 +204,8 @@ pub fn accept(
 		.map_ok(|((), ())| ())
 		.map_err(move |e| eprintln!("Error in client {}: {:?}", id, e))
 		.map(move |_result| {
-			let _discarded = canary;
 			println!("Client {} has disconnected.", id);
+			let _discarded = canary;
 		});
 
 	tokio::spawn(task);
@@ -1098,7 +1105,11 @@ async fn handle_message(
 						return Err(Error::Unexpected);
 					}
 				};
-				let mut lobby = lobby::create(&mut client.lobby_authority);
+				let mut lobby = lobby::create(
+					&mut client.lobby_authority,
+					client.rating_database.clone(),
+					client.canary_for_lobbies.clone(),
+				);
 
 				let update = lobby::Update::Join {
 					client_id: client.id,

@@ -13,6 +13,7 @@ use crate::server::chat;
 use crate::server::client;
 use crate::server::game;
 use crate::server::message::*;
+use crate::server::rating;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -133,8 +134,11 @@ pub enum Update
 	Msg(Message),
 }
 
-pub fn create(ticker: &mut sync::Arc<atomic::AtomicU64>)
-	-> mpsc::Sender<Update>
+pub fn create(
+	ticker: &mut sync::Arc<atomic::AtomicU64>,
+	ratings: mpsc::Sender<rating::Update>,
+	canary: mpsc::Sender<()>,
+) -> mpsc::Sender<Update>
 {
 	let key = rand::random();
 	let data = ticker.fetch_add(1, atomic::Ordering::Relaxed);
@@ -142,7 +146,7 @@ pub fn create(ticker: &mut sync::Arc<atomic::AtomicU64>)
 
 	let (updates_in, updates_out) = mpsc::channel::<Update>(1000);
 
-	let task = run(lobby_id, updates_out);
+	let task = run(lobby_id, ratings, canary, updates_out);
 	tokio::spawn(task);
 
 	updates_in
@@ -200,11 +204,20 @@ struct Lobby
 
 	stage: Stage,
 	game_in_progress: Option<mpsc::Sender<game::Update>>,
+	rating_database_for_games: mpsc::Sender<rating::Update>,
+	canary_for_games: mpsc::Sender<()>,
 }
 
-async fn run(lobby_id: Keycode, mut updates: mpsc::Receiver<Update>)
+async fn run(
+	lobby_id: Keycode,
+	ratings: mpsc::Sender<rating::Update>,
+	canary: mpsc::Sender<()>,
+	mut updates: mpsc::Receiver<Update>,
+)
 {
-	let mut lobby = match initialize(lobby_id).await
+	let canary_for_games = canary.clone();
+
+	let mut lobby = match initialize(lobby_id, ratings, canary_for_games).await
 	{
 		Ok(lobby) => lobby,
 		Err(error) =>
@@ -230,9 +243,14 @@ async fn run(lobby_id: Keycode, mut updates: mpsc::Receiver<Update>)
 	}
 
 	println!("Lobby {} has disbanded.", lobby_id);
+	let _discarded = canary;
 }
 
-async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
+async fn initialize(
+	lobby_id: Keycode,
+	rating_database_for_games: mpsc::Sender<rating::Update>,
+	canary_for_games: mpsc::Sender<()>,
+) -> Result<Lobby, Error>
 {
 	let map_pool = map::load_pool_with_metadata().await?;
 
@@ -263,6 +281,8 @@ async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
 		is_rated: true,
 		stage: Stage::Setup,
 		game_in_progress: None,
+		rating_database_for_games,
+		canary_for_games,
 	})
 }
 
@@ -1597,16 +1617,18 @@ async fn try_start(
 				// TODO visiontypes
 				let vision = VisionType::Normal;
 
+				let rating_callback = lobby.rating_database_for_games.clone();
+
 				player_clients.push(game::PlayerClient {
 					id: client.id,
 					username: client.username.clone(),
 					sendbuffer: Some(client.sendbuffer.clone()),
+					rating_callback: Some(rating_callback),
 
 					color,
 					vision,
 
 					is_defeated: false,
-					is_retired: false,
 					has_synced: false,
 					submitted_orders: None,
 				});
@@ -1700,6 +1722,7 @@ async fn try_start(
 	// We are truly starting.
 	let game = game::start(
 		lobby.id,
+		lobby.canary_for_games.clone(),
 		lobby_sendbuffer,
 		player_clients,
 		bots,

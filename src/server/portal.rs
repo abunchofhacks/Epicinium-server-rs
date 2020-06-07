@@ -1,4 +1,4 @@
-/* Server::Login */
+/* Server::Portal */
 
 use crate::common::platform::*;
 use crate::common::version::*;

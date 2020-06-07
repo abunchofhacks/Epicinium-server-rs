@@ -76,7 +76,7 @@ pub async fn run(mut updates: mpsc::Receiver<Update>, canary: mpsc::Sender<()>)
 	}
 
 	println!("General chat has disbanded.");
-	let _discard = canary;
+	let _discarded = canary;
 }
 
 fn handle_update(

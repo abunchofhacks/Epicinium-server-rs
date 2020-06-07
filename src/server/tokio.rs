@@ -9,6 +9,7 @@ use crate::server::client;
 use crate::server::killer;
 use crate::server::login;
 use crate::server::portal;
+use crate::server::rating;
 use crate::server::settings::*;
 
 use std::error;
@@ -46,6 +47,9 @@ pub async fn run_server(
 	let login_server = login::connect(settings, challenge::get_current_key())?;
 	let login = sync::Arc::new(login_server);
 
+	let (rating_in, rating_out) = mpsc::channel::<rating::Update>(10000);
+	let rating_task = rating::run(settings, rating_out);
+
 	let (killcount_in, killcount_out) = watch::channel(0u8);
 	let killer_task = killer::run(killcount_in).map_err(|e| e.into());
 
@@ -66,13 +70,19 @@ pub async fn run_server(
 		settings,
 		login,
 		general_in,
+		rating_in,
 		state_out,
 		client_canary_in,
 	);
 
-	let server_task =
-		future::try_join4(acceptance_task, chat_task, killer_task, close_task)
-			.map_ok(|((), (), (), ())| ());
+	let server_task = future::try_join5(
+		acceptance_task,
+		chat_task,
+		rating_task,
+		killer_task,
+		close_task,
+	)
+	.map_ok(|((), (), (), (), ())| ());
 
 	server_task.await
 }
@@ -81,6 +91,7 @@ async fn accept_clients(
 	settings: &Settings,
 	login: sync::Arc<login::Server>,
 	general_chat: mpsc::Sender<chat::Update>,
+	ratings: mpsc::Sender<rating::Update>,
 	server_state: watch::Receiver<State>,
 	client_canary: mpsc::Sender<()>,
 ) -> Result<(), Box<dyn error::Error>>
@@ -95,7 +106,15 @@ async fn accept_clients(
 
 	println!("Listening on {}:{}", ipaddress, port);
 
-	listen(listener, login, general_chat, server_state, client_canary).await;
+	listen(
+		listener,
+		login,
+		general_chat,
+		ratings,
+		server_state,
+		client_canary,
+	)
+	.await;
 
 	println!("Stopped listening.");
 
@@ -106,6 +125,7 @@ async fn listen(
 	mut listener: TcpListener,
 	login: sync::Arc<login::Server>,
 	general_chat: mpsc::Sender<chat::Update>,
+	ratings: mpsc::Sender<rating::Update>,
 	mut server_state: watch::Receiver<State>,
 	client_canary: mpsc::Sender<()>,
 )
@@ -149,6 +169,7 @@ async fn listen(
 			id,
 			login.clone(),
 			general_chat.clone(),
+			ratings.clone(),
 			server_state.clone(),
 			client_canary.clone(),
 			lobbyticker.clone(),

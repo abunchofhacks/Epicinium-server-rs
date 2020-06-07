@@ -11,6 +11,7 @@ use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
 use crate::server::lobby;
 use crate::server::message::*;
+use crate::server::rating;
 
 use std::fmt;
 
@@ -22,12 +23,12 @@ pub struct PlayerClient
 	pub id: Keycode,
 	pub username: String,
 	pub sendbuffer: Option<mpsc::Sender<Message>>,
+	pub rating_callback: Option<mpsc::Sender<rating::Update>>,
 
 	pub color: PlayerColor,
 	pub vision: VisionType,
 
 	pub is_defeated: bool,
-	pub is_retired: bool,
 	pub has_synced: bool,
 	pub submitted_orders: Option<Vec<Order>>,
 }
@@ -37,6 +38,11 @@ impl PlayerClient
 	fn is_disconnected(&self) -> bool
 	{
 		self.sendbuffer.is_none()
+	}
+
+	fn is_retired(&self) -> bool
+	{
+		self.rating_callback.is_some()
 	}
 
 	fn send(&mut self, message: Message)
@@ -105,6 +111,7 @@ impl WatcherClient
 
 pub fn start(
 	lobby_id: Keycode,
+	canary: mpsc::Sender<()>,
 	end_update: mpsc::Sender<lobby::Update>,
 	players: Vec<PlayerClient>,
 	bots: Vec<Bot>,
@@ -117,14 +124,11 @@ pub fn start(
 	is_rated: bool,
 ) -> mpsc::Sender<Update>
 {
-	let (results_in, results_out) = mpsc::channel::<PlayerResult>(100);
-	let result_task = run_result_task(lobby_id, results_out);
-
 	let (updates_in, updates_out) = mpsc::channel::<Update>(1000);
-	let game_task = run_game_task(
+	let task = run_game_task(
 		lobby_id,
+		canary,
 		end_update,
-		results_in,
 		updates_out,
 		players,
 		bots,
@@ -136,8 +140,6 @@ pub fn start(
 		is_tutorial,
 		is_rated,
 	);
-
-	let task = futures::future::join(game_task, result_task);
 	tokio::spawn(task);
 
 	updates_in
@@ -145,8 +147,8 @@ pub fn start(
 
 async fn run_game_task(
 	lobby_id: Keycode,
+	canary: mpsc::Sender<()>,
 	mut end_update: mpsc::Sender<lobby::Update>,
-	results: mpsc::Sender<PlayerResult>,
 	updates: mpsc::Receiver<Update>,
 	players: Vec<PlayerClient>,
 	bots: Vec<Bot>,
@@ -161,7 +163,6 @@ async fn run_game_task(
 {
 	let result = run(
 		lobby_id,
-		results,
 		updates,
 		players,
 		bots,
@@ -192,11 +193,11 @@ async fn run_game_task(
 	}
 
 	println!("Game ended in lobby {}", lobby_id);
+	let _discarded = canary;
 }
 
 async fn run(
 	lobby_id: Keycode,
-	mut results: mpsc::Sender<PlayerResult>,
 	mut updates: mpsc::Receiver<Update>,
 	mut players: Vec<PlayerClient>,
 	mut bots: Vec<Bot>,
@@ -304,7 +305,6 @@ async fn run(
 			&mut bots,
 			&mut watchers,
 			&mut updates,
-			&mut results,
 			planning_time_in_seconds,
 		)
 		.await?;
@@ -324,7 +324,7 @@ async fn run(
 	// If there are non-bot non-observer participants, adjust their ratings.
 	for client in players.iter_mut()
 	{
-		retire(&mut automaton, &mut results, client).await?;
+		retire(&mut automaton, client).await?;
 	}
 
 	Ok(())
@@ -365,7 +365,6 @@ async fn iterate(
 	bots: &mut Vec<Bot>,
 	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
-	results: &mut mpsc::Sender<PlayerResult>,
 	planning_time_in_seconds: Option<u32>,
 ) -> Result<State, Error>
 {
@@ -394,7 +393,7 @@ async fn iterate(
 		}
 	}
 
-	rest(automaton, players, watchers, updates, results).await?;
+	rest(automaton, players, watchers, updates).await?;
 
 	// If the game has ended, we are done.
 	// We waited with this check until all players have finished animating,
@@ -407,7 +406,7 @@ async fn iterate(
 	// If all live players are disconnected during the resting phase,
 	// the game cannot continue until at least one player reconnects
 	// and has finished rejoining.
-	ensure_live_players(automaton, players, watchers, updates, results).await?;
+	ensure_live_players(automaton, players, watchers, updates).await?;
 
 	let message = Message::Sync {
 		planning_time_in_seconds,
@@ -433,7 +432,7 @@ async fn iterate(
 	}
 
 	let num_bots = bots.len();
-	sleep(automaton, players, num_bots, watchers, updates, results).await?;
+	sleep(automaton, players, num_bots, watchers, updates).await?;
 
 	let cset = automaton.awake()?;
 	broadcast(players, bots, watchers, cset)?;
@@ -444,7 +443,7 @@ async fn iterate(
 		return Ok(State::Finished);
 	}
 
-	stage(automaton, players, watchers, updates, results).await?;
+	stage(automaton, players, watchers, updates).await?;
 
 	for player in players.into_iter()
 	{
@@ -504,7 +503,6 @@ async fn rest(
 	players: &mut Vec<PlayerClient>,
 	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
-	results: &mut mpsc::Sender<PlayerResult>,
 ) -> Result<(), Error>
 {
 	// Start the planning phase when all players (or all watchers if
@@ -546,7 +544,7 @@ async fn rest(
 			}
 			Update::Resign { client_id } =>
 			{
-				handle_resign(automaton, players, results, client_id).await?;
+				handle_resign(automaton, players, client_id).await?;
 			}
 			Update::Leave { client_id } =>
 			{
@@ -584,7 +582,6 @@ async fn ensure_live_players(
 	players: &mut Vec<PlayerClient>,
 	_watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
-	results: &mut mpsc::Sender<PlayerResult>,
 ) -> Result<(), Error>
 {
 	if players.is_empty()
@@ -613,7 +610,7 @@ async fn ensure_live_players(
 			}
 			Update::Resign { client_id } =>
 			{
-				handle_resign(automaton, players, results, client_id).await?;
+				handle_resign(automaton, players, client_id).await?;
 			}
 			Update::Leave { client_id } =>
 			{
@@ -629,7 +626,7 @@ fn at_least_one_live_player(players: &mut Vec<PlayerClient>) -> bool
 {
 	players
 		.iter()
-		.find(|x| !x.is_defeated && !x.is_retired && !x.is_disconnected())
+		.find(|x| !x.is_defeated && !x.is_retired() && !x.is_disconnected())
 		.is_some()
 }
 
@@ -639,7 +636,6 @@ async fn sleep(
 	num_bots: usize,
 	_watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
-	results: &mut mpsc::Sender<PlayerResult>,
 ) -> Result<(), Error>
 {
 	if too_few_potential_winners(players, num_bots)
@@ -681,7 +677,7 @@ async fn sleep(
 			}
 			Update::Resign { client_id } =>
 			{
-				handle_resign(automaton, players, results, client_id).await?;
+				handle_resign(automaton, players, client_id).await?;
 
 				if too_few_potential_winners(players, num_bots)
 				{
@@ -706,7 +702,7 @@ fn too_few_potential_winners(
 {
 	let potentialwinners = players
 		.iter()
-		.filter(|x| !x.is_defeated && !x.is_retired)
+		.filter(|x| !x.is_defeated && !x.is_retired())
 		.count();
 
 	potentialwinners + num_bots < 2
@@ -716,7 +712,7 @@ fn all_players_have_submitted_orders(players: &mut Vec<PlayerClient>) -> bool
 {
 	players
 		.iter()
-		.filter(|x| !x.is_defeated && !x.is_retired && !x.is_disconnected())
+		.filter(|x| !x.is_defeated && !x.is_retired() && !x.is_disconnected())
 		.all(|x| x.submitted_orders.is_some())
 }
 
@@ -725,7 +721,6 @@ async fn stage(
 	players: &mut Vec<PlayerClient>,
 	_watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
-	results: &mut mpsc::Sender<PlayerResult>,
 ) -> Result<(), Error>
 {
 	// There is a 10 second grace period for anyone whose orders we
@@ -761,7 +756,7 @@ async fn stage(
 			}
 			Update::Resign { client_id } =>
 			{
-				handle_resign(automaton, players, results, client_id).await?;
+				handle_resign(automaton, players, client_id).await?;
 			}
 			Update::Leave { client_id } =>
 			{
@@ -776,7 +771,6 @@ async fn stage(
 async fn handle_resign(
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
-	results: &mut mpsc::Sender<PlayerResult>,
 	client_id: Keycode,
 ) -> Result<(), Error>
 {
@@ -788,20 +782,19 @@ async fn handle_resign(
 
 	automaton.resign(client.color);
 
-	retire(automaton, results, client).await
+	retire(automaton, client).await
 }
 
 async fn retire(
 	automaton: &mut Automaton,
-	results: &mut mpsc::Sender<PlayerResult>,
 	client: &mut PlayerClient,
 ) -> Result<(), Error>
 {
-	if client.is_retired
+	let mut callback = match client.rating_callback.take()
 	{
-		return Ok(());
-	}
-	client.is_retired = true;
+		Some(callback) => callback,
+		None => return Ok(()),
+	};
 
 	// Resigning while not yet being defeated is not rated
 	// as a defeat until they reach the third action phase,
@@ -816,7 +809,8 @@ async fn retire(
 		client_username: client.username.clone(),
 		is_rated,
 	};
-	results.send(result).await?;
+	let update = rating::Update::GameResult { result };
+	callback.send(update).await?;
 	Ok(())
 }
 
@@ -843,18 +837,18 @@ enum Error
 	{
 		client_id: Keycode,
 	},
-	ResultTaskDropped
+	ResultDropped
 	{
-		error: mpsc::error::SendError<PlayerResult>,
+		error: mpsc::error::SendError<rating::Update>,
 	},
 	Interface(automaton::InterfaceError),
 }
 
-impl From<mpsc::error::SendError<PlayerResult>> for Error
+impl From<mpsc::error::SendError<rating::Update>> for Error
 {
-	fn from(error: mpsc::error::SendError<PlayerResult>) -> Self
+	fn from(error: mpsc::error::SendError<rating::Update>) -> Self
 	{
-		Error::ResultTaskDropped { error }
+		Error::ResultDropped { error }
 	}
 }
 
@@ -874,7 +868,7 @@ impl fmt::Display for Error
 		{
 			Error::LobbyGone => write!(f, "{:#?}", &self),
 			Error::ClientGone { .. } => write!(f, "{:#?}", &self),
-			Error::ResultTaskDropped { .. } => write!(f, "{:#?}", &self),
+			Error::ResultDropped { .. } => write!(f, "{:#?}", &self),
 			Error::Interface(error) => error.fmt(f),
 		}
 	}
@@ -883,22 +877,10 @@ impl fmt::Display for Error
 impl std::error::Error for Error {}
 
 #[derive(Debug)]
-struct PlayerResult
+pub struct PlayerResult
 {
 	client_id: Keycode,
 	client_username: String,
 	is_rated: bool,
-}
-
-async fn run_result_task(
-	lobby_id: Keycode,
-	mut results: mpsc::Receiver<PlayerResult>,
-)
-{
-	while let Some(result) = results.recv().await
-	{
-		println!("Lobby {}, result: {:?}", lobby_id, result);
-		// TODO calls to the database
-	}
-	println!("All results are in for lobby {}", lobby_id)
+	// TODO score, rating value etcetera
 }

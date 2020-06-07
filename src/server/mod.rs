@@ -9,6 +9,7 @@ mod lobby;
 mod login;
 mod message;
 mod portal;
+mod rating;
 
 pub mod countingtest;
 pub mod settings;
