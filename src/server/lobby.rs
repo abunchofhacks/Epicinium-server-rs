@@ -12,6 +12,7 @@ use crate::server::botslot::Botslot;
 use crate::server::chat;
 use crate::server::client;
 use crate::server::game;
+use crate::server::login::UserId;
 use crate::server::message::*;
 use crate::server::rating;
 
@@ -40,6 +41,7 @@ pub enum Update
 	Join
 	{
 		client_id: Keycode,
+		client_user_id: UserId,
 		client_username: String,
 		client_sendbuffer: mpsc::Sender<Message>,
 		client_callback: mpsc::Sender<client::Update>,
@@ -301,6 +303,7 @@ async fn handle_update(
 
 		Update::Join {
 			client_id,
+			client_user_id,
 			client_username,
 			client_sendbuffer,
 			client_callback,
@@ -311,6 +314,7 @@ async fn handle_update(
 			handle_join(
 				lobby,
 				client_id,
+				client_user_id,
 				client_username,
 				client_sendbuffer,
 				client_callback,
@@ -563,6 +567,7 @@ struct Bot
 struct Client
 {
 	id: Keycode,
+	user_id: UserId,
 	username: String,
 	sendbuffer: mpsc::Sender<Message>,
 	is_dead: bool,
@@ -583,6 +588,7 @@ impl Client
 async fn handle_join(
 	lobby: &mut Lobby,
 	client_id: Keycode,
+	client_user_id: UserId,
 	client_username: String,
 	client_sendbuffer: mpsc::Sender<Message>,
 	client_callback: mpsc::Sender<client::Update>,
@@ -596,6 +602,7 @@ async fn handle_join(
 	match do_join(
 		lobby,
 		client_id,
+		client_user_id,
 		client_username.clone(),
 		client_sendbuffer,
 		client_callback,
@@ -646,6 +653,7 @@ async fn handle_join(
 fn do_join(
 	lobby: &mut Lobby,
 	client_id: Keycode,
+	client_user_id: UserId,
 	client_username: String,
 	client_sendbuffer: mpsc::Sender<Message>,
 	mut client_callback: mpsc::Sender<client::Update>,
@@ -657,6 +665,7 @@ fn do_join(
 
 	let mut newcomer = Client {
 		id: client_id,
+		user_id: client_user_id,
 		username: client_username,
 		sendbuffer: client_sendbuffer,
 		is_dead: false,
@@ -799,6 +808,7 @@ async fn handle_removed(
 	{
 		let Client {
 			id,
+			user_id: _,
 			username,
 			mut sendbuffer,
 			is_dead,
@@ -1621,6 +1631,7 @@ async fn try_start(
 
 				player_clients.push(game::PlayerClient {
 					id: client.id,
+					user_id: client.user_id,
 					username: client.username.clone(),
 					sendbuffer: Some(client.sendbuffer.clone()),
 					rating_callback: Some(rating_callback),

@@ -6,6 +6,7 @@ use crate::server::chat;
 use crate::server::game;
 use crate::server::lobby;
 use crate::server::login;
+use crate::server::login::UserId;
 use crate::server::message::*;
 use crate::server::rating;
 use crate::server::tokio::State as ServerState;
@@ -54,6 +55,7 @@ struct Client
 	has_proper_version_a: sync::Arc<atomic::AtomicBool>,
 
 	pub id: Keycode,
+	pub user_id: Option<UserId>,
 	pub username: String,
 	pub version: Version,
 	pub unlocks: EnumSet<Unlock>,
@@ -153,6 +155,7 @@ pub fn accept(
 		has_proper_version_a: sync::Arc::new(atomic::AtomicBool::new(false)),
 
 		id: id,
+		user_id: None,
 		username: String::new(),
 		version: Version::undefined(),
 		unlocks: EnumSet::empty(),
@@ -557,6 +560,7 @@ async fn start_login_task(
 				if logindata.unlocks.contains(Unlock::BetaAccess)
 				{
 					let update = Update::JoinedServer {
+						user_id: logindata.user_id,
 						username: logindata.username,
 						unlocks: logindata.unlocks,
 					};
@@ -600,6 +604,7 @@ pub enum Update
 	},
 	JoinedServer
 	{
+		user_id: UserId,
 		username: String,
 		unlocks: EnumSet<Unlock>,
 	},
@@ -787,7 +792,11 @@ async fn handle_update(
 			Ok(false)
 		}
 
-		Update::JoinedServer { username, unlocks } =>
+		Update::JoinedServer {
+			user_id,
+			username,
+			unlocks,
+		} =>
 		{
 			match client.general_chat_reserve.take()
 			{
@@ -803,6 +812,7 @@ async fn handle_update(
 					{
 						Ok(()) =>
 						{
+							client.user_id = Some(user_id);
 							client.username = username;
 							client.unlocks = unlocks;
 							client.general_chat = Some(chat);
@@ -851,8 +861,18 @@ async fn handle_update(
 					return Err(Error::Unexpected);
 				}
 			};
+			let client_user_id = match client.user_id
+			{
+				Some(user_id) => user_id,
+				None =>
+				{
+					eprintln!("Expected user_id");
+					return Err(Error::Unexpected);
+				}
+			};
 			let update = lobby::Update::Join {
 				client_id: client.id,
+				client_user_id,
 				client_username: client.username.clone(),
 				client_sendbuffer: client.sendbuffer.clone(),
 				client_callback: lobby_callback,
@@ -1111,8 +1131,18 @@ async fn handle_message(
 					client.canary_for_lobbies.clone(),
 				);
 
+				let client_user_id = match client.user_id
+				{
+					Some(user_id) => user_id,
+					None =>
+					{
+						eprintln!("Expected user_id");
+						return Err(Error::Unexpected);
+					}
+				};
 				let update = lobby::Update::Join {
 					client_id: client.id,
+					client_user_id,
 					client_username: client.username.clone(),
 					client_sendbuffer: client.sendbuffer.clone(),
 					client_callback: lobby_callback,

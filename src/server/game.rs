@@ -10,6 +10,7 @@ use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
 use crate::server::lobby;
+use crate::server::login::UserId;
 use crate::server::message::*;
 use crate::server::rating;
 
@@ -21,6 +22,7 @@ use tokio::sync::mpsc;
 pub struct PlayerClient
 {
 	pub id: Keycode,
+	pub user_id: UserId,
 	pub username: String,
 	pub sendbuffer: Option<mpsc::Sender<Message>>,
 	pub rating_callback: Option<mpsc::Sender<rating::Update>>,
@@ -804,10 +806,12 @@ async fn retire(
 	// TODO is_rated && (defeated || round >= 3)
 	let is_rated = automaton.is_defeated(client.color);
 	// TODO add stars
+	let stars_for_current_challenge = 0;
 	let result = PlayerResult {
-		client_id: client.id,
-		client_username: client.username.clone(),
+		user_id: client.user_id,
+		username: client.username.clone(),
 		is_rated,
+		stars_for_current_challenge,
 	};
 	let update = rating::Update::GameResult { result };
 	callback.send(update).await?;
@@ -879,8 +883,9 @@ impl std::error::Error for Error {}
 #[derive(Debug)]
 pub struct PlayerResult
 {
-	client_id: Keycode,
-	client_username: String,
-	is_rated: bool,
+	pub user_id: UserId,
+	pub username: String,
+	pub is_rated: bool,
+	pub stars_for_current_challenge: i32,
 	// TODO score, rating value etcetera
 }

@@ -336,22 +336,3 @@ pub enum Unlock
 	BetaAccess,
 	Guest,
 }
-
-#[derive(Clone, Deserialize, Debug)]
-pub struct LoginResponse
-{
-	pub status: ResponseStatus,
-
-	#[serde(flatten)]
-	pub data: Option<LoginData>,
-}
-
-#[derive(Clone, Deserialize, Debug)]
-pub struct LoginData
-{
-	pub username: String,
-	pub unlocks: EnumSet<Unlock>,
-	pub rating: f32,
-	pub stars: i32,
-	pub recent_stars: i32,
-}

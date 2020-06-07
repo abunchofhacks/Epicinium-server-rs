@@ -3,6 +3,7 @@
 use crate::common::keycode::*;
 use crate::common::platform::*;
 use crate::common::version::*;
+use crate::logic::challenge;
 use crate::server::message::*;
 use crate::server::settings::*;
 
@@ -18,21 +19,32 @@ pub struct Request
 	pub token: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+pub struct UserId(u64);
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LoginData
+{
+	pub user_id: UserId,
+	pub username: String,
+	pub unlocks: EnumSet<Unlock>,
+	pub rating: f32,
+	pub stars: i32,
+	pub recent_stars: i32,
+}
+
 pub struct Server
 {
 	connection: Option<Connection>,
 }
 
-pub fn connect(
-	settings: &Settings,
-	current_challenge_key: String,
-) -> Result<Server, Box<dyn error::Error>>
+pub fn connect(settings: &Settings) -> Result<Server, Box<dyn error::Error>>
 {
 	if settings.login_server().is_some()
 		|| (!cfg!(feature = "version-is-dev")
 			&& (!cfg!(debug_assertions) || cfg!(feature = "candidate")))
 	{
-		let connection = Connection::open(settings, current_challenge_key)?;
+		let connection = Connection::open(settings)?;
 		Ok(Server {
 			connection: Some(connection),
 		})
@@ -62,17 +74,20 @@ impl Server
 {
 	fn dev_login(&self, request: Request) -> Result<LoginData, ResponseStatus>
 	{
+		let user_id;
 		let username;
 		let unlocks: EnumSet<Unlock>;
 		match request.token.parse::<u8>()
 		{
 			Ok(1) =>
 			{
+				user_id = UserId(1);
 				username = "Alice".to_string();
 				unlocks = enum_set!(Unlock::BetaAccess | Unlock::Dev);
 			}
 			Ok(x) if x >= 2 && x <= 8 =>
 			{
+				user_id = UserId(x as u64);
 				const NAMES: [&str; 7] =
 					["Bob", "Carol", "Dave", "Emma", "Frank", "Gwen", "Harold"];
 				username = NAMES[(x - 2) as usize].to_string();
@@ -83,12 +98,14 @@ impl Server
 				let key: u16 = rand::random();
 				let serial: u64 = rand::random();
 				let id = keycode(key, serial);
+				user_id = UserId(id.0 | 0xF000000000000000);
 				username = format!("{}", id);
 				unlocks = enum_set!(Unlock::BetaAccess | Unlock::Dev);
 			}
 		}
 
 		let data = LoginData {
+			user_id,
 			username: username,
 			unlocks: unlocks,
 			rating: 0.0,
@@ -109,10 +126,7 @@ struct Connection
 
 impl Connection
 {
-	fn open(
-		settings: &Settings,
-		current_challenge_key: String,
-	) -> Result<Connection, Box<dyn error::Error>>
+	fn open(settings: &Settings) -> Result<Connection, Box<dyn error::Error>>
 	{
 		let url = settings.get_login_server()?;
 		let base_url = http::Url::parse(url)?;
@@ -132,7 +146,7 @@ impl Connection
 		Ok(Connection {
 			http,
 			validate_session_url,
-			current_challenge_key,
+			current_challenge_key: challenge::get_current_key(),
 		})
 	}
 
@@ -182,4 +196,13 @@ impl Connection
 			Err(response.status)
 		}
 	}
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LoginResponse
+{
+	status: ResponseStatus,
+
+	#[serde(flatten)]
+	data: Option<LoginData>,
 }
