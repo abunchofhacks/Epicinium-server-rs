@@ -6,6 +6,7 @@ use crate::logic::challenge;
 use crate::logic::difficulty::*;
 use crate::logic::map;
 use crate::logic::player::PlayerColor;
+use crate::logic::ruleset;
 use crate::server::botslot;
 use crate::server::botslot::Botslot;
 use crate::server::chat;
@@ -239,9 +240,6 @@ async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
 	let (name, _) = defaultmap;
 	let map_name = name.to_string();
 
-	// TODO Library::nameCurrentBible()
-	let ruleset_name = "v0.33.0".to_string();
-
 	Ok(Lobby {
 		id: lobby_id,
 		name: initial_name(),
@@ -257,7 +255,7 @@ async fn initialize(lobby_id: Keycode) -> Result<Lobby, Error>
 		ai_pool: ai::load_pool(),
 		map_pool,
 		map_name,
-		ruleset_name,
+		ruleset_name: ruleset::current(),
 		ruleset_confirmations: HashSet::new(),
 		timer_in_seconds: 60,
 		challenge_id: None,
@@ -1167,6 +1165,10 @@ async fn pick_map(
 		None =>
 		{
 			// Pick failed, send the current map.
+			eprintln!(
+				"Cannot pick non-existing map '{}' in lobby {}.",
+				map_name, lobby.id
+			);
 			let message = Message::PickMap {
 				map_name: lobby.map_name.clone(),
 			};
@@ -1423,13 +1425,27 @@ async fn pick_ruleset(
 	// might want to use the default ruleset.
 	if ruleset_name.is_empty()
 	{
-		// TODO Library::nameCurrentBible()
-		lobby.ruleset_name = "v0.33.0".to_string();
+		lobby.ruleset_name = ruleset::current();
 	}
-	// TODO Library::existsBible(ruleset_name)
-	else
+	else if ruleset::exists(&ruleset_name)
 	{
 		lobby.ruleset_name = ruleset_name;
+	}
+	else
+	{
+		// Pick failed, send the current ruleset.
+		eprintln!(
+			"Cannot pick non-existing ruleset '{}' in lobby {}.",
+			ruleset_name, lobby.id
+		);
+		let message = Message::PickRuleset {
+			ruleset_name: lobby.ruleset_name.clone(),
+		};
+		for client in clients.iter_mut()
+		{
+			client.send(message.clone());
+		}
+		return Ok(());
 	}
 
 	// All players have to confirm that they have this ruleset.

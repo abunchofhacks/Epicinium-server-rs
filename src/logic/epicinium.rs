@@ -272,7 +272,7 @@ pub fn map_pool() -> Vec<String>
 
 pub fn initialize_ruleset_collection() -> Result<(), InitializationError>
 {
-	let success = unsafe { epicinium_initialize_ruleset_collection() };
+	let success = unsafe { epicinium_ruleset_initialize_collection() };
 	if success
 	{
 		Ok(())
@@ -281,6 +281,26 @@ pub fn initialize_ruleset_collection() -> Result<(), InitializationError>
 	{
 		Err(InitializationError::Failed)
 	}
+}
+
+pub fn name_current_ruleset() -> String
+{
+	let s: &CStr = unsafe { CStr::from_ptr(epicinium_ruleset_current_name()) };
+	s.to_string_lossy().to_string()
+}
+
+pub fn ruleset_exists(name: &str) -> bool
+{
+	let name = match CString::new(name)
+	{
+		Ok(name) => name,
+		Err(error) =>
+		{
+			eprintln!("Ruleset with nul character: {}, {:?}", name, error);
+			return false;
+		}
+	};
+	unsafe { epicinium_ruleset_exists(name.as_ptr()) }
 }
 
 pub fn ai_pool() -> Vec<String>
@@ -659,7 +679,9 @@ extern "C" {
 	fn epicinium_map_pool_size() -> usize;
 	fn epicinium_map_pool_get(i: usize) -> *const c_char;
 
-	fn epicinium_initialize_ruleset_collection() -> bool;
+	fn epicinium_ruleset_initialize_collection() -> bool;
+	fn epicinium_ruleset_current_name() -> *const c_char;
+	fn epicinium_ruleset_exists(name: *const c_char) -> bool;
 
 	fn epicinium_ai_pool_size() -> usize;
 	fn epicinium_ai_pool_get(i: usize) -> *const c_char;

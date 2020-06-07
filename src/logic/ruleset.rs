@@ -7,6 +7,16 @@ pub fn initialize_collection() -> Result<(), InitializationError>
 	epicinium::initialize_ruleset_collection()
 }
 
+pub fn current() -> String
+{
+	epicinium::name_current_ruleset()
+}
+
+pub fn exists(name: &str) -> bool
+{
+	epicinium::ruleset_exists(name)
+}
+
 #[derive(Debug)]
 pub enum InitializationError
 {
