@@ -563,6 +563,9 @@ async fn start_login_task(
 						user_id: logindata.user_id,
 						username: logindata.username,
 						unlocks: logindata.unlocks,
+						rating: logindata.rating,
+						stars: logindata.stars,
+						recent_stars: logindata.recent_stars,
 					};
 					joinedbuffer.send(update).await?;
 				}
@@ -607,6 +610,9 @@ pub enum Update
 		user_id: UserId,
 		username: String,
 		unlocks: EnumSet<Unlock>,
+		rating: f32,
+		stars: i32,
+		recent_stars: i32,
 	},
 	LobbyFound
 	{
@@ -656,6 +662,10 @@ enum Error
 	Login
 	{
 		error: mpsc::error::TrySendError<login::Request>,
+	},
+	Rating
+	{
+		error: mpsc::error::SendError<rating::Update>,
 	},
 	Watch
 	{
@@ -723,6 +733,14 @@ impl From<mpsc::error::TrySendError<login::Request>> for Error
 	}
 }
 
+impl From<mpsc::error::SendError<rating::Update>> for Error
+{
+	fn from(error: mpsc::error::SendError<rating::Update>) -> Self
+	{
+		Error::Rating { error }
+	}
+}
+
 impl From<watch::error::SendError<()>> for Error
 {
 	fn from(error: watch::error::SendError<()>) -> Self
@@ -770,6 +788,7 @@ impl fmt::Display for Error
 			Error::Chat { error } => error.fmt(f),
 			Error::Lobby { error } => error.fmt(f),
 			Error::Login { error } => error.fmt(f),
+			Error::Rating { error } => error.fmt(f),
 			Error::Watch { error } => error.fmt(f),
 			Error::Recv { error } => error.fmt(f),
 			Error::OneshotRecv { error } => error.fmt(f),
@@ -796,6 +815,9 @@ async fn handle_update(
 			user_id,
 			username,
 			unlocks,
+			rating,
+			stars,
+			recent_stars,
 		} =>
 		{
 			match client.general_chat_reserve.take()
@@ -812,10 +834,20 @@ async fn handle_update(
 					{
 						Ok(()) =>
 						{
+							let update = rating::Update::Fresh {
+								user_id,
+								username: username.clone(),
+								rating,
+								stars,
+								recent_stars,
+							};
+							client.rating_database.send(update).await?;
+
 							client.user_id = Some(user_id);
 							client.username = username;
 							client.unlocks = unlocks;
 							client.general_chat = Some(chat);
+
 							Ok(false)
 						}
 						Err(error) =>

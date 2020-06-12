@@ -18,6 +18,14 @@ use reqwest as http;
 #[derive(Debug)]
 pub enum Update
 {
+	Fresh
+	{
+		user_id: UserId,
+		username: String,
+		rating: f32,
+		stars: i32,
+		recent_stars: i32,
+	},
 	GameResult
 	{
 		result: game::PlayerResult
@@ -35,6 +43,22 @@ pub async fn run(
 	{
 		match update
 		{
+			Update::Fresh {
+				user_id,
+				username,
+				rating,
+				stars,
+				recent_stars,
+			} =>
+			{
+				let entry = Entry {
+					username,
+					rating,
+					stars,
+					recent_stars,
+				};
+				database.cache.insert(user_id, entry);
+			}
 			Update::GameResult { result } =>
 			{
 				database.handle_result(result).await?
@@ -68,14 +92,16 @@ impl Database
 	) -> Result<(), Box<dyn error::Error>>
 	{
 		let user_id = result.user_id;
-		let entry = self.cache.entry(user_id).or_insert_with(|| Entry {
-			username: String::new(),
-			rating: 0.0,
-			stars: 0,
-			recent_stars: 0,
-		});
-		// TODO do not change username here
-		entry.username = result.username;
+		let entry = match self.cache.get_mut(&user_id)
+		{
+			Some(entry) => entry,
+			None =>
+			{
+				eprintln!("Missing entry for user id {:?}!", user_id);
+				// We do not want this to end the rating task.
+				return Ok(());
+			}
+		};
 		if result.is_rated
 		{
 			// TODO calculate rating
@@ -98,7 +124,6 @@ impl Database
 				connection.award_stars(username, entry.recent_stars).await?;
 			}
 		}
-		// TODO update connection
 		Ok(())
 	}
 }
