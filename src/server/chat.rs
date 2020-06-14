@@ -30,6 +30,10 @@ pub enum Update
 	{
 		sendbuffer: mpsc::Sender<Message>,
 	},
+	StillAlive
+	{
+		client_id: Keycode,
+	},
 	Leave
 	{
 		client_id: Keycode,
@@ -123,6 +127,10 @@ fn handle_update(
 		Update::Init { sendbuffer } =>
 		{
 			handle_init(sendbuffer, clients, lobbies, current_challenge)
+		}
+		Update::StillAlive { client_id } =>
+		{
+			handle_still_alive(client_id, clients, ghostbusters)
 		}
 		Update::Leave { client_id } =>
 		{
@@ -230,12 +238,17 @@ struct Ghostbuster
 	id: Keycode,
 	username: String,
 	sendbuffer: mpsc::Sender<Message>,
+	ghost_id: Keycode,
 }
 
 impl Ghostbuster
 {
 	fn deny(mut self)
 	{
+		println!(
+			"Client {} did not ghostbust client {}.",
+			self.id, self.ghost_id
+		);
 		let message = Message::JoinServer {
 			status: Some(ResponseStatus::UsernameTaken),
 			content: None,
@@ -257,6 +270,10 @@ impl Ghostbuster
 
 	fn resolve(mut self)
 	{
+		println!(
+			"Client {} successfully ghostbusted client {}.",
+			self.id, self.ghost_id
+		);
 		// TODO is this the most sensible message type for this?
 		let message = Message::LeaveServer {
 			content: Some(self.username),
@@ -315,6 +332,7 @@ fn handle_join(
 				id,
 				username,
 				sendbuffer,
+				ghost_id: otherclient.id,
 			};
 			let previous = ghostbusters.insert(otherclient.id, newcomer);
 			if let Some(buster) = previous
@@ -541,6 +559,35 @@ fn handle_removed(
 		if let Some(ghostbuster) = ghostbuster
 		{
 			ghostbuster.resolve();
+		}
+	}
+}
+
+fn handle_still_alive(
+	client_id: Keycode,
+	clients: &mut Vec<Client>,
+	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
+)
+{
+	match clients.iter().find(|x| x.id == client_id)
+	{
+		Some(_client) =>
+		{
+			let ghostbuster = ghostbusters.remove(&client_id);
+			if let Some(ghostbuster) = ghostbuster
+			{
+				ghostbuster.deny();
+			}
+		}
+		None =>
+		{
+			eprintln!("Missing client {} is still alive.", client_id);
+
+			let ghostbuster = ghostbusters.remove(&client_id);
+			if let Some(ghostbuster) = ghostbuster
+			{
+				ghostbuster.resolve();
+			}
 		}
 	}
 }

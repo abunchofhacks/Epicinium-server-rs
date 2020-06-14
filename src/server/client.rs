@@ -1029,6 +1029,14 @@ async fn handle_message(
 			{
 				one.send(()).map_err(|()| Error::Unexpected)?;
 			}
+
+			if let Some(chat) = &mut client.general_chat
+			{
+				let update = chat::Update::StillAlive {
+					client_id: client.id,
+				};
+				chat.send(update).await?
+			}
 		}
 		Message::Version { version } =>
 		{
