@@ -1119,8 +1119,8 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid message from offline client: {:?}", message);
-				return Err(Error::Illegal);
+				// When the client is ghostbusting, if they exit the game
+				// it sends a LEAVE_SERVER message. We just ignore it.
 			}
 		},
 		Message::JoinLobby { .. } if client.closing =>
