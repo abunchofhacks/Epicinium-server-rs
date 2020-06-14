@@ -49,6 +49,7 @@ struct Client
 	general_chat: Option<mpsc::Sender<chat::Update>>,
 	general_chat_callback: Option<mpsc::Sender<Update>>,
 	rating_database: mpsc::Sender<rating::Update>,
+	latest_rating_data: Option<rating::Data>,
 	canary_for_lobbies: mpsc::Sender<()>,
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
 	lobby_callback: Option<mpsc::Sender<Update>>,
@@ -151,6 +152,7 @@ pub fn accept(
 		general_chat: None,
 		general_chat_callback: Some(updatebuffer_chat),
 		rating_database,
+		latest_rating_data: None,
 		lobby_authority: lobby_authority,
 		lobby_callback: Some(updatebuffer_lobby),
 		canary_for_lobbies,
@@ -570,13 +572,11 @@ async fn start_login_task(
 			{
 				if logindata.unlocks.contains(Unlock::BetaAccess)
 				{
-					let update = Update::JoinedServer {
+					let update = Update::LoggedIn {
 						user_id: logindata.user_id,
 						username: logindata.username,
 						unlocks: logindata.unlocks,
-						rating: logindata.rating,
-						stars: logindata.stars,
-						recent_stars: logindata.recent_stars,
+						rating_data: logindata.rating_data,
 					};
 					joinedbuffer.send(update).await?;
 				}
@@ -617,15 +617,14 @@ pub enum Update
 		callback: oneshot::Sender<()>,
 	},
 	BeingGhostbusted,
-	JoinedServer
+	LoggedIn
 	{
 		user_id: UserId,
 		username: String,
 		unlocks: EnumSet<Unlock>,
-		rating: f32,
-		stars: i32,
-		recent_stars: i32,
+		rating_data: rating::Data,
 	},
+	JoinedServer,
 	LobbyFound
 	{
 		lobby_id: Keycode,
@@ -842,18 +841,21 @@ async fn handle_update(
 			Ok(false)
 		}
 
-		Update::JoinedServer {
+		Update::LoggedIn {
 			user_id,
 			username,
 			unlocks,
-			rating,
-			stars,
-			recent_stars,
+			rating_data,
 		} =>
 		{
-			match client.general_chat_reserve.take()
+			client.user_id = Some(user_id);
+			client.username = username;
+			client.unlocks = unlocks;
+			client.latest_rating_data = Some(rating_data);
+
+			match &mut client.general_chat_reserve
 			{
-				Some(mut chat) =>
+				Some(chat) =>
 				{
 					let callback = match &client.general_chat_callback
 					{
@@ -866,31 +868,14 @@ async fn handle_update(
 					};
 					let request = chat::Update::Join {
 						client_id: client.id,
-						username: username.clone(),
-						unlocks,
+						username: client.username.clone(),
+						unlocks: client.unlocks.clone(),
 						sendbuffer: client.sendbuffer.clone(),
 						callback,
 					};
 					match chat.try_send(request)
 					{
-						Ok(()) =>
-						{
-							let update = rating::Update::Fresh {
-								user_id,
-								username: username.clone(),
-								rating,
-								stars,
-								recent_stars,
-							};
-							client.rating_database.send(update).await?;
-
-							client.user_id = Some(user_id);
-							client.username = username;
-							client.unlocks = unlocks;
-							client.general_chat = Some(chat);
-
-							Ok(false)
-						}
+						Ok(()) => Ok(false),
 						Err(error) =>
 						{
 							eprintln!(
@@ -918,6 +903,34 @@ async fn handle_update(
 				}
 			}
 		}
+		Update::JoinedServer => match client.general_chat_reserve.take()
+		{
+			Some(chat) =>
+			{
+				if let Some(data) = client.latest_rating_data.take()
+				{
+					let user_id = match client.user_id
+					{
+						Some(user_id) => user_id,
+						None =>
+						{
+							eprintln!("Expected user_id");
+							return Err(Error::Unexpected);
+						}
+					};
+					let update = rating::Update::Fresh { user_id, data };
+					client.rating_database.send(update).await?;
+				}
+
+				client.general_chat = Some(chat);
+				Ok(false)
+			}
+			None =>
+			{
+				client.sendbuffer.try_send(Message::Closing)?;
+				Ok(false)
+			}
+		},
 
 		Update::LobbyFound {
 			lobby_id: _,

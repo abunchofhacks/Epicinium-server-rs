@@ -8,6 +8,8 @@ use crate::server::lobby;
 use crate::server::login::Unlock;
 use crate::server::message::*;
 
+use std::collections::HashMap;
+
 use tokio::sync::mpsc;
 
 use enumset::*;
@@ -70,11 +72,21 @@ pub async fn run(mut updates: mpsc::Receiver<Update>, canary: mpsc::Sender<()>)
 {
 	let current_challenge = challenge::load_current();
 	let mut clients: Vec<Client> = Vec::new();
+	let mut ghostbusters: HashMap<Keycode, Ghostbuster> = HashMap::new();
 	let mut lobbies: Vec<Lobby> = Vec::new();
 
 	while let Some(update) = updates.recv().await
 	{
-		handle_update(update, &mut clients, &mut lobbies, &current_challenge);
+		handle_update(
+			update,
+			&mut clients,
+			&mut ghostbusters,
+			&mut lobbies,
+			&current_challenge,
+		);
+
+		let removed = clients.e_drain_where(|client| client.dead).collect();
+		handle_removed(removed, &mut clients, &mut ghostbusters);
 	}
 
 	println!("General chat has disbanded.");
@@ -84,6 +96,7 @@ pub async fn run(mut updates: mpsc::Receiver<Update>, canary: mpsc::Sender<()>)
 fn handle_update(
 	update: Update,
 	clients: &mut Vec<Client>,
+	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
 	lobbies: &mut Vec<Lobby>,
 	current_challenge: &Challenge,
 )
@@ -103,6 +116,7 @@ fn handle_update(
 			sendbuffer,
 			callback,
 			clients,
+			ghostbusters,
 			lobbies,
 			current_challenge,
 		),
@@ -110,7 +124,10 @@ fn handle_update(
 		{
 			handle_init(sendbuffer, clients, lobbies, current_challenge)
 		}
-		Update::Leave { client_id } => handle_leave(client_id, clients),
+		Update::Leave { client_id } =>
+		{
+			handle_leave(client_id, clients, ghostbusters)
+		}
 
 		Update::ListLobby {
 			lobby_id,
@@ -186,7 +203,6 @@ impl Client
 		match self.sendbuffer.try_send(message)
 		{
 			Ok(()) => (),
-			// TODO filter dead clients somehow
 			Err(error) =>
 			{
 				println!("Error sending to client {}: {:?}", self.id, error);
@@ -195,16 +211,65 @@ impl Client
 		}
 	}
 
-	fn ghostbust(&mut self)
+	fn update(&mut self, update: client::Update)
 	{
-		match self.callback.try_send(client::Update::BeingGhostbusted)
+		match self.callback.try_send(update)
 		{
 			Ok(()) => (),
-			// TODO filter dead clients somehow
 			Err(error) =>
 			{
 				println!("Error force-pinging client {}: {:?}", self.id, error);
 				self.dead = true
+			}
+		}
+	}
+}
+
+struct Ghostbuster
+{
+	id: Keycode,
+	username: String,
+	sendbuffer: mpsc::Sender<Message>,
+}
+
+impl Ghostbuster
+{
+	fn deny(mut self)
+	{
+		let message = Message::JoinServer {
+			status: Some(ResponseStatus::UsernameTaken),
+			content: None,
+			sender: None,
+			metadata: None,
+		};
+		match self.sendbuffer.try_send(message)
+		{
+			Ok(()) => (),
+			Err(error) =>
+			{
+				println!(
+					"Error sending to ghostbuster {}: {:?}",
+					self.id, error
+				);
+			}
+		}
+	}
+
+	fn resolve(mut self)
+	{
+		// TODO is this the most sensible message type for this?
+		let message = Message::LeaveServer {
+			content: Some(self.username),
+		};
+		match self.sendbuffer.try_send(message)
+		{
+			Ok(()) => (),
+			Err(error) =>
+			{
+				println!(
+					"Error sending to ghostbuster {}: {:?}",
+					self.id, error
+				);
 			}
 		}
 	}
@@ -226,6 +291,7 @@ fn handle_join(
 	sendbuffer: mpsc::Sender<Message>,
 	callback: mpsc::Sender<client::Update>,
 	clients: &mut Vec<Client>,
+	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
 	lobbies: &Vec<Lobby>,
 	current_challenge: &Challenge,
 )
@@ -242,10 +308,19 @@ fn handle_join(
 
 			// Make sure that that client is not a ghost by reducing their ping
 			// tolerance and ensuring a ping is sent.
-			otherclient.ghostbust();
+			otherclient.update(client::Update::BeingGhostbusted);
 
 			// Make the newcomer wait for the result of ghostbusting.
-			// TODO
+			let newcomer = Ghostbuster {
+				id,
+				username,
+				sendbuffer,
+			};
+			let previous = ghostbusters.insert(otherclient.id, newcomer);
+			if let Some(buster) = previous
+			{
+				buster.deny();
+			}
 			return;
 		}
 		None =>
@@ -325,6 +400,9 @@ fn handle_join(
 
 	// Show them a welcome message, if any.
 	welcome_client(&mut newcomer);
+
+	// Let the clienthandler know we have successfully joined.
+	newcomer.update(client::Update::JoinedServer);
 
 	clients.push(newcomer);
 }
@@ -411,16 +489,28 @@ fn do_init(
 	sendbuffer.try_send(Message::Init)
 }
 
-fn handle_leave(client_id: Keycode, clients: &mut Vec<Client>)
+fn handle_leave(
+	client_id: Keycode,
+	clients: &mut Vec<Client>,
+	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
+)
 {
 	let removed: Vec<Client> = clients
 		.e_drain_where(|client| client.id == client_id)
 		.collect();
+	handle_removed(removed, clients, ghostbusters);
+}
 
+fn handle_removed(
+	removed: Vec<Client>,
+	clients: &mut Vec<Client>,
+	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
+)
+{
 	for removed_client in removed
 	{
 		let Client {
-			id: _,
+			id,
 			username,
 			join_metadata: _,
 			mut sendbuffer,
@@ -445,6 +535,12 @@ fn handle_leave(client_id: Keycode, clients: &mut Vec<Client>)
 		{
 			Ok(()) => (),
 			Err(e) => eprintln!("Send error while processing leave: {:?}", e),
+		}
+
+		let ghostbuster = ghostbusters.remove(&id);
+		if let Some(ghostbuster) = ghostbuster
+		{
+			ghostbuster.resolve();
 		}
 	}
 }

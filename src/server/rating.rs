@@ -15,16 +15,20 @@ use tokio::sync::mpsc;
 
 use reqwest as http;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Data
+{
+	pub rating: f32,
+	pub stars: i32,
+	pub recent_stars: i32,
+}
+
 #[derive(Debug)]
 pub enum Update
 {
 	Fresh
 	{
-		user_id: UserId,
-		username: String,
-		rating: f32,
-		stars: i32,
-		recent_stars: i32,
+		user_id: UserId, data: Data
 	},
 	GameResult
 	{
@@ -43,21 +47,9 @@ pub async fn run(
 	{
 		match update
 		{
-			Update::Fresh {
-				user_id,
-				username,
-				rating,
-				stars,
-				recent_stars,
-			} =>
+			Update::Fresh { user_id, data } =>
 			{
-				let entry = Entry {
-					username,
-					rating,
-					stars,
-					recent_stars,
-				};
-				database.cache.insert(user_id, entry);
+				database.cache.insert(user_id, data);
 			}
 			Update::GameResult { result } =>
 			{
@@ -73,15 +65,7 @@ pub async fn run(
 struct Database
 {
 	connection: Option<Connection>,
-	cache: HashMap<UserId, Entry>,
-}
-
-struct Entry
-{
-	username: String,
-	rating: f32,
-	stars: i32,
-	recent_stars: i32,
+	cache: HashMap<UserId, Data>,
 }
 
 impl Database
@@ -108,8 +92,7 @@ impl Database
 
 			if let Some(connection) = &mut self.connection
 			{
-				let username = entry.username.clone();
-				connection.update_rating(username, entry.rating).await?;
+				connection.update_rating(user_id, entry.rating).await?;
 			}
 		}
 		if result.stars_for_current_challenge > entry.recent_stars
@@ -120,8 +103,7 @@ impl Database
 
 			if let Some(connection) = &mut self.connection
 			{
-				let username = entry.username.clone();
-				connection.award_stars(username, entry.recent_stars).await?;
+				connection.award_stars(user_id, entry.recent_stars).await?;
 			}
 		}
 		Ok(())
@@ -169,10 +151,10 @@ impl Connection
 		let base_url = http::Url::parse(url)?;
 
 		let mut update_rating_url = base_url.clone();
-		update_rating_url.set_path("api/v0/update_rating");
+		update_rating_url.set_path("api/v1/update_rating");
 
 		let mut award_stars_url = base_url;
-		award_stars_url.set_path("api/v0/award_stars");
+		award_stars_url.set_path("api/v1/award_stars");
 
 		let platform = Platform::current();
 		let platformstring = serde_plain::to_string(&platform)?;
@@ -194,20 +176,19 @@ impl Connection
 
 	async fn update_rating(
 		&self,
-		username: String,
+		user_id: UserId,
 		rating: f32,
 	) -> Result<(), Box<dyn error::Error>>
 	{
-		let data = json!({
-			"username": username,
+		let payload = json!({
+			"user_id": user_id,
 			"rating": rating,
 		});
-		let payload = serde_json::to_string(&data)?;
 
 		let response: Response = self
 			.http
 			.request(http::Method::POST, self.update_rating_url.clone())
-			.body(payload)
+			.json(&payload)
 			.send()
 			.await?
 			.error_for_status()?
@@ -220,21 +201,20 @@ impl Connection
 
 	async fn award_stars(
 		&self,
-		username: String,
+		user_id: UserId,
 		stars_for_current_challenge: i32,
 	) -> Result<(), Box<dyn error::Error>>
 	{
-		let data = json!({
-			"username": username,
+		let payload = json!({
+			"user_id": user_id,
 			"key": self.current_challenge_key.clone(),
 			"stars": stars_for_current_challenge,
 		});
-		let payload = serde_json::to_string(&data)?;
 
 		let response: Response = self
 			.http
 			.request(http::Method::POST, self.award_stars_url.clone())
-			.body(payload)
+			.json(&payload)
 			.send()
 			.await?
 			.error_for_status()?

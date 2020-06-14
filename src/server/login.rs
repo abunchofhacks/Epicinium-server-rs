@@ -5,6 +5,7 @@ use crate::common::platform::*;
 use crate::common::version::*;
 use crate::logic::challenge;
 use crate::server::message::*;
+use crate::server::rating;
 use crate::server::settings::*;
 
 use std::error;
@@ -20,7 +21,7 @@ pub struct Request
 	pub token: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserId(u64);
 
 #[derive(Debug, Clone, Deserialize)]
@@ -28,11 +29,12 @@ pub struct LoginData
 {
 	pub user_id: UserId,
 	pub username: String,
+
 	#[serde(rename = "labeled_unlocks")]
 	pub unlocks: EnumSet<Unlock>,
-	pub rating: f32,
-	pub stars: i32,
-	pub recent_stars: i32,
+
+	#[serde(flatten)]
+	pub rating_data: rating::Data,
 }
 
 #[derive(EnumSetType, Debug, Serialize, Deserialize)]
@@ -120,9 +122,11 @@ impl Server
 			user_id,
 			username: username,
 			unlocks: unlocks,
-			rating: 0.0,
-			stars: 0,
-			recent_stars: 0,
+			rating_data: rating::Data {
+				rating: 0.0,
+				stars: 0,
+				recent_stars: 0,
+			},
 		};
 
 		Ok(data)
