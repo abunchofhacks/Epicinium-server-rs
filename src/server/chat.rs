@@ -5,6 +5,7 @@ use crate::logic::challenge;
 use crate::logic::challenge::Challenge;
 use crate::server::client;
 use crate::server::lobby;
+use crate::server::login::Unlock;
 use crate::server::message::*;
 
 use tokio::sync::mpsc;

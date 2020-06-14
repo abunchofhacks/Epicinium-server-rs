@@ -16,6 +16,7 @@ use enumset::*;
 #[derive(Debug)]
 pub struct Request
 {
+	pub account_id_as_string: String,
 	pub token: String,
 }
 
@@ -27,10 +28,21 @@ pub struct LoginData
 {
 	pub user_id: UserId,
 	pub username: String,
+	#[serde(rename = "labeled_unlocks")]
 	pub unlocks: EnumSet<Unlock>,
 	pub rating: f32,
 	pub stars: i32,
 	pub recent_stars: i32,
+}
+
+#[derive(EnumSetType, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[enumset(serialize_as_list)]
+pub enum Unlock
+{
+	Dev,
+	BetaAccess,
+	Guest,
 }
 
 pub struct Server
@@ -155,6 +167,7 @@ impl Connection
 	{
 		let payload = json!({
 			"token": request.token,
+			"id": request.account_id_as_string,
 			"challenge_key": self.current_challenge_key,
 		});
 

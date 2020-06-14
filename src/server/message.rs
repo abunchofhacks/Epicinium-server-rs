@@ -11,8 +11,6 @@ use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
 
-use enumset::*;
-
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
@@ -326,13 +324,4 @@ pub enum ResponseStatus
 	ResponseMalformed = 97,
 	ConnectionFailed = 98,
 	UnknownError = 99,
-}
-
-#[derive(EnumSetType, Debug, Serialize, Deserialize)]
-pub enum Unlock
-{
-	Unknown,
-	Dev,
-	BetaAccess,
-	Guest,
 }

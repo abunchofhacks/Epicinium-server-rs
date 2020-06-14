@@ -6,6 +6,7 @@ use crate::server::chat;
 use crate::server::game;
 use crate::server::lobby;
 use crate::server::login;
+use crate::server::login::Unlock;
 use crate::server::login::UserId;
 use crate::server::message::*;
 use crate::server::rating;
@@ -997,7 +998,7 @@ async fn handle_message(
 		Message::JoinServer {
 			status: None,
 			content: Some(token),
-			sender: _,
+			sender: Some(account_id_as_string),
 			metadata: _,
 		} =>
 		{
@@ -1015,7 +1016,11 @@ async fn handle_message(
 			}
 			else
 			{
-				joining_server(client, token)?;
+				let request = login::Request {
+					token,
+					account_id_as_string,
+				};
+				joining_server(client, request)?;
 			}
 		}
 		Message::JoinServer { .. } =>
@@ -1817,11 +1822,14 @@ fn greet_client(client: &mut Client, version: Version) -> Result<(), Error>
 	Ok(())
 }
 
-fn joining_server(client: &mut Client, token: String) -> Result<(), Error>
+fn joining_server(
+	client: &mut Client,
+	request: login::Request,
+) -> Result<(), Error>
 {
 	println!("Client {} is logging in", client.id);
 
-	match client.login.try_send(login::Request { token })
+	match client.login.try_send(request)
 	{
 		Ok(()) => Ok(()),
 		Err(mpsc::error::TrySendError::Full(_request)) =>
