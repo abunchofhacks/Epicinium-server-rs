@@ -47,6 +47,7 @@ struct Client
 	login: mpsc::Sender<login::Request>,
 	general_chat_reserve: Option<mpsc::Sender<chat::Update>>,
 	general_chat: Option<mpsc::Sender<chat::Update>>,
+	general_chat_callback: Option<mpsc::Sender<Update>>,
 	rating_database: mpsc::Sender<rating::Update>,
 	canary_for_lobbies: mpsc::Sender<()>,
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
@@ -129,8 +130,9 @@ pub fn accept(
 	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
 	let sendbuffer_pulse = sendbuffer_in.clone();
 	let sendbuffer_login = sendbuffer_in.clone();
-	let (updatebuffer_in, updatebuffer_out) = mpsc::channel::<Update>(1);
+	let (updatebuffer_in, updatebuffer_out) = mpsc::channel::<Update>(10);
 	let updatebuffer_ping = updatebuffer_in.clone();
+	let updatebuffer_chat = updatebuffer_in.clone();
 	let updatebuffer_lobby = updatebuffer_in.clone();
 	let tolerance = Duration::from_secs(120);
 	let (pingtolerance_in, pingtolerance_out) = watch::channel(tolerance);
@@ -147,6 +149,7 @@ pub fn accept(
 		login: loginbuffer_in,
 		general_chat_reserve: Some(chat_server),
 		general_chat: None,
+		general_chat_callback: Some(updatebuffer_chat),
 		rating_database,
 		lobby_authority: lobby_authority,
 		lobby_callback: Some(updatebuffer_lobby),
@@ -420,28 +423,27 @@ fn prepare_message_data(message: Message) -> (String, u32)
 async fn start_ping_task(
 	client_id: Keycode,
 	mut sendbuffer: mpsc::Sender<Update>,
-	mut last_receive_time: watch::Receiver<()>,
+	mut activity: watch::Receiver<()>,
 	mut ping_tolerance: watch::Receiver<Duration>,
 ) -> Result<(), Error>
 {
 	loop
 	{
 		let (callback_in, callback_out) = oneshot::channel::<()>();
-		let request = Update::PingRequest {
+		let request = Update::PingTaskRequestsPing {
 			callback: callback_in,
 		};
 		sendbuffer.send(request).await?;
 
 		wait_for_pong(client_id, callback_out, &mut ping_tolerance).await?;
 
-		// TODO ghostbusting
-
-		wait_for_inactivity(&mut last_receive_time).await?;
+		wait_for_inactivity(&mut activity, &mut ping_tolerance).await?;
 	}
 }
 
 async fn wait_for_inactivity(
 	activity: &mut watch::Receiver<()>,
+	trigger: &mut watch::Receiver<Duration>,
 ) -> Result<(), Error>
 {
 	loop
@@ -452,15 +454,22 @@ async fn wait_for_inactivity(
 			Some(()) => Ok(PingEvent::Activity),
 			None => Err(Error::Unexpected),
 		});
+		let trigger_event = trigger.recv().map(|x| match x
+		{
+			Some(_) => Ok(PingEvent::Forced),
+			None => Err(Error::Unexpected),
+		});
 		let timeout_event =
 			timer::delay_for(threshold).map(|()| PingEvent::Timeout);
 		let event = select! {
 			x = activity_event.fuse() => x?,
+			x = trigger_event.fuse() => x?,
 			x = timeout_event.fuse() => x,
 		};
 		match event
 		{
 			PingEvent::Activity => continue,
+			PingEvent::Forced => return Ok(()),
 			PingEvent::Timeout => return Ok(()),
 		}
 	}
@@ -473,7 +482,7 @@ async fn wait_for_pong(
 ) -> Result<(), Error>
 {
 	let sendtime = Instant::now();
-	let mut tolerance = Duration::from_secs(5);
+	let mut tolerance: Duration = *tolerance_updates.borrow();
 
 	let mut received_event = callback.map_ok(|()| PongEvent::Received).fuse();
 	loop
@@ -519,6 +528,7 @@ enum PingEvent
 {
 	Activity,
 	Timeout,
+	Forced,
 }
 
 enum PongEvent
@@ -602,10 +612,11 @@ async fn start_login_task(
 #[derive(Debug)]
 pub enum Update
 {
-	PingRequest
+	PingTaskRequestsPing
 	{
 		callback: oneshot::Sender<()>,
 	},
+	BeingGhostbusted,
 	JoinedServer
 	{
 		user_id: UserId,
@@ -667,6 +678,10 @@ enum Error
 	Rating
 	{
 		error: mpsc::error::SendError<rating::Update>,
+	},
+	Tolerance
+	{
+		error: watch::error::SendError<Duration>,
 	},
 	Watch
 	{
@@ -742,6 +757,14 @@ impl From<mpsc::error::SendError<rating::Update>> for Error
 	}
 }
 
+impl From<watch::error::SendError<Duration>> for Error
+{
+	fn from(error: watch::error::SendError<Duration>) -> Self
+	{
+		Error::Tolerance { error }
+	}
+}
+
 impl From<watch::error::SendError<()>> for Error
 {
 	fn from(error: watch::error::SendError<()>) -> Self
@@ -790,6 +813,7 @@ impl fmt::Display for Error
 			Error::Lobby { error } => error.fmt(f),
 			Error::Login { error } => error.fmt(f),
 			Error::Rating { error } => error.fmt(f),
+			Error::Tolerance { error } => error.fmt(f),
 			Error::Watch { error } => error.fmt(f),
 			Error::Recv { error } => error.fmt(f),
 			Error::OneshotRecv { error } => error.fmt(f),
@@ -805,10 +829,16 @@ async fn handle_update(
 {
 	match update
 	{
-		Update::PingRequest { callback } =>
+		Update::PingTaskRequestsPing { callback } =>
 		{
 			client.pong_receive_time = Some(callback);
 			client.sendbuffer.try_send(Message::Ping)?;
+			Ok(false)
+		}
+		Update::BeingGhostbusted =>
+		{
+			let tolerance = Duration::from_secs(5);
+			client.ping_tolerance.broadcast(tolerance)?;
 			Ok(false)
 		}
 
@@ -825,11 +855,21 @@ async fn handle_update(
 			{
 				Some(mut chat) =>
 				{
+					let callback = match &client.general_chat_callback
+					{
+						Some(callback) => callback.clone(),
+						None =>
+						{
+							eprintln!("Expected lobby_callback");
+							return Err(Error::Unexpected);
+						}
+					};
 					let request = chat::Update::Join {
 						client_id: client.id,
 						username: username.clone(),
 						unlocks,
 						sendbuffer: client.sendbuffer.clone(),
+						callback,
 					};
 					match chat.try_send(request)
 					{
@@ -1827,14 +1867,14 @@ fn joining_server(
 	request: login::Request,
 ) -> Result<(), Error>
 {
-	println!("Client {} is logging in", client.id);
+	println!("Client {} is logging in...", client.id);
 
 	match client.login.try_send(request)
 	{
 		Ok(()) => Ok(()),
 		Err(mpsc::error::TrySendError::Full(_request)) =>
 		{
-			eprintln!("Failed to enqueue for login, login task busy");
+			eprintln!("Failed to enqueue for login, login task busy.");
 
 			// We only process one login request at a time. Does it make sense
 			// to respond to a second request if the first response is still

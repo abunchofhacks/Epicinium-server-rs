@@ -22,6 +22,7 @@ pub enum Update
 		username: String,
 		unlocks: EnumSet<Unlock>,
 		sendbuffer: mpsc::Sender<Message>,
+		callback: mpsc::Sender<client::Update>,
 	},
 	Init
 	{
@@ -94,11 +95,13 @@ fn handle_update(
 			username,
 			unlocks,
 			sendbuffer,
+			callback,
 		} => handle_join(
 			client_id,
 			username,
 			unlocks,
 			sendbuffer,
+			callback,
 			clients,
 			lobbies,
 			current_challenge,
@@ -171,6 +174,7 @@ struct Client
 	username: String,
 	join_metadata: Option<JoinMetadata>,
 	sendbuffer: mpsc::Sender<Message>,
+	callback: mpsc::Sender<client::Update>,
 	hidden: bool,
 	dead: bool,
 }
@@ -186,6 +190,20 @@ impl Client
 			Err(error) =>
 			{
 				println!("Error sending to client {}: {:?}", self.id, error);
+				self.dead = true
+			}
+		}
+	}
+
+	fn ghostbust(&mut self)
+	{
+		match self.callback.try_send(client::Update::BeingGhostbusted)
+		{
+			Ok(()) => (),
+			// TODO filter dead clients somehow
+			Err(error) =>
+			{
+				println!("Error force-pinging client {}: {:?}", self.id, error);
 				self.dead = true
 			}
 		}
@@ -206,12 +224,33 @@ fn handle_join(
 	username: String,
 	unlocks: EnumSet<Unlock>,
 	sendbuffer: mpsc::Sender<Message>,
+	callback: mpsc::Sender<client::Update>,
 	clients: &mut Vec<Client>,
 	lobbies: &Vec<Lobby>,
 	current_challenge: &Challenge,
 )
 {
-	// TODO ghostbusting
+	// Prevent a user being online with multiple connections simultaneously.
+	match clients.iter_mut().find(|x| x.username == username)
+	{
+		Some(otherclient) =>
+		{
+			println!(
+				"Client {} is ghostbusting client {}, both named {}.",
+				id, otherclient.id, username
+			);
+
+			// Make sure that that client is not a ghost by reducing their ping
+			// tolerance and ensuring a ping is sent.
+			otherclient.ghostbust();
+
+			// Make the newcomer wait for the result of ghostbusting.
+			// TODO
+			return;
+		}
+		None =>
+		{}
+	}
 
 	let join_metadata = generate_join_metadata(&unlocks);
 	let hidden = username.starts_with("#");
@@ -221,6 +260,7 @@ fn handle_join(
 		username,
 		join_metadata,
 		sendbuffer,
+		callback,
 		hidden: hidden,
 		dead: false,
 	};
@@ -384,6 +424,7 @@ fn handle_leave(client_id: Keycode, clients: &mut Vec<Client>)
 			username,
 			join_metadata: _,
 			mut sendbuffer,
+			callback: _,
 			hidden,
 			dead: _,
 		} = removed_client;
