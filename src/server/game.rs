@@ -44,7 +44,7 @@ impl PlayerClient
 
 	fn is_retired(&self) -> bool
 	{
-		self.rating_callback.is_some()
+		self.rating_callback.is_none()
 	}
 
 	fn send(&mut self, message: Message)
@@ -92,7 +92,7 @@ impl WatcherClient
 {
 	fn is_disconnected(&self) -> bool
 	{
-		self.sendbuffer.is_some()
+		self.sendbuffer.is_none()
 	}
 
 	fn send(&mut self, message: Message)
@@ -514,6 +514,8 @@ async fn rest(
 	// and watchers wait until other watchers have rejoined.
 	while !all_players_or_watchers_have_synced(players, watchers)
 	{
+		println!("Waiting until all players/watchers have synced...");
+
 		let update = match updates.recv().await
 		{
 			Some(update) => update,
@@ -593,6 +595,8 @@ async fn ensure_live_players(
 
 	while !at_least_one_live_player(players)
 	{
+		println!("Waiting for at least one live player...");
+
 		let update = match updates.recv().await
 		{
 			Some(update) => update,
@@ -653,6 +657,8 @@ async fn sleep(
 	// TODO timer
 	while !all_players_have_submitted_orders(players)
 	{
+		println!("Waiting until all players have submitted orders...");
+
 		let update = match updates.recv().await
 		{
 			Some(update) => update,
@@ -732,6 +738,8 @@ async fn stage(
 	// TODO defer rejoins until later (separate mpsc?)
 	while !all_players_have_submitted_orders(players)
 	{
+		println!("Waiting until all players have staged orders...");
+
 		let update = match updates.recv().await
 		{
 			Some(update) => update,
