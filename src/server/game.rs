@@ -515,12 +515,6 @@ async fn iterate(
 	let cset = automaton.awake()?;
 	broadcast(players, bots, watchers, cset)?;
 
-	// If the game has ended due to players resigning, we are done.
-	if automaton.is_gameover()
-	{
-		return Ok(State::Finished);
-	}
-
 	stage(automaton, players, watchers, updates).await?;
 
 	for player in players.into_iter()
