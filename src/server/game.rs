@@ -428,6 +428,13 @@ pub enum Update
 	{
 		client_id: Keycode
 	},
+	Join
+	{
+		client_id: Keycode,
+		client_user_id: UserId,
+		client_username: String,
+		client_sendbuffer: mpsc::Sender<Message>,
+	},
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -592,7 +599,6 @@ async fn rest(
 			None => return Err(Error::LobbyGone),
 		};
 
-		// TODO handle rejoins
 		match update
 		{
 			Update::Orders { client_id, .. } =>
@@ -623,6 +629,10 @@ async fn rest(
 			Update::Leave { client_id } =>
 			{
 				handle_leave(players, client_id).await?;
+			}
+			Update::Join { .. } =>
+			{
+				// TODO handle joins
 			}
 		}
 	}
@@ -673,7 +683,6 @@ async fn ensure_live_players(
 			None => return Err(Error::LobbyGone),
 		};
 
-		// TODO handle rejoins
 		match update
 		{
 			Update::Orders { client_id, .. } =>
@@ -691,6 +700,10 @@ async fn ensure_live_players(
 			Update::Leave { client_id } =>
 			{
 				handle_leave(players, client_id).await?;
+			}
+			Update::Join { .. } =>
+			{
+				// TODO handle joins
 			}
 		}
 	}
@@ -735,7 +748,6 @@ async fn sleep(
 			None => return Err(Error::LobbyGone),
 		};
 
-		// TODO handle rejoins
 		match update
 		{
 			Update::Orders { client_id, orders } =>
@@ -766,6 +778,10 @@ async fn sleep(
 			Update::Leave { client_id } =>
 			{
 				handle_leave(players, client_id).await?;
+			}
+			Update::Join { .. } =>
+			{
+				// TODO handle joins
 			}
 		}
 	}
@@ -805,7 +821,6 @@ async fn stage(
 	// haven't received; they might have sent their orders before
 	// receiving the staging announcement.
 	// TODO timer
-	// TODO defer rejoins until later (separate mpsc?)
 	while !all_players_have_submitted_orders(players)
 	{
 		println!("Waiting until all players have staged orders...");
@@ -816,7 +831,6 @@ async fn stage(
 			None => return Err(Error::LobbyGone),
 		};
 
-		// TODO handle rejoins
 		match update
 		{
 			Update::Orders { client_id, orders } =>
@@ -841,6 +855,10 @@ async fn stage(
 			Update::Leave { client_id } =>
 			{
 				handle_leave(players, client_id).await?;
+			}
+			Update::Join { .. } =>
+			{
+				// TODO handle joins
 			}
 		}
 	}

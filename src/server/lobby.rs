@@ -201,6 +201,8 @@ struct Lobby
 	has_been_listed: bool,
 	last_description_metadata: Option<LobbyMetadata>,
 
+	username_whitelist: Vec<String>,
+
 	bots: Vec<Bot>,
 	open_botslots: Vec<Botslot>,
 	roles: HashMap<Keycode, Role>,
@@ -285,6 +287,7 @@ async fn initialize(
 		is_replay: false,
 		has_been_listed: false,
 		last_description_metadata: None,
+		username_whitelist: Vec::new(),
 		bots: Vec::new(),
 		open_botslots: botslot::pool(),
 		roles: HashMap::new(),
@@ -641,7 +644,7 @@ async fn handle_join(
 		client_id,
 		client_user_id,
 		client_username.clone(),
-		client_sendbuffer,
+		client_sendbuffer.clone(),
 		client_callback,
 		lobby_sendbuffer,
 		clients,
@@ -653,7 +656,7 @@ async fn handle_join(
 
 	let message = Message::JoinLobby {
 		lobby_id: Some(lobby.id),
-		username: Some(client_username),
+		username: Some(client_username.clone()),
 		metadata: None,
 	};
 	let update = chat::Update::Msg(message);
@@ -682,7 +685,17 @@ async fn handle_join(
 	}
 
 	// If a game is already in progress, rejoin it.
-	// TODO rejoin
+	if let Some(game) = &mut lobby.game_in_progress
+	{
+		let update = game::Update::Join {
+			client_id,
+			client_user_id,
+			client_username,
+			client_sendbuffer,
+		};
+
+		game.send(update).await?;
+	}
 
 	Ok(())
 }
@@ -698,7 +711,34 @@ fn do_join(
 	clients: &mut Vec<Client>,
 ) -> Result<(), ()>
 {
-	// TODO joining might fail because it is full or locked etcetera
+	// TODO check invitation
+	let is_invited = false;
+
+	match lobby.stage
+	{
+		Stage::Setup
+		| Stage::WaitingForConfirmation
+		| Stage::GameInProgress =>
+		{
+			// If the lobby is private, only the (whitelisted) creator, users
+			// that were invited by someone inside the lobby, and (whitelisted)
+			// users that disconnected after the game started can rejoin.
+			// TODO add lobby creator to whitelist
+			if !lobby.is_public && !is_invited
+			{
+				if !lobby.username_whitelist.contains(&client_username)
+				{
+					return Err(());
+				}
+			}
+		}
+		Stage::GameEnded =>
+		{
+			// Once the game has ended, no one can join it.
+			// TODO lock or unlist the lobby when the game ends?
+			return Err(());
+		}
+	}
 
 	let mut newcomer = Client {
 		id: client_id,
@@ -2028,6 +2068,11 @@ async fn try_start(
 
 	println!("Game started in lobby {}.", lobby.id);
 	lobby.stage = Stage::GameInProgress;
+
+	for client in clients.iter()
+	{
+		lobby.username_whitelist.push(client.username.clone());
+	}
 
 	for client in clients.iter()
 	{
