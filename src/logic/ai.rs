@@ -62,12 +62,12 @@ impl Commander
 
 	pub fn descriptive_name(&mut self) -> Result<String, InterfaceError>
 	{
-		unimplemented!()
+		epicinium::ai_descriptive_name(&mut self.0)
 	}
 
 	pub fn metadata(&mut self) -> Result<Metadata, InterfaceError>
 	{
-		unimplemented!()
+		epicinium::ai_descriptive_metadata(&mut self.0)
 	}
 }
 

@@ -1,5 +1,6 @@
 /* Epicinium-as-a-library */
 
+use crate::logic::ai;
 use crate::logic::automaton;
 use crate::logic::change::{Change, ChangeSet};
 use crate::logic::order::Order;
@@ -393,12 +394,36 @@ pub fn ai_retrieve_orders(
 	Ok(orders)
 }
 
+pub fn ai_descriptive_name(
+	ai: &mut AllocatedAi,
+) -> Result<String, InterfaceError>
+{
+	let s: &CStr = unsafe {
+		CStr::from_ptr(epicinium_ai_descriptive_name(ai.ptr, ai.buffer)) //
+	};
+	let s: &str = s.to_str()?;
+	Ok(s.to_string())
+}
+
+pub fn ai_descriptive_metadata(
+	ai: &mut AllocatedAi,
+) -> Result<ai::Metadata, InterfaceError>
+{
+	let s: &CStr = unsafe {
+		CStr::from_ptr(epicinium_ai_descriptive_metadata(ai.ptr, ai.buffer)) //
+	};
+	let jsonstr: String = s.to_string_lossy().to_string();
+	let metadata: ai::Metadata = serde_json::from_str(&jsonstr)?;
+	Ok(metadata)
+}
+
 #[derive(Debug)]
 pub enum InterfaceError
 {
 	AllocationFailed,
 	ArgumentNulError(std::ffi::NulError),
 	Json(serde_json::Error),
+	Utf8(std::str::Utf8Error),
 }
 
 impl From<std::ffi::NulError> for InterfaceError
@@ -417,6 +442,14 @@ impl From<serde_json::Error> for InterfaceError
 	}
 }
 
+impl From<std::str::Utf8Error> for InterfaceError
+{
+	fn from(error: std::str::Utf8Error) -> Self
+	{
+		InterfaceError::Utf8(error)
+	}
+}
+
 impl std::fmt::Display for InterfaceError
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
@@ -426,6 +459,7 @@ impl std::fmt::Display for InterfaceError
 			InterfaceError::AllocationFailed => write!(f, "allocation failed"),
 			InterfaceError::ArgumentNulError(error) => error.fmt(f),
 			InterfaceError::Json(error) => error.fmt(f),
+			InterfaceError::Utf8(error) => error.fmt(f),
 		}
 	}
 }
@@ -701,6 +735,14 @@ extern "C" {
 	fn epicinium_ai_receive(ai: *mut AICommander, changes: *const c_char);
 	fn epicinium_ai_prepare_orders(ai: *mut AICommander);
 	fn epicinium_ai_retrieve_orders(
+		ai: *mut AICommander,
+		buffer: *mut Buffer,
+	) -> *const c_char;
+	fn epicinium_ai_descriptive_name(
+		ai: *mut AICommander,
+		buffer: *mut Buffer,
+	) -> *const c_char;
+	fn epicinium_ai_descriptive_metadata(
 		ai: *mut AICommander,
 		buffer: *mut Buffer,
 	) -> *const c_char;
