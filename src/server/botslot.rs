@@ -55,6 +55,12 @@ impl std::str::FromStr for Botslot
 					source: s.to_string(),
 				})
 			}
+			else if s.as_bytes()[0] != b'%'
+			{
+				Err(DecodeError::MissingMarker {
+					source: s.to_string(),
+				})
+			}
 			else
 			{
 				Ok(s.as_bytes()[1])
@@ -112,6 +118,10 @@ pub enum DecodeError
 	{
 		source: String
 	},
+	MissingMarker
+	{
+		source: String
+	},
 }
 
 impl std::error::Error for DecodeError {}
@@ -137,6 +147,10 @@ impl std::fmt::Display for DecodeError
 			DecodeError::NonAscii { source } =>
 			{
 				write!(f, "non-ASCII characters in '{}'", source)
+			}
+			DecodeError::MissingMarker { source } =>
+			{
+				write!(f, "missing marker '%' in '{}'", source)
 			}
 		}
 	}

@@ -5,6 +5,7 @@ use crate::logic::ai;
 use crate::logic::challenge;
 use crate::logic::difficulty::*;
 use crate::logic::map;
+use crate::logic::player;
 use crate::logic::player::PlayerColor;
 use crate::logic::ruleset;
 use crate::server::botslot;
@@ -74,6 +75,16 @@ pub enum Update
 		general_chat: mpsc::Sender<chat::Update>,
 		username: String,
 		role: Role,
+	},
+	ClaimColor
+	{
+		username_or_slot: UsernameOrSlot,
+		color: PlayerColor,
+	},
+	ClaimVisionType
+	{
+		username_or_slot: UsernameOrSlot,
+		visiontype: VisionType,
 	},
 	ClaimAi
 	{
@@ -193,6 +204,11 @@ struct Lobby
 	bots: Vec<Bot>,
 	open_botslots: Vec<Botslot>,
 	roles: HashMap<Keycode, Role>,
+	available_colors: Vec<PlayerColor>,
+	player_colors: HashMap<Keycode, PlayerColor>,
+	bot_colors: HashMap<Botslot, PlayerColor>,
+	player_visiontypes: HashMap<Keycode, VisionType>,
+	bot_visiontypes: HashMap<Botslot, VisionType>,
 
 	ai_pool: Vec<String>,
 	map_pool: Vec<(String, map::Metadata)>,
@@ -272,6 +288,11 @@ async fn initialize(
 		bots: Vec::new(),
 		open_botslots: botslot::pool(),
 		roles: HashMap::new(),
+		available_colors: player::color_pool(),
+		player_colors: HashMap::new(),
+		bot_colors: HashMap::new(),
+		player_visiontypes: HashMap::new(),
+		bot_visiontypes: HashMap::new(),
 		ai_pool: ai::load_pool(),
 		map_pool,
 		map_name,
@@ -359,6 +380,22 @@ async fn handle_update(
 		{
 			handle_claim_role(lobby, clients, username, role)?;
 			describe_lobby(lobby, &mut general_chat).await
+		}
+		Update::ClaimColor {
+			username_or_slot,
+			color,
+		} =>
+		{
+			change_color(lobby, clients, username_or_slot, color);
+			Ok(())
+		}
+		Update::ClaimVisionType {
+			username_or_slot,
+			visiontype,
+		} =>
+		{
+			change_visiontype(lobby, clients, username_or_slot, visiontype);
+			Ok(())
 		}
 		Update::ClaimAi { slot, ai_name } =>
 		{
@@ -687,8 +724,24 @@ fn do_join(
 				role,
 			});
 		}
-		// TODO colors
-		// TODO vision types
+		if let Some(&color) = lobby.player_colors.get(&other.id)
+		{
+			newcomer.send(Message::ClaimColor {
+				username_or_slot: UsernameOrSlot::Username(
+					other.username.clone(),
+				),
+				color,
+			});
+		}
+		if let Some(&visiontype) = lobby.player_visiontypes.get(&other.id)
+		{
+			newcomer.send(Message::ClaimVisionType {
+				username_or_slot: UsernameOrSlot::Username(
+					other.username.clone(),
+				),
+				visiontype,
+			});
+		}
 	}
 
 	if !lobby.is_replay
@@ -715,8 +768,20 @@ fn do_join(
 			slot: Some(bot.slot),
 			difficulty: bot.difficulty,
 		});
-		// TODO colors
-		// TODO vision types
+		if let Some(&color) = lobby.bot_colors.get(&bot.slot)
+		{
+			newcomer.send(Message::ClaimColor {
+				username_or_slot: UsernameOrSlot::Slot(bot.slot),
+				color,
+			});
+		}
+		if let Some(&visiontype) = lobby.bot_visiontypes.get(&bot.slot)
+		{
+			newcomer.send(Message::ClaimVisionType {
+				username_or_slot: UsernameOrSlot::Slot(bot.slot),
+				visiontype,
+			});
+		}
 	}
 
 	if !lobby.is_replay
@@ -836,10 +901,15 @@ async fn handle_removed(
 			}
 		}
 
-		let removed_role = lobby.roles.remove(&id);
-		// TODO colors
-		// TODO visiontypes
+		let removed_color = lobby.player_colors.remove(&id);
+		if let Some(color) = removed_color
+		{
+			lobby.available_colors.push(color);
+		}
 
+		lobby.player_visiontypes.remove(&id);
+
+		let removed_role = lobby.roles.remove(&id);
 		if removed_role == Some(Role::Player)
 		{
 			lobby.num_players -= 1;
@@ -954,15 +1024,15 @@ fn change_role(
 	if assigned_role == Role::Player
 	{
 		lobby.num_players += 1;
-
-		// If we remembered the player's vision type, they keep it.
-		// TODO vision types
-		{}
 	}
 	else
 	{
 		// The player loses their player color when they stop being a player.
-		// TODO colors
+		let removed_color = lobby.player_colors.remove(&client_id);
+		if let Some(color) = removed_color
+		{
+			lobby.available_colors.push(color);
+		}
 
 		// If the lobby used to be an AI lobby, we keep it that way.
 		// A lobby is an AI lobby in this sense if there is at most 1 human
@@ -975,6 +1045,186 @@ fn change_role(
 	}
 
 	Ok(())
+}
+
+fn change_color(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	username_or_slot: UsernameOrSlot,
+	color: PlayerColor,
+)
+{
+	let resulting_color = match &username_or_slot
+	{
+		UsernameOrSlot::Username(ref username) =>
+		{
+			let client = clients.iter().find(|x| &x.username == username);
+			let client_id = match client
+			{
+				Some(client) => client.id,
+				None =>
+				{
+					eprintln!("Failed to find client named {}.", username);
+					// TODO let the sender know somehow?
+					return;
+				}
+			};
+
+			match lobby.roles.get(&client_id)
+			{
+				Some(Role::Player) =>
+				{}
+				Some(Role::Observer) | None =>
+				{
+					eprintln!("Cannot assign to non-player {}.", client_id);
+					// TODO let the sender know somehow?
+					return;
+				}
+			}
+
+			if color == PlayerColor::None
+			{
+				// The player reliquishes their old claim.
+				let removed_color = lobby.player_colors.remove(&client_id);
+				if let Some(oldcolor) = removed_color
+				{
+					lobby.available_colors.push(oldcolor);
+				}
+				color
+			}
+			else if lobby.player_colors.get(&client_id) == Some(&color)
+			{
+				// The player already has this color.
+				color
+			}
+			else if lobby.available_colors.contains(&color)
+			{
+				// Claim successful.
+				lobby.available_colors.retain(|&x| x != color);
+				lobby.player_colors.insert(client_id, color);
+				color
+			}
+			else
+			{
+				// Claim failed. The player keeps their original color.
+				match lobby.player_colors.get(&client_id)
+				{
+					Some(&oldcolor) => oldcolor,
+					None => PlayerColor::None,
+				}
+			}
+		}
+		&UsernameOrSlot::Slot(slot) =>
+		{
+			if lobby.bots.iter_mut().find(|x| x.slot == slot).is_none()
+			{
+				eprintln!("Failed to find bot '{:?}'.", slot);
+				// TODO let the sender know somehow?
+				return;
+			}
+
+			if color == PlayerColor::None
+			{
+				// The bot reliquishes its old claim.
+				let removed_color = lobby.bot_colors.remove(&slot);
+				if let Some(oldcolor) = removed_color
+				{
+					lobby.available_colors.push(oldcolor);
+				}
+				color
+			}
+			else if lobby.bot_colors.get(&slot) == Some(&color)
+			{
+				// The bot already has this color.
+				color
+			}
+			else if lobby.available_colors.contains(&color)
+			{
+				// Claim successful.
+				lobby.available_colors.retain(|&x| x != color);
+				lobby.bot_colors.insert(slot, color);
+				color
+			}
+			else
+			{
+				// Claim failed. The bot keeps its original color.
+				match lobby.bot_colors.get(&slot)
+				{
+					Some(&oldcolor) => oldcolor,
+					None => PlayerColor::None,
+				}
+			}
+		}
+	};
+
+	// Broadcast whatever the result of the claim was.
+	for client in clients.into_iter()
+	{
+		client.send(Message::ClaimColor {
+			username_or_slot: username_or_slot.clone(),
+			color: resulting_color,
+		});
+	}
+}
+
+fn change_visiontype(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	username_or_slot: UsernameOrSlot,
+	visiontype: VisionType,
+)
+{
+	match &username_or_slot
+	{
+		UsernameOrSlot::Username(ref username) =>
+		{
+			let client = clients.iter().find(|x| &x.username == username);
+			let client_id = match client
+			{
+				Some(client) => client.id,
+				None =>
+				{
+					eprintln!("Failed to find client named {}.", username);
+					// TODO let the sender know somehow?
+					return;
+				}
+			};
+
+			match lobby.roles.get(&client_id)
+			{
+				Some(Role::Player) =>
+				{}
+				Some(Role::Observer) | None =>
+				{
+					eprintln!("Cannot assign to non-player {}.", client_id);
+					// TODO let the sender know somehow?
+					return;
+				}
+			}
+
+			lobby.player_visiontypes.insert(client_id, visiontype);
+		}
+		&UsernameOrSlot::Slot(slot) =>
+		{
+			if lobby.bots.iter_mut().find(|x| x.slot == slot).is_none()
+			{
+				eprintln!("Failed to find bot '{:?}'.", slot);
+				// TODO let the sender know somehow?
+				return;
+			}
+
+			lobby.bot_visiontypes.insert(slot, visiontype);
+		}
+	};
+
+	// Broadcast the claim.
+	for client in clients.into_iter()
+	{
+		client.send(Message::ClaimVisionType {
+			username_or_slot: username_or_slot.clone(),
+			visiontype,
+		});
+	}
 }
 
 fn change_ai(
@@ -1130,8 +1380,15 @@ fn remove_bot(lobby: &mut Lobby, clients: &mut Vec<Client>, slot: Botslot)
 	{
 		lobby.bots.retain(|x| x.slot != slot);
 		lobby.num_players -= 1;
-		// TODO colors
 		lobby.open_botslots.push(slot);
+
+		let removed_color = lobby.bot_colors.remove(&slot);
+		if let Some(color) = removed_color
+		{
+			lobby.available_colors.push(color);
+		}
+
+		lobby.bot_visiontypes.remove(&slot);
 
 		for client in clients.into_iter()
 		{
@@ -1314,10 +1571,25 @@ async fn become_tutorial_lobby(
 		return Ok(());
 	}
 
+	let client_id = match clients.first()
+	{
+		Some(client) => client.id,
+		None =>
+		{
+			eprintln!(
+				"Cannot turn lobby {} without clients into tutorial.",
+				lobby.id,
+			);
+			return Ok(());
+		}
+	};
+
 	pick_map(lobby, clients, "tutorial".to_string()).await?;
 	pick_timer(lobby, clients, 0).await?;
 
-	// TODO global vision
+	lobby
+		.player_visiontypes
+		.insert(client_id, VisionType::Global);
 
 	let ai_name = "TutorialTurtle";
 	let difficulty = Difficulty::Easy;
@@ -1579,17 +1851,10 @@ async fn try_start(
 		return Ok(());
 	}
 
-	// TODO replace with lobby.open_colors
-	let mut open_colors = vec![
-		PlayerColor::Red,
-		PlayerColor::Blue,
-		PlayerColor::Yellow,
-		PlayerColor::Teal,
-		PlayerColor::Black,
-		PlayerColor::Pink,
-		PlayerColor::Indigo,
-		PlayerColor::Purple,
-	];
+	// Create a stack of available colors, with Red on top, then Blue, etcetera.
+	let mut colorstack = lobby.available_colors.clone();
+	colorstack.sort();
+	colorstack.reverse();
 
 	// Assign colors and roles to clients.
 	let mut player_clients = Vec::new();
@@ -1610,22 +1875,24 @@ async fn try_start(
 		{
 			Role::Player =>
 			{
-				let color = {
-					// TODO color claims
-					let assigned = open_colors.pop();
-					debug_assert!(assigned.is_some());
-					match assigned
+				let color = match lobby.player_colors.get(&client.id)
+				{
+					Some(&color) => color,
+					None => match colorstack.pop()
 					{
 						Some(color) => color,
 						None =>
 						{
 							return Err(Error::StartGameNotEnoughColors);
 						}
-					}
+					},
 				};
 
-				// TODO visiontypes
-				let vision = VisionType::Normal;
+				let vision = match lobby.player_visiontypes.get(&client.id)
+				{
+					Some(&vision) => vision,
+					None => VisionType::Normal,
+				};
 
 				let rating_callback = lobby.rating_database_for_games.clone();
 
@@ -1664,22 +1931,24 @@ async fn try_start(
 	let mut bots = Vec::new();
 	for bot in lobby.bots.iter()
 	{
-		let color = {
-			// TODO color claims
-			let assigned = open_colors.pop();
-			debug_assert!(assigned.is_some());
-			match assigned
+		let color = match lobby.bot_colors.get(&bot.slot)
+		{
+			Some(&color) => color,
+			None => match colorstack.pop()
 			{
 				Some(color) => color,
 				None =>
 				{
 					return Err(Error::StartGameNotEnoughColors);
 				}
-			}
+			},
 		};
 
-		// TODO visiontypes
-		let vision = VisionType::Normal;
+		let vision = match lobby.bot_visiontypes.get(&bot.slot)
+		{
+			Some(&vision) => vision,
+			None => VisionType::Normal,
+		};
 
 		let character = bot.slot.get_character();
 

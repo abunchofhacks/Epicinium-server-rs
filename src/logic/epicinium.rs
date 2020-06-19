@@ -432,7 +432,9 @@ impl std::fmt::Display for InterfaceError
 
 impl std::error::Error for InterfaceError {}
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(
+	Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord,
+)]
 #[serde(rename_all = "lowercase")]
 #[repr(u8)]
 pub enum PlayerColor
@@ -453,7 +455,7 @@ pub enum PlayerColor
 	Observer,
 	// Non-player vision type used by the Board/Level to keep track of its
 	// owner's vision.
-	SELF, // DO NOT USE
+	SelfInternalDoNotUse,
 }
 
 #[derive(Debug, Clone, Copy)]

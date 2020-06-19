@@ -11,3 +11,17 @@ impl Default for PlayerColor
 		PlayerColor::None
 	}
 }
+
+pub fn color_pool() -> Vec<PlayerColor>
+{
+	vec![
+		PlayerColor::Red,
+		PlayerColor::Blue,
+		PlayerColor::Yellow,
+		PlayerColor::Teal,
+		PlayerColor::Black,
+		PlayerColor::Pink,
+		PlayerColor::Indigo,
+		PlayerColor::Purple,
+	]
+}

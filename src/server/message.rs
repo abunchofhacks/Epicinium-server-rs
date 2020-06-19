@@ -92,6 +92,22 @@ pub enum Message
 
 		role: Role,
 	},
+	ClaimColor
+	{
+		#[serde(rename = "sender")]
+		username_or_slot: UsernameOrSlot,
+
+		#[serde(rename = "player")]
+		color: PlayerColor,
+	},
+	#[serde(rename = "claim_visiontype")] // The capital T would cause "_type".
+	ClaimVisionType
+	{
+		#[serde(rename = "sender")]
+		username_or_slot: UsernameOrSlot,
+
+		visiontype: VisionType,
+	},
 	ClaimAi
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
@@ -274,6 +290,16 @@ pub enum VisionType
 {
 	Normal,
 	Global,
+}
+
+// Botslot strings always start with % and usernames cannot contain %, so we
+// can try to deserialize as a Botslot and if that fails it is a username.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum UsernameOrSlot
+{
+	Slot(Botslot),
+	Username(String),
 }
 
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]

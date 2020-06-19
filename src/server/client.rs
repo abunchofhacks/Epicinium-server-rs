@@ -1394,6 +1394,44 @@ async fn handle_message(
 				return Err(Error::Illegal);
 			}
 		},
+		Message::ClaimColor {
+			username_or_slot,
+			color,
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = lobby::Update::ClaimColor {
+					username_or_slot,
+					color,
+				};
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid ClaimColor message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
+		Message::ClaimVisionType {
+			username_or_slot,
+			visiontype,
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = lobby::Update::ClaimVisionType {
+					username_or_slot,
+					visiontype,
+				};
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				println!("Invalid vision message from unlobbied client");
+				return Err(Error::Illegal);
+			}
+		},
 		Message::ClaimAi { slot, ai_name } => match client.lobby
 		{
 			Some(ref mut lobby) =>
