@@ -24,3 +24,7 @@
 
 # core dumps
 /*core*
+
+# local recordings
+*.rec
+/recordings/history.list
