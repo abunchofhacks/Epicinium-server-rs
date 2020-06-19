@@ -3,9 +3,11 @@
 use crate::common::keycode::*;
 use crate::logic::ai;
 use crate::logic::automaton;
+use crate::logic::automaton as metadata;
 use crate::logic::automaton::Automaton;
 use crate::logic::challenge::ChallengeId;
 use crate::logic::change::ChangeSet;
+use crate::logic::map;
 use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
@@ -119,6 +121,7 @@ pub fn start(
 	bots: Vec<Bot>,
 	watchers: Vec<WatcherClient>,
 	map_name: String,
+	map_metadata: map::Metadata,
 	ruleset_name: String,
 	planning_time_in_seconds: Option<u32>,
 	challenge: Option<ChallengeId>,
@@ -136,6 +139,7 @@ pub fn start(
 		bots,
 		watchers,
 		map_name,
+		map_metadata,
 		ruleset_name,
 		planning_time_in_seconds,
 		challenge,
@@ -156,6 +160,7 @@ async fn run_game_task(
 	bots: Vec<Bot>,
 	watchers: Vec<WatcherClient>,
 	map_name: String,
+	map_metadata: map::Metadata,
 	ruleset_name: String,
 	planning_time_in_seconds: Option<u32>,
 	challenge: Option<ChallengeId>,
@@ -170,6 +175,7 @@ async fn run_game_task(
 		bots,
 		watchers,
 		map_name,
+		map_metadata,
 		ruleset_name,
 		planning_time_in_seconds,
 		challenge,
@@ -205,6 +211,7 @@ async fn run(
 	mut bots: Vec<Bot>,
 	mut watchers: Vec<WatcherClient>,
 	map_name: String,
+	map_metadata: map::Metadata,
 	ruleset_name: String,
 	planning_time_in_seconds: Option<u32>,
 	challenge: Option<ChallengeId>,
@@ -212,9 +219,6 @@ async fn run(
 	is_rated: bool,
 ) -> Result<(), Error>
 {
-	// TODO metadata
-	let metadata = automaton::Metadata {};
-
 	let mut playercolors = Vec::new();
 	for player in &players
 	{
@@ -245,6 +249,7 @@ async fn run(
 		}
 	}
 
+	// Tell everyone that the game is starting.
 	for client in &mut players
 	{
 		if is_tutorial
@@ -278,14 +283,82 @@ async fn run(
 	}
 
 	// Tell everyone who is playing as which color.
-	// TODO colors
+	let mut initial_messages = Vec::new();
+	for player in &players
+	{
+		initial_messages.push(Message::AssignColor {
+			color: player.color,
+			name: player.username.clone(),
+		});
+	}
+	for bot in &mut bots
+	{
+		let descriptive_name = bot.ai.descriptive_name()?;
+		initial_messages.push(Message::AssignColor {
+			color: bot.color,
+			name: descriptive_name,
+		});
+	}
 
 	// Tell everyone which skins are being used.
-	// TODO skins
+	initial_messages.push(Message::Skins {
+		metadata: map_metadata.clone(),
+	});
 
 	// A challenge might be set.
 	// TODO set in automaton
-	// TODO tell clients mission briefing
+	// TODO initial_messages.push(Message::Briefing{...});
+
+	// Send the initial messages.
+	for client in &mut players
+	{
+		for message in &initial_messages
+		{
+			client.send(message.clone());
+		}
+	}
+	for client in &mut watchers
+	{
+		for message in &initial_messages
+		{
+			client.send(message.clone());
+		}
+	}
+
+	// Prepare metadata for the recording.
+	let mut metadata_players = Vec::new();
+	for player in &players
+	{
+		metadata_players.push(metadata::Player {
+			color: player.color,
+			username: player.username.clone(),
+		});
+	}
+	let mut metadata_watchers = Vec::new();
+	for watcher in &watchers
+	{
+		metadata_watchers.push(metadata::Watcher {
+			username: watcher.username.clone(),
+		});
+	}
+	let mut metadata_bots = Vec::new();
+	for bot in &mut bots
+	{
+		let ai_metadata = bot.ai.metadata()?;
+		metadata_bots.push(metadata::Bot {
+			color: bot.color,
+			ai_metadata,
+		});
+	}
+	let metadata = automaton::Metadata {
+		map_name: map_name.clone(),
+		map_metadata: map_metadata,
+		is_online: true,
+		planning_time_in_seconds_or_zero: planning_time_in_seconds.unwrap_or(0),
+		players: metadata_players,
+		watchers: metadata_watchers,
+		bots: metadata_bots,
+	};
 
 	// Load the map.
 	let shuffleplayers = challenge.is_none()
@@ -298,6 +371,9 @@ async fn run(
 	{
 		// TODO rating
 	}
+
+	// TODO pass initial_messages to iterate for rejoiners
+	let _ = initial_messages;
 
 	loop
 	{

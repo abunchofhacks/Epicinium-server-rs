@@ -1860,6 +1860,8 @@ async fn handle_message(
 		| Message::ListAi { .. }
 		| Message::ListMap { .. }
 		| Message::PickChallenge { .. }
+		| Message::AssignColor { .. }
+		| Message::Skins { .. }
 		| Message::InGame { .. }
 		| Message::Changes { .. }
 		| Message::OrdersOld { .. }

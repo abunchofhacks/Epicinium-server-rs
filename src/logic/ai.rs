@@ -59,4 +59,17 @@ impl Commander
 	{
 		epicinium::ai_retrieve_orders(&mut self.0)
 	}
+
+	pub fn descriptive_name(&mut self) -> Result<String, InterfaceError>
+	{
+		unimplemented!()
+	}
+
+	pub fn metadata(&mut self) -> Result<Metadata, InterfaceError>
+	{
+		unimplemented!()
+	}
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Metadata(serde_json::Value);

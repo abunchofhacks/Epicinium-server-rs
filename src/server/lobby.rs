@@ -1997,6 +1997,15 @@ async fn try_start(
 		return Ok(());
 	}
 
+	let map_name = lobby.map_name.clone();
+	let map_metadata = {
+		match lobby.map_pool.iter().find(|(name, _)| name == &map_name)
+		{
+			Some((_, metadata)) => metadata.clone(),
+			None => map::load_metadata(&map_name).await?,
+		}
+	};
+
 	let planning_timer = Some(lobby.timer_in_seconds).filter(|&x| x > 0);
 
 	// We are truly starting.
@@ -2007,7 +2016,8 @@ async fn try_start(
 		player_clients,
 		bots,
 		watcher_clients,
-		lobby.map_name.clone(),
+		map_name,
+		map_metadata,
 		lobby.ruleset_name.clone(),
 		planning_timer,
 		lobby.challenge_id,

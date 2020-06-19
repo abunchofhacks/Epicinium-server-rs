@@ -177,6 +177,18 @@ pub enum Message
 		#[serde(rename = "content")]
 		ruleset_name: String,
 	},
+	AssignColor
+	{
+		#[serde(rename = "sender")]
+		name: String,
+
+		#[serde(rename = "player")]
+		color: PlayerColor,
+	},
+	Skins
+	{
+		metadata: map::Metadata,
+	},
 	InGame
 	{
 		#[serde(rename = "content")]
