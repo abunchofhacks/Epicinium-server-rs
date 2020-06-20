@@ -18,11 +18,6 @@ struct ChangeSetItem
 
 impl ChangeSet
 {
-	pub fn push(&mut self, change: Change, vision: Vision)
-	{
-		self.0.push(ChangeSetItem { change, vision });
-	}
-
 	pub fn get(&self, player: PlayerColor) -> Vec<Change>
 	{
 		self.0
