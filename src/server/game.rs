@@ -11,7 +11,7 @@ use crate::logic::map;
 use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
-use crate::server::lobby;
+use crate::server::lobby::Update;
 use crate::server::login::UserId;
 use crate::server::message::*;
 use crate::server::rating;
@@ -113,112 +113,40 @@ impl WatcherClient
 	}
 }
 
-pub fn start(
-	lobby_id: Keycode,
-	canary: mpsc::Sender<()>,
-	end_update: mpsc::Sender<lobby::Update>,
-	players: Vec<PlayerClient>,
-	bots: Vec<Bot>,
-	watchers: Vec<WatcherClient>,
-	map_name: String,
-	map_metadata: map::Metadata,
-	ruleset_name: String,
-	planning_time_in_seconds: Option<u32>,
-	challenge: Option<ChallengeId>,
-	is_tutorial: bool,
-	is_rated: bool,
-) -> mpsc::Sender<Update>
+pub struct Setup
 {
-	let (updates_in, updates_out) = mpsc::channel::<Update>(1000);
-	let task = run_game_task(
-		lobby_id,
-		canary,
-		end_update,
-		updates_out,
-		players,
-		bots,
-		watchers,
-		map_name,
-		map_metadata,
-		ruleset_name,
-		planning_time_in_seconds,
-		challenge,
-		is_tutorial,
-		is_rated,
-	);
-	tokio::spawn(task);
-
-	updates_in
+	pub lobby_id: Keycode,
+	pub players: Vec<PlayerClient>,
+	pub bots: Vec<Bot>,
+	pub watchers: Vec<WatcherClient>,
+	pub map_name: String,
+	pub map_metadata: map::Metadata,
+	pub ruleset_name: String,
+	pub planning_time_in_seconds: Option<u32>,
+	pub challenge: Option<ChallengeId>,
+	pub is_tutorial: bool,
+	pub is_rated: bool,
 }
 
-async fn run_game_task(
-	lobby_id: Keycode,
-	canary: mpsc::Sender<()>,
-	mut end_update: mpsc::Sender<lobby::Update>,
-	updates: mpsc::Receiver<Update>,
-	players: Vec<PlayerClient>,
-	bots: Vec<Bot>,
-	watchers: Vec<WatcherClient>,
-	map_name: String,
-	map_metadata: map::Metadata,
-	ruleset_name: String,
-	planning_time_in_seconds: Option<u32>,
-	challenge: Option<ChallengeId>,
-	is_tutorial: bool,
-	is_rated: bool,
-)
-{
-	let result = run(
-		lobby_id,
-		updates,
-		players,
-		bots,
-		watchers,
-		map_name,
-		map_metadata,
-		ruleset_name,
-		planning_time_in_seconds,
-		challenge,
-		is_tutorial,
-		is_rated,
-	)
-	.await;
-
-	match result
-	{
-		Ok(()) =>
-		{}
-		Err(error) =>
-		{
-			eprintln!("Game in lobby {} crashed: {:#?}", lobby_id, error);
-		}
-	}
-
-	match end_update.send(lobby::Update::GameEnded).await
-	{
-		Ok(()) => (),
-		Err(_error) => (),
-	}
-
-	println!("Game ended in lobby {}", lobby_id);
-	let _discarded = canary;
-}
-
-async fn run(
-	lobby_id: Keycode,
+pub async fn run(
+	setup: Setup,
 	mut updates: mpsc::Receiver<Update>,
-	mut players: Vec<PlayerClient>,
-	mut bots: Vec<Bot>,
-	mut watchers: Vec<WatcherClient>,
-	map_name: String,
-	map_metadata: map::Metadata,
-	ruleset_name: String,
-	planning_time_in_seconds: Option<u32>,
-	challenge: Option<ChallengeId>,
-	is_tutorial: bool,
-	is_rated: bool,
 ) -> Result<(), Error>
 {
+	let Setup {
+		lobby_id,
+		mut players,
+		mut bots,
+		mut watchers,
+		map_name,
+		map_metadata,
+		ruleset_name,
+		planning_time_in_seconds,
+		challenge,
+		is_tutorial,
+		is_rated,
+	} = setup;
+
 	let mut playercolors = Vec::new();
 	for player in &players
 	{
@@ -409,7 +337,7 @@ async fn run(
 }
 
 #[derive(Debug)]
-pub enum Update
+pub enum Sub
 {
 	Orders
 	{
@@ -423,17 +351,6 @@ pub enum Update
 	Resign
 	{
 		client_id: Keycode
-	},
-	Leave
-	{
-		client_id: Keycode
-	},
-	Join
-	{
-		client_id: Keycode,
-		client_user_id: UserId,
-		client_username: String,
-		client_sendbuffer: mpsc::Sender<Message>,
 	},
 }
 
@@ -601,11 +518,11 @@ async fn rest(
 
 		match update
 		{
-			Update::Orders { client_id, .. } =>
+			Update::ForGame(Sub::Orders { client_id, .. }) =>
 			{
 				eprintln!("Ignoring orders from {} while resting", client_id);
 			}
-			Update::Sync { client_id } =>
+			Update::ForGame(Sub::Sync { client_id }) =>
 			{
 				for client in players.iter_mut()
 				{
@@ -622,17 +539,33 @@ async fn rest(
 					}
 				}
 			}
-			Update::Resign { client_id } =>
+			Update::ForGame(Sub::Resign { client_id }) =>
 			{
 				handle_resign(automaton, players, client_id).await?;
 			}
-			Update::Leave { client_id } =>
+			Update::Leave {
+				client_id,
+				general_chat: _,
+			} =>
 			{
 				handle_leave(players, client_id).await?;
 			}
 			Update::Join { .. } =>
 			{
 				// TODO handle joins
+			}
+			Update::ForSetup(..) =>
+			{}
+			Update::Msg(message) =>
+			{
+				for client in players.iter_mut()
+				{
+					client.send(message.clone());
+				}
+				for client in watchers.iter_mut()
+				{
+					client.send(message.clone());
+				}
 			}
 		}
 	}
@@ -664,7 +597,7 @@ fn all_players_or_watchers_have_synced(
 async fn ensure_live_players(
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
-	_watchers: &mut Vec<WatcherClient>,
+	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
 ) -> Result<(), Error>
 {
@@ -685,25 +618,41 @@ async fn ensure_live_players(
 
 		match update
 		{
-			Update::Orders { client_id, .. } =>
+			Update::ForGame(Sub::Orders { client_id, .. }) =>
 			{
 				eprintln!("Ignoring orders from {} after resting", client_id);
 			}
-			Update::Sync { client_id } =>
+			Update::ForGame(Sub::Sync { client_id }) =>
 			{
 				eprintln!("Ignoring sync from {} after resting", client_id);
 			}
-			Update::Resign { client_id } =>
+			Update::ForGame(Sub::Resign { client_id }) =>
 			{
 				handle_resign(automaton, players, client_id).await?;
 			}
-			Update::Leave { client_id } =>
+			Update::Leave {
+				client_id,
+				general_chat: _,
+			} =>
 			{
 				handle_leave(players, client_id).await?;
 			}
 			Update::Join { .. } =>
 			{
 				// TODO handle joins
+			}
+			Update::ForSetup(..) =>
+			{}
+			Update::Msg(message) =>
+			{
+				for client in players.iter_mut()
+				{
+					client.send(message.clone());
+				}
+				for client in watchers.iter_mut()
+				{
+					client.send(message.clone());
+				}
 			}
 		}
 	}
@@ -723,7 +672,7 @@ async fn sleep(
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	num_bots: usize,
-	_watchers: &mut Vec<WatcherClient>,
+	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
 ) -> Result<(), Error>
 {
@@ -750,7 +699,7 @@ async fn sleep(
 
 		match update
 		{
-			Update::Orders { client_id, orders } =>
+			Update::ForGame(Sub::Orders { client_id, orders }) =>
 			{
 				for client in players.iter_mut()
 				{
@@ -761,11 +710,11 @@ async fn sleep(
 					}
 				}
 			}
-			Update::Sync { client_id } =>
+			Update::ForGame(Sub::Sync { client_id }) =>
 			{
 				eprintln!("Ignoring sync from {} while sleeping", client_id);
 			}
-			Update::Resign { client_id } =>
+			Update::ForGame(Sub::Resign { client_id }) =>
 			{
 				handle_resign(automaton, players, client_id).await?;
 
@@ -775,13 +724,29 @@ async fn sleep(
 					return Ok(());
 				}
 			}
-			Update::Leave { client_id } =>
+			Update::Leave {
+				client_id,
+				general_chat: _,
+			} =>
 			{
 				handle_leave(players, client_id).await?;
 			}
 			Update::Join { .. } =>
 			{
 				// TODO handle joins
+			}
+			Update::ForSetup(..) =>
+			{}
+			Update::Msg(message) =>
+			{
+				for client in players.iter_mut()
+				{
+					client.send(message.clone());
+				}
+				for client in watchers.iter_mut()
+				{
+					client.send(message.clone());
+				}
 			}
 		}
 	}
@@ -813,7 +778,7 @@ fn all_players_have_submitted_orders(players: &mut Vec<PlayerClient>) -> bool
 async fn stage(
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
-	_watchers: &mut Vec<WatcherClient>,
+	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
 ) -> Result<(), Error>
 {
@@ -833,7 +798,7 @@ async fn stage(
 
 		match update
 		{
-			Update::Orders { client_id, orders } =>
+			Update::ForGame(Sub::Orders { client_id, orders }) =>
 			{
 				for client in players.iter_mut()
 				{
@@ -844,21 +809,37 @@ async fn stage(
 					}
 				}
 			}
-			Update::Sync { client_id } =>
+			Update::ForGame(Sub::Sync { client_id }) =>
 			{
 				eprintln!("Ignoring sync from {} while staging", client_id);
 			}
-			Update::Resign { client_id } =>
+			Update::ForGame(Sub::Resign { client_id }) =>
 			{
 				handle_resign(automaton, players, client_id).await?;
 			}
-			Update::Leave { client_id } =>
+			Update::Leave {
+				client_id,
+				general_chat: _,
+			} =>
 			{
 				handle_leave(players, client_id).await?;
 			}
 			Update::Join { .. } =>
 			{
 				// TODO handle joins
+			}
+			Update::ForSetup(..) =>
+			{}
+			Update::Msg(message) =>
+			{
+				for client in players.iter_mut()
+				{
+					client.send(message.clone());
+				}
+				for client in watchers.iter_mut()
+				{
+					client.send(message.clone());
+				}
 			}
 		}
 	}
@@ -930,7 +911,7 @@ async fn handle_leave(
 }
 
 #[derive(Debug)]
-enum Error
+pub enum Error
 {
 	LobbyGone,
 	ClientGone

@@ -247,8 +247,8 @@ async fn start_receive_task(
 		ServerState::Closed => future::ready(Some(Update::Closed)),
 	});
 
-	let mut has_quit = false;
-	while !has_quit
+	let mut has_quit = None;
+	while has_quit.is_none()
 	{
 		let versioned: bool = client.has_proper_version;
 		let receive = receive_message(&mut socket, client.id, versioned)
@@ -526,10 +526,12 @@ impl fmt::Display for Error
 	}
 }
 
+struct HasQuit;
+
 async fn handle_update(
 	client: &mut Client,
 	update: Update,
-) -> Result<bool, Error>
+) -> Result<Option<HasQuit>, Error>
 {
 	match update
 	{
@@ -537,13 +539,13 @@ async fn handle_update(
 		{
 			client.pong_receive_time = Some(callback);
 			client.sendbuffer.try_send(Message::Ping)?;
-			Ok(false)
+			Ok(None)
 		}
 		Update::BeingGhostbusted =>
 		{
 			let tolerance = Duration::from_secs(5);
 			client.ping_tolerance.broadcast(tolerance)?;
-			Ok(false)
+			Ok(None)
 		}
 
 		Update::LoggedIn {
@@ -580,7 +582,7 @@ async fn handle_update(
 					};
 					match chat.try_send(request)
 					{
-						Ok(()) => Ok(false),
+						Ok(()) => Ok(None),
 						Err(error) =>
 						{
 							eprintln!(
@@ -597,14 +599,14 @@ async fn handle_update(
 								metadata: None,
 							};
 							client.sendbuffer.try_send(message)?;
-							Ok(false)
+							Ok(None)
 						}
 					}
 				}
 				None =>
 				{
 					client.sendbuffer.try_send(Message::Closing)?;
-					Ok(false)
+					Ok(None)
 				}
 			}
 		}
@@ -628,12 +630,12 @@ async fn handle_update(
 				}
 
 				client.general_chat = Some(chat);
-				Ok(false)
+				Ok(None)
 			}
 			None =>
 			{
 				client.sendbuffer.try_send(Message::Closing)?;
-				Ok(false)
+				Ok(None)
 			}
 		},
 
@@ -671,7 +673,7 @@ async fn handle_update(
 				general_chat,
 			};
 			lobby_sendbuffer.send(update).await?;
-			Ok(false)
+			Ok(None)
 		}
 		Update::LobbyNotFound { lobby_id: _ } =>
 		{
@@ -680,13 +682,13 @@ async fn handle_update(
 				username: None,
 				metadata: None,
 			})?;
-			Ok(false)
+			Ok(None)
 		}
 		Update::JoinedLobby { lobby } =>
 		{
 			// TODO what else to do here?
 			client.lobby = Some(lobby);
-			Ok(false)
+			Ok(None)
 		}
 
 		Update::Closing =>
@@ -695,7 +697,7 @@ async fn handle_update(
 			client.general_chat_reserve.take();
 			client.lobby_callback.take();
 			client.sendbuffer.try_send(Message::Closing)?;
-			Ok(false)
+			Ok(None)
 		}
 		Update::Closed =>
 		{
@@ -703,7 +705,7 @@ async fn handle_update(
 			client.general_chat_reserve.take();
 			client.lobby_callback.take();
 			client.sendbuffer.try_send(Message::Closed)?;
-			Ok(false)
+			Ok(None)
 		}
 
 		Update::Msg(message) => handle_message(client, message).await,
@@ -713,7 +715,7 @@ async fn handle_update(
 async fn handle_message(
 	client: &mut Client,
 	message: Message,
-) -> Result<bool, Error>
+) -> Result<Option<HasQuit>, Error>
 {
 	client.last_receive_time.broadcast(())?;
 
@@ -751,7 +753,7 @@ async fn handle_message(
 		{
 			println!("Client {} is gracefully disconnecting...", client.id);
 			client.sendbuffer.try_send(Message::Quit)?;
-			return Ok(true);
+			return Ok(Some(HasQuit));
 		}
 		Message::JoinServer { .. } if client.general_chat.is_some() =>
 		{
@@ -979,10 +981,10 @@ async fn handle_message(
 					}
 				};
 
-				let update = lobby::Update::Save {
+				let update = lobby::Update::ForSetup(lobby::Sub::Save {
 					lobby_sendbuffer: lobby.clone(),
 					general_chat,
-				};
+				});
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1008,7 +1010,8 @@ async fn handle_message(
 					}
 				};
 
-				let update = lobby::Update::Lock { general_chat };
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::Lock { general_chat });
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1034,7 +1037,9 @@ async fn handle_message(
 					}
 				};
 
-				let update = lobby::Update::Unlock { general_chat };
+				let update = lobby::Update::ForSetup(lobby::Sub::Unlock {
+					general_chat,
+				});
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1060,10 +1065,10 @@ async fn handle_message(
 					}
 				};
 
-				let update = lobby::Update::Rename {
+				let update = lobby::Update::ForSetup(lobby::Sub::Rename {
 					lobby_name,
 					general_chat,
-				};
+				});
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1086,11 +1091,11 @@ async fn handle_message(
 					}
 				};
 
-				let update = lobby::Update::ClaimRole {
+				let update = lobby::Update::ForSetup(lobby::Sub::ClaimRole {
 					general_chat,
 					username,
 					role,
-				};
+				});
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1106,10 +1111,10 @@ async fn handle_message(
 		{
 			Some(ref mut lobby) =>
 			{
-				let update = lobby::Update::ClaimColor {
+				let update = lobby::Update::ForSetup(lobby::Sub::ClaimColor {
 					username_or_slot,
 					color,
-				};
+				});
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1125,10 +1130,11 @@ async fn handle_message(
 		{
 			Some(ref mut lobby) =>
 			{
-				let update = lobby::Update::ClaimVisionType {
-					username_or_slot,
-					visiontype,
-				};
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::ClaimVisionType {
+						username_or_slot,
+						visiontype,
+					});
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1141,7 +1147,10 @@ async fn handle_message(
 		{
 			Some(ref mut lobby) =>
 			{
-				let update = lobby::Update::ClaimAi { slot, ai_name };
+				let update = lobby::Update::ForSetup(lobby::Sub::ClaimAi {
+					slot,
+					ai_name,
+				});
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1155,7 +1164,10 @@ async fn handle_message(
 			Some(ref mut lobby) =>
 			{
 				let update =
-					lobby::Update::ClaimDifficulty { slot, difficulty };
+					lobby::Update::ForSetup(lobby::Sub::ClaimDifficulty {
+						slot,
+						difficulty,
+					});
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1178,10 +1190,10 @@ async fn handle_message(
 					}
 				};
 
-				let update = lobby::Update::PickMap {
+				let update = lobby::Update::ForSetup(lobby::Sub::PickMap {
 					general_chat,
 					map_name,
-				};
+				});
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1194,7 +1206,8 @@ async fn handle_message(
 		{
 			Some(ref mut lobby) =>
 			{
-				let update = lobby::Update::PickTimer { seconds };
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::PickTimer { seconds });
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1207,7 +1220,9 @@ async fn handle_message(
 		{
 			Some(ref mut lobby) =>
 			{
-				let update = lobby::Update::PickRuleset { ruleset_name };
+				let update = lobby::Update::ForSetup(lobby::Sub::PickRuleset {
+					ruleset_name,
+				});
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1230,12 +1245,12 @@ async fn handle_message(
 					}
 				};
 
-				let update = lobby::Update::ConfirmRuleset {
-					client_id: client.id,
-					general_chat,
-					ruleset_name,
-					lobby_sendbuffer: lobby.clone(),
-				};
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::ConfirmRuleset {
+						client_id: client.id,
+						general_chat,
+						ruleset_name,
+					});
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1258,7 +1273,9 @@ async fn handle_message(
 					}
 				};
 
-				let update = lobby::Update::AddBot { general_chat };
+				let update = lobby::Update::ForSetup(lobby::Sub::AddBot {
+					general_chat,
+				});
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1286,7 +1303,10 @@ async fn handle_message(
 					}
 				};
 
-				let update = lobby::Update::RemoveBot { general_chat, slot };
+				let update = lobby::Update::ForSetup(lobby::Sub::RemoveBot {
+					general_chat,
+					slot,
+				});
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1314,10 +1334,8 @@ async fn handle_message(
 					}
 				};
 
-				let update = lobby::Update::Start {
-					general_chat,
-					lobby_sendbuffer: lobby.clone(),
-				};
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::Start { general_chat });
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1350,15 +1368,14 @@ async fn handle_message(
 					}
 				};
 
-				let update = lobby::Update::PickTutorial {
-					general_chat: general_chat.clone(),
-				};
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::PickTutorial {
+						general_chat: general_chat.clone(),
+					});
 				lobby.send(update).await?;
 
-				let update = lobby::Update::Start {
-					general_chat,
-					lobby_sendbuffer: lobby.clone(),
-				};
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::Start { general_chat });
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1386,15 +1403,14 @@ async fn handle_message(
 					}
 				};
 
-				let update = lobby::Update::PickChallenge {
-					general_chat: general_chat.clone(),
-				};
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::PickChallenge {
+						general_chat: general_chat.clone(),
+					});
 				lobby.send(update).await?;
 
-				let update = lobby::Update::Start {
-					general_chat,
-					lobby_sendbuffer: lobby.clone(),
-				};
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::Start { general_chat });
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1407,10 +1423,9 @@ async fn handle_message(
 		{
 			Some(ref mut lobby) =>
 			{
-				let update = game::Update::Resign {
+				let update = lobby::Update::ForGame(game::Sub::Resign {
 					client_id: client.id,
-				};
-				let update = lobby::Update::ForwardToGame(update);
+				});
 				lobby.send(update).await?
 			}
 			None =>
@@ -1428,11 +1443,10 @@ async fn handle_message(
 		{
 			Some(ref mut lobby) =>
 			{
-				let update = game::Update::Orders {
+				let update = lobby::Update::ForGame(game::Sub::Orders {
 					client_id: client.id,
 					orders,
-				};
-				let update = lobby::Update::ForwardToGame(update);
+				});
 				lobby.send(update).await?
 			}
 			None =>
@@ -1447,10 +1461,9 @@ async fn handle_message(
 		{
 			Some(ref mut lobby) =>
 			{
-				let update = game::Update::Sync {
+				let update = lobby::Update::ForGame(game::Sub::Sync {
 					client_id: client.id,
-				};
-				let update = lobby::Update::ForwardToGame(update);
+				});
 				lobby.send(update).await?
 			}
 			None =>
@@ -1578,7 +1591,7 @@ async fn handle_message(
 		}
 	}
 
-	Ok(false)
+	Ok(None)
 }
 
 fn greet_client(client: &mut Client, version: Version) -> Result<(), Error>

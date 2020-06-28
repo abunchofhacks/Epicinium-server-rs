@@ -34,12 +34,6 @@ use vec_drain_where::VecDrainWhereExt;
 #[derive(Debug)]
 pub enum Update
 {
-	Save
-	{
-		lobby_sendbuffer: mpsc::Sender<Update>,
-		general_chat: mpsc::Sender<chat::Update>,
-	},
-
 	Join
 	{
 		client_id: Keycode,
@@ -53,6 +47,22 @@ pub enum Update
 	Leave
 	{
 		client_id: Keycode,
+		general_chat: mpsc::Sender<chat::Update>,
+	},
+
+	ForSetup(Sub),
+
+	ForGame(game::Sub),
+
+	Msg(Message),
+}
+
+#[derive(Debug)]
+pub enum Sub
+{
+	Save
+	{
+		lobby_sendbuffer: mpsc::Sender<Update>,
 		general_chat: mpsc::Sender<chat::Update>,
 	},
 
@@ -121,31 +131,23 @@ pub enum Update
 	},
 	PickTimer
 	{
-		seconds: u32,
+		seconds: u32
 	},
 	PickRuleset
 	{
-		ruleset_name: String,
+		ruleset_name: String
 	},
 	ConfirmRuleset
 	{
 		client_id: Keycode,
 		ruleset_name: String,
 		general_chat: mpsc::Sender<chat::Update>,
-		lobby_sendbuffer: mpsc::Sender<Update>,
 	},
 
 	Start
 	{
 		general_chat: mpsc::Sender<chat::Update>,
-		lobby_sendbuffer: mpsc::Sender<Update>,
 	},
-
-	GameEnded,
-
-	ForwardToGame(game::Update),
-
-	Msg(Message),
 }
 
 pub fn create(
@@ -171,22 +173,6 @@ enum Stage
 {
 	Setup,
 	WaitingForConfirmation,
-	GameInProgress,
-	GameEnded,
-}
-
-impl Stage
-{
-	pub fn has_game_started(&self) -> bool
-	{
-		match self
-		{
-			Stage::Setup => false,
-			Stage::WaitingForConfirmation => false,
-			Stage::GameInProgress => true,
-			Stage::GameEnded => true,
-		}
-	}
 }
 
 #[derive(Debug, Clone)]
@@ -201,8 +187,6 @@ struct Lobby
 
 	has_been_listed: bool,
 	last_description_metadata: Option<LobbyMetadata>,
-
-	username_whitelist: Vec<String>,
 
 	bots: Vec<Bot>,
 	open_botslots: Vec<Botslot>,
@@ -224,9 +208,7 @@ struct Lobby
 	is_rated: bool,
 
 	stage: Stage,
-	game_in_progress: Option<mpsc::Sender<game::Update>>,
 	rating_database_for_games: mpsc::Sender<rating::Update>,
-	canary_for_games: mpsc::Sender<()>,
 }
 
 async fn run(
@@ -236,9 +218,7 @@ async fn run(
 	mut updates: mpsc::Receiver<Update>,
 )
 {
-	let canary_for_games = canary.clone();
-
-	let mut lobby = match initialize(lobby_id, ratings, canary_for_games).await
+	let lobby = match initialize(lobby_id, ratings).await
 	{
 		Ok(lobby) => lobby,
 		Err(error) =>
@@ -248,20 +228,35 @@ async fn run(
 		}
 	};
 
-	let mut clients: Vec<Client> = Vec::new();
-
-	while let Some(update) = updates.recv().await
+	let game = match run_setup(lobby, &mut updates).await
 	{
-		match handle_update(update, &mut lobby, &mut clients).await
+		Ok(game) => game,
+		Err(error) =>
 		{
-			Ok(()) => continue,
+			eprintln!("Lobby {} crashed: {:?}", lobby_id, error);
+			return;
+		}
+	};
+
+	// TODO list lobby as in-progress
+
+	if let Some(game) = game
+	{
+		println!("Game started in lobby {}.", lobby_id);
+
+		match game::run(game, updates).await
+		{
+			Ok(()) =>
+			{}
 			Err(error) =>
 			{
-				eprintln!("Lobby {} crashed: {:?}", lobby_id, error);
-				break;
+				eprintln!("Game crashed in lobby {}: {:?}", lobby_id, error);
+				return;
 			}
 		}
 	}
+
+	// TODO unlist lobby
 
 	println!("Lobby {} has disbanded.", lobby_id);
 	let _discarded = canary;
@@ -270,7 +265,6 @@ async fn run(
 async fn initialize(
 	lobby_id: Keycode,
 	rating_database_for_games: mpsc::Sender<rating::Update>,
-	canary_for_games: mpsc::Sender<()>,
 ) -> Result<Lobby, Error>
 {
 	let map_pool = map::load_pool_with_metadata().await?;
@@ -288,7 +282,6 @@ async fn initialize(
 		is_replay: false,
 		has_been_listed: false,
 		last_description_metadata: None,
-		username_whitelist: Vec::new(),
 		bots: Vec::new(),
 		open_botslots: botslot::pool(),
 		roles: HashMap::new(),
@@ -307,25 +300,36 @@ async fn initialize(
 		is_tutorial: false,
 		is_rated: true,
 		stage: Stage::Setup,
-		game_in_progress: None,
 		rating_database_for_games,
-		canary_for_games,
 	})
+}
+
+async fn run_setup(
+	mut lobby: Lobby,
+	updates: &mut mpsc::Receiver<Update>,
+) -> Result<Option<game::Setup>, Error>
+{
+	let mut clients: Vec<Client> = Vec::new();
+
+	while let Some(update) = updates.recv().await
+	{
+		match handle_update(update, &mut lobby, &mut clients).await?
+		{
+			Some(game) => return Ok(Some(game)),
+			None => continue,
+		}
+	}
+	Ok(None)
 }
 
 async fn handle_update(
 	update: Update,
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
-) -> Result<(), Error>
+) -> Result<Option<game::Setup>, Error>
 {
 	match update
 	{
-		Update::Save {
-			lobby_sendbuffer,
-			mut general_chat,
-		} => list_lobby(lobby, lobby_sendbuffer, &mut general_chat).await,
-
 		Update::Join {
 			client_id,
 			client_user_id,
@@ -347,25 +351,64 @@ async fn handle_update(
 				&mut general_chat,
 				clients,
 			)
-			.await
+			.await?;
+			Ok(None)
 		}
 		Update::Leave {
 			client_id,
 			mut general_chat,
-		} => handle_leave(lobby, client_id, clients, &mut general_chat).await,
+		} =>
+		{
+			handle_leave(lobby, client_id, clients, &mut general_chat).await?;
+			Ok(None)
+		}
 
-		Update::Lock { mut general_chat } =>
+		Update::ForSetup(sub) => handle_sub(sub, lobby, clients).await,
+
+		Update::ForGame(_) => Ok(None),
+
+		Update::Msg(message) =>
+		{
+			for client in clients.iter_mut()
+			{
+				client.send(message.clone());
+			}
+			Ok(None)
+		}
+	}
+}
+
+async fn handle_sub(
+	sub: Sub,
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+) -> Result<Option<game::Setup>, Error>
+{
+	match sub
+	{
+		Sub::Save {
+			lobby_sendbuffer,
+			mut general_chat,
+		} =>
+		{
+			list_lobby(lobby, lobby_sendbuffer, &mut general_chat).await?;
+			Ok(None)
+		}
+
+		Sub::Lock { mut general_chat } =>
 		{
 			lobby.is_public = false;
-			describe_lobby(lobby, &mut general_chat).await
+			describe_lobby(lobby, &mut general_chat).await?;
+			Ok(None)
 		}
-		Update::Unlock { mut general_chat } =>
+		Sub::Unlock { mut general_chat } =>
 		{
 			lobby.is_public = true;
-			describe_lobby(lobby, &mut general_chat).await
+			describe_lobby(lobby, &mut general_chat).await?;
+			Ok(None)
 		}
 
-		Update::Rename {
+		Sub::Rename {
 			lobby_name,
 			mut general_chat,
 		} =>
@@ -373,90 +416,99 @@ async fn handle_update(
 			lobby.name = lobby_name;
 			// Unset the description metadata to force a lobby description.
 			lobby.last_description_metadata = None;
-			describe_lobby(lobby, &mut general_chat).await
+			describe_lobby(lobby, &mut general_chat).await?;
+			Ok(None)
 		}
 
-		Update::ClaimRole {
+		Sub::ClaimRole {
 			mut general_chat,
 			username,
 			role,
 		} =>
 		{
 			handle_claim_role(lobby, clients, username, role)?;
-			describe_lobby(lobby, &mut general_chat).await
+			describe_lobby(lobby, &mut general_chat).await?;
+			Ok(None)
 		}
-		Update::ClaimColor {
+		Sub::ClaimColor {
 			username_or_slot,
 			color,
 		} =>
 		{
 			change_color(lobby, clients, username_or_slot, color);
-			Ok(())
+			Ok(None)
 		}
-		Update::ClaimVisionType {
+		Sub::ClaimVisionType {
 			username_or_slot,
 			visiontype,
 		} =>
 		{
 			change_visiontype(lobby, clients, username_or_slot, visiontype);
-			Ok(())
+			Ok(None)
 		}
-		Update::ClaimAi { slot, ai_name } =>
+		Sub::ClaimAi { slot, ai_name } =>
 		{
 			change_ai(lobby, clients, slot, ai_name);
-			Ok(())
+			Ok(None)
 		}
-		Update::ClaimDifficulty { slot, difficulty } =>
+		Sub::ClaimDifficulty { slot, difficulty } =>
 		{
 			change_difficulty(lobby, clients, slot, difficulty);
-			Ok(())
+			Ok(None)
 		}
 
-		Update::AddBot { mut general_chat } =>
+		Sub::AddBot { mut general_chat } =>
 		{
 			add_bot(lobby, clients);
-			describe_lobby(lobby, &mut general_chat).await
+			describe_lobby(lobby, &mut general_chat).await?;
+			Ok(None)
 		}
-		Update::RemoveBot {
+		Sub::RemoveBot {
 			mut general_chat,
 			slot,
 		} =>
 		{
 			remove_bot(lobby, clients, slot);
-			describe_lobby(lobby, &mut general_chat).await
+			describe_lobby(lobby, &mut general_chat).await?;
+			Ok(None)
 		}
 
-		Update::PickMap {
+		Sub::PickMap {
 			mut general_chat,
 			map_name,
 		} =>
 		{
 			pick_map(lobby, clients, map_name).await?;
-			describe_lobby(lobby, &mut general_chat).await
+			describe_lobby(lobby, &mut general_chat).await?;
+			Ok(None)
 		}
-		Update::PickTutorial { mut general_chat } =>
+		Sub::PickTutorial { mut general_chat } =>
 		{
 			become_tutorial_lobby(lobby, clients).await?;
-			describe_lobby(lobby, &mut general_chat).await
+			describe_lobby(lobby, &mut general_chat).await?;
+			Ok(None)
 		}
-		Update::PickChallenge { mut general_chat } =>
+		Sub::PickChallenge { mut general_chat } =>
 		{
 			become_challenge_lobby(lobby, clients).await?;
-			describe_lobby(lobby, &mut general_chat).await
+			describe_lobby(lobby, &mut general_chat).await?;
+			Ok(None)
 		}
-		Update::PickTimer { seconds } =>
+		Sub::PickTimer { seconds } =>
 		{
-			pick_timer(lobby, clients, seconds).await
+			pick_timer(lobby, clients, seconds).await?;
+			Ok(None)
 		}
-		Update::PickRuleset { ruleset_name } =>
+		Sub::PickRuleset { ruleset_name } =>
 		{
-			pick_ruleset(lobby, clients, ruleset_name).await
+			pick_ruleset(lobby, clients, ruleset_name).await?;
+			Ok(None)
 		}
-		Update::ConfirmRuleset {
+
+		Sub::ConfirmRuleset {
 			client_id,
 			ruleset_name,
 			mut general_chat,
-			lobby_sendbuffer,
 		} =>
 		{
 			handle_ruleset_confirmation(
@@ -465,53 +517,13 @@ async fn handle_update(
 				client_id,
 				ruleset_name,
 				&mut general_chat,
-				lobby_sendbuffer,
 			)
 			.await
 		}
 
-		Update::Start {
-			mut general_chat,
-			lobby_sendbuffer: sendbuffer,
-		} =>
+		Sub::Start { mut general_chat } =>
 		{
-			try_start(lobby, clients, &mut general_chat, sendbuffer).await?;
-			describe_lobby(lobby, &mut general_chat).await
-		}
-
-		Update::GameEnded if lobby.stage == Stage::GameInProgress =>
-		{
-			// TODO disband lobby here? needs general chat somehow
-			lobby.game_in_progress = None;
-			lobby.stage = Stage::GameEnded;
-			Ok(())
-		}
-		Update::GameEnded => Err(Error::GameEndedWithoutStarting),
-
-		Update::ForwardToGame(update) =>
-		{
-			match &mut lobby.game_in_progress
-			{
-				Some(game) =>
-				{
-					game.send(update).await?;
-					Ok(())
-				}
-				None =>
-				{
-					eprintln!("Discarding game update {:?} after game ended in lobby {}", update, lobby.id);
-					Ok(())
-				}
-			}
-		}
-
-		Update::Msg(message) =>
-		{
-			for client in clients.iter_mut()
-			{
-				client.send(message.clone());
-			}
-			Ok(())
+			try_start(lobby, clients, &mut general_chat).await
 		}
 	}
 }
@@ -685,19 +697,6 @@ async fn handle_join(
 		describe_lobby(lobby, general_chat).await?;
 	}
 
-	// If a game is already in progress, rejoin it.
-	if let Some(game) = &mut lobby.game_in_progress
-	{
-		let update = game::Update::Join {
-			client_id,
-			client_user_id,
-			client_username,
-			client_sendbuffer,
-		};
-
-		game.send(update).await?;
-	}
-
 	Ok(())
 }
 
@@ -715,30 +714,9 @@ fn do_join(
 	// TODO check invitation
 	let is_invited = false;
 
-	match lobby.stage
+	if !lobby.is_public && !is_invited
 	{
-		Stage::Setup
-		| Stage::WaitingForConfirmation
-		| Stage::GameInProgress =>
-		{
-			// If the lobby is private, only the (whitelisted) creator, users
-			// that were invited by someone inside the lobby, and (whitelisted)
-			// users that disconnected after the game started can rejoin.
-			// TODO add lobby creator to whitelist
-			if !lobby.is_public && !is_invited
-			{
-				if !lobby.username_whitelist.contains(&client_username)
-				{
-					return Err(());
-				}
-			}
-		}
-		Stage::GameEnded =>
-		{
-			// Once the game has ended, no one can join it.
-			// TODO lock or unlist the lobby when the game ends?
-			return Err(());
-		}
+		return Err(());
 	}
 
 	let mut newcomer = Client {
@@ -954,12 +932,6 @@ async fn handle_removed(
 		if removed_role == Some(Role::Player)
 		{
 			lobby.num_players -= 1;
-		}
-
-		if let Some(game) = &mut lobby.game_in_progress
-		{
-			let update = game::Update::Leave { client_id: id };
-			game.send(update).await?;
 		}
 	}
 
@@ -1819,8 +1791,7 @@ async fn handle_ruleset_confirmation(
 	client_id: Keycode,
 	ruleset_name: String,
 	general_chat: &mut mpsc::Sender<chat::Update>,
-	lobby_sendbuffer: mpsc::Sender<Update>,
-) -> Result<(), Error>
+) -> Result<Option<game::Setup>, Error>
 {
 	if ruleset_name != lobby.ruleset_name
 	{
@@ -1829,12 +1800,12 @@ async fn handle_ruleset_confirmation(
 			 when current ruleset is '{}'.",
 			ruleset_name, lobby.ruleset_name
 		);
-		return Ok(());
+		return Ok(None);
 	}
 
 	if lobby.ruleset_confirmations.contains(&client_id)
 	{
-		return Ok(());
+		return Ok(None);
 	}
 
 	lobby.ruleset_confirmations.insert(client_id);
@@ -1843,11 +1814,11 @@ async fn handle_ruleset_confirmation(
 		&& is_ruleset_confirmed(lobby, clients)
 	{
 		// Start the game once everyone has confirmed.
-		try_start(lobby, clients, general_chat, lobby_sendbuffer).await
+		try_start(lobby, clients, general_chat).await
 	}
 	else
 	{
-		Ok(())
+		Ok(None)
 	}
 }
 
@@ -1867,29 +1838,24 @@ async fn try_start(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
-	lobby_sendbuffer: mpsc::Sender<Update>,
-) -> Result<(), Error>
+) -> Result<Option<game::Setup>, Error>
 {
-	// We cannot start a game if it is already in progress.
-	if lobby.stage.has_game_started()
-	{
-		return Ok(());
-	}
-
 	// Make sure all the clients are still valid.
 	let removed = clients.e_drain_where(|client| client.is_dead).collect();
 	handle_removed(lobby, clients, removed).await?;
 
+	// TODO if we removed clients, describe_lobby and/or disband lobby
+
 	if clients.len() < 1
 	{
 		eprintln!("Cannot start lobby {} without clients.", lobby.id);
-		return Ok(());
+		return Ok(None);
 	}
 
 	if lobby.num_players < lobby.max_players
 	{
 		println!("Cannot start lobby {}: not enough players.", lobby.id);
-		return Ok(());
+		return Ok(None);
 	}
 
 	// Create a stack of available colors, with Red on top, then Blue, etcetera.
@@ -2035,7 +2001,7 @@ async fn try_start(
 
 		// Cannot continue until all player have confirmed the ruleset.
 		lobby.stage = Stage::WaitingForConfirmation;
-		return Ok(());
+		return Ok(None);
 	}
 
 	let map_name = lobby.map_name.clone();
@@ -2050,30 +2016,19 @@ async fn try_start(
 	let planning_timer = Some(lobby.timer_in_seconds).filter(|&x| x > 0);
 
 	// We are truly starting.
-	let game = game::start(
-		lobby.id,
-		lobby.canary_for_games.clone(),
-		lobby_sendbuffer,
-		player_clients,
+	let game = game::Setup {
+		lobby_id: lobby.id,
+		players: player_clients,
 		bots,
-		watcher_clients,
+		watchers: watcher_clients,
 		map_name,
 		map_metadata,
-		lobby.ruleset_name.clone(),
-		planning_timer,
-		lobby.challenge_id,
-		lobby.is_tutorial,
-		lobby.is_rated,
-	);
-	lobby.game_in_progress = Some(game);
-
-	println!("Game started in lobby {}.", lobby.id);
-	lobby.stage = Stage::GameInProgress;
-
-	for client in clients.iter()
-	{
-		lobby.username_whitelist.push(client.username.clone());
-	}
+		ruleset_name: lobby.ruleset_name.clone(),
+		planning_time_in_seconds: planning_timer,
+		challenge: lobby.challenge_id,
+		is_tutorial: lobby.is_tutorial,
+		is_rated: lobby.is_rated,
+	};
 
 	for client in clients.iter()
 	{
@@ -2095,7 +2050,7 @@ async fn try_start(
 		general_chat.send(update).await?;
 	}
 
-	Ok(())
+	Ok(Some(game))
 }
 
 #[derive(Debug)]
@@ -2105,7 +2060,6 @@ enum Error
 	NoPlayerCount,
 	ClientMissing,
 	StartGameNotEnoughColors,
-	GameEndedWithoutStarting,
 	Io
 	{
 		error: io::Error,
@@ -2113,10 +2067,6 @@ enum Error
 	GeneralChat
 	{
 		error: mpsc::error::SendError<chat::Update>,
-	},
-	Game
-	{
-		error: mpsc::error::SendError<game::Update>,
 	},
 	AiAllocationError
 	{
@@ -2140,14 +2090,6 @@ impl From<mpsc::error::SendError<chat::Update>> for Error
 	}
 }
 
-impl From<mpsc::error::SendError<game::Update>> for Error
-{
-	fn from(error: mpsc::error::SendError<game::Update>) -> Self
-	{
-		Error::Game { error }
-	}
-}
-
 impl fmt::Display for Error
 {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
@@ -2158,10 +2100,8 @@ impl fmt::Display for Error
 			Error::NoPlayerCount => write!(f, "{:#?}", self),
 			Error::ClientMissing => write!(f, "{:#?}", self),
 			Error::StartGameNotEnoughColors => write!(f, "{:#?}", self),
-			Error::GameEndedWithoutStarting => write!(f, "{:#?}", self),
 			Error::Io { error } => error.fmt(f),
 			Error::GeneralChat { error } => error.fmt(f),
-			Error::Game { error } => error.fmt(f),
 			Error::AiAllocationError { error } =>
 			{
 				write!(f, "Error while allocating AI: {}", error)
