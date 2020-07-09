@@ -5,11 +5,33 @@ use super::limit::*;
 use crate::common::keycode::Keycode;
 use crate::server::message::*;
 
+use std::sync;
+use std::sync::atomic;
+
 use tokio::io::ReadHalf;
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 
-pub async fn receive_message(
+pub struct Client
+{
+	pub socket: ReadHalf<TcpStream>,
+	pub client_id: Keycode,
+	pub has_proper_version: sync::Arc<atomic::AtomicBool>,
+}
+
+impl Client
+{
+	pub async fn receive(&mut self) -> Result<Message, Error>
+	{
+		let socket = &mut self.socket;
+		let id = self.client_id;
+		let versioned = self.has_proper_version.load(atomic::Ordering::Relaxed);
+		let message = receive_message(socket, id, versioned).await?;
+		Ok(message)
+	}
+}
+
+async fn receive_message(
 	socket: &mut ReadHalf<TcpStream>,
 	client_id: Keycode,
 	versioned: bool,
@@ -17,6 +39,7 @@ pub async fn receive_message(
 {
 	println!("Starting to receive...");
 	let length = socket.read_u32().await?;
+
 	if length == 0
 	{
 		/*verbose*/

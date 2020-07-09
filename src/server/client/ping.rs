@@ -2,8 +2,8 @@
 
 use crate::common::keycode::Keycode;
 
-use futures::select;
-use futures::{FutureExt, TryFutureExt};
+use futures::stream;
+use futures::StreamExt;
 
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -43,33 +43,22 @@ async fn wait_for_inactivity(
 	trigger: &mut watch::Receiver<Duration>,
 ) -> Result<(), Error>
 {
-	loop
+	let threshold = Duration::from_secs(5);
+	let activity_events = activity.map(|()| PingEvent::Activity);
+	let trigger_events = trigger.map(|_duration| PingEvent::Forced);
+	let mut events = stream::select(activity_events, trigger_events);
+
+	while let Ok(event) = timer::timeout(threshold, events.next()).await
 	{
-		let threshold = Duration::from_secs(5);
-		let activity_event = activity.recv().map(|x| match x
-		{
-			Some(()) => Ok(PingEvent::Activity),
-			None => Err(Error::NoMoreActivity),
-		});
-		let trigger_event = trigger.recv().map(|x| match x
-		{
-			Some(_) => Ok(PingEvent::Forced),
-			None => Err(Error::NoMoreActivity),
-		});
-		let timeout_event =
-			timer::delay_for(threshold).map(|()| PingEvent::Timeout);
-		let event = select! {
-			x = activity_event.fuse() => x?,
-			x = trigger_event.fuse() => x?,
-			x = timeout_event.fuse() => x,
-		};
 		match event
 		{
-			PingEvent::Activity => continue,
-			PingEvent::Forced => return Ok(()),
-			PingEvent::Timeout => return Ok(()),
+			Some(PingEvent::Activity) => continue,
+			Some(PingEvent::Forced) => break,
+			None => return Err(Error::NoMoreActivity),
 		}
 	}
+
+	Ok(())
 }
 
 async fn wait_for_pong(
@@ -79,63 +68,46 @@ async fn wait_for_pong(
 ) -> Result<(), Error>
 {
 	let sendtime = Instant::now();
-	let mut tolerance: Duration = *tolerance_updates.borrow();
+	let tolerance: Duration = *tolerance_updates.borrow();
+	let mut endtime = sendtime + tolerance;
 
-	let mut received_event = callback.map_ok(|()| PongEvent::Received).fuse();
-	loop
+	let mut events = tolerance_updates.take_until(callback);
+
+	while let Some(result) =
+		timer::timeout_at(endtime, events.next()).await.transpose()
 	{
-		let tolerance_event = tolerance_updates.recv().map(|x| match x
+		if let Ok(tolerance) = result
 		{
-			Some(value) => Ok(PongEvent::NewTolerance { value }),
-			None => Err(Error::NoMoreActivity),
-		});
-		let timeout_event = timer::delay_until(sendtime + tolerance)
-			.map(|()| PongEvent::Timeout);
-		let event = select! {
-			x = tolerance_event.fuse() => x?,
-			x = received_event => x?,
-			x = timeout_event.fuse() => x,
-		};
-		match event
+			endtime = sendtime + tolerance;
+		}
+		else
 		{
-			PongEvent::NewTolerance { value } =>
-			{
-				tolerance = value;
-			}
-			PongEvent::Timeout =>
-			{
-				eprintln!("Disconnecting inactive client {}", client_id);
-				// TODO slack
-				return Err(Error::Timeout);
-			}
-			PongEvent::Received => break,
+			eprintln!("Disconnecting inactive client {}", client_id);
+			// TODO slack
+			return Err(Error::Timeout);
 		}
 	}
 
-	println!(
-		"Client {} has {}ms ping",
-		client_id,
-		sendtime.elapsed().as_millis()
-	);
+	if let Some(Ok(())) = events.take_result()
+	{
+		println!(
+			"Client {} has {}ms ping",
+			client_id,
+			sendtime.elapsed().as_millis()
+		);
 
-	Ok(())
+		Ok(())
+	}
+	else
+	{
+		Err(Error::NoMoreActivity)
+	}
 }
 
 enum PingEvent
 {
 	Activity,
-	Timeout,
 	Forced,
-}
-
-enum PongEvent
-{
-	NewTolerance
-	{
-		value: Duration,
-	},
-	Timeout,
-	Received,
 }
 
 #[derive(Debug)]

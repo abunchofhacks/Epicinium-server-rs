@@ -7,8 +7,6 @@ mod pulse;
 mod receive;
 mod send;
 
-use receive::receive_message;
-
 use crate::common::keycode::Keycode;
 use crate::common::version::*;
 use crate::server::chat;
@@ -26,7 +24,8 @@ use std::sync::atomic;
 
 use futures::future;
 use futures::future::Either;
-use futures::{pin_mut, select};
+use futures::pin_mut;
+use futures::stream;
 use futures::{FutureExt, StreamExt, TryFutureExt};
 
 use tokio::io::ReadHalf;
@@ -225,54 +224,56 @@ async fn start_receive_task(
 	mut client: Client,
 	ping_requests: mpsc::Receiver<ping::Request>,
 	login_results: mpsc::Receiver<login::LoginData>,
-	mut server_updates: mpsc::Receiver<Update>,
+	server_updates: mpsc::Receiver<Update>,
 	server_state: watch::Receiver<ServerState>,
-	mut socket: ReadHalf<TcpStream>,
+	socket: ReadHalf<TcpStream>,
 ) -> Result<(), Error>
 {
-	let mut ping_updates =
+	let ping_updates =
 		ping_requests.map(|request| Update::PingTaskRequestsPing {
 			callback: request.callback,
 		});
-	let mut login_updates = login_results.map(|data| Update::LoggedIn {
+	let login_updates = login_results.map(|data| Update::LoggedIn {
 		user_id: data.user_id,
 		username: data.username,
 		unlocks: data.unlocks,
 		rating_data: data.rating_data,
 	});
-	let mut state_updates = server_state.filter_map(|x| match x
+	let state_updates = server_state.filter_map(|x| match x
 	{
 		ServerState::Open => future::ready(None),
 		ServerState::Closing => future::ready(Some(Update::Closing)),
 		ServerState::Closed => future::ready(Some(Update::Closed)),
 	});
 
-	let mut has_quit = None;
-	while has_quit.is_none()
+	let other_updates = stream::select(
+		stream::select(server_updates, ping_updates),
+		stream::select(login_updates, state_updates),
+	)
+	.map(|x| Ok(x))
+	.chain(stream::once(async { Err(Error::Unexpected) }));
+
+	let receiver = receive::Client {
+		socket,
+		client_id: client.id,
+		has_proper_version: client.has_proper_version_a.clone(),
+	};
+	let message_updates = stream::try_unfold(receiver, |mut x| async {
+		let message = x.receive().await?;
+		Ok(Some((Update::Msg(message), x)))
+	});
+
+	let updates = stream::select(message_updates, other_updates);
+	pin_mut!(updates);
+
+	while let Some(update) = updates.next().await
 	{
-		let versioned: bool = client.has_proper_version;
-		let receive = receive_message(&mut socket, client.id, versioned)
-			.map(|x| x.map(|message| Update::Msg(message)));
-		let update = select! {
-			x = receive.fuse() => x?,
-			x = ping_updates.next().fuse() =>
-			{
-				x.ok_or_else(|| Error::Unexpected)?
-			}
-			x = login_updates.next().fuse() =>
-			{
-				x.ok_or_else(|| Error::Unexpected)?
-			}
-			x = server_updates.next().fuse() =>
-			{
-				x.ok_or_else(|| Error::Unexpected)?
-			}
-			x = state_updates.next().fuse() =>
-			{
-				x.ok_or_else(|| Error::Unexpected)?
-			}
-		};
-		has_quit = handle_update(&mut client, update).await?;
+		let update: Update = update?;
+		let has_quit = handle_update(&mut client, update).await?;
+		if has_quit.is_some()
+		{
+			break;
+		}
 	}
 
 	println!("Client {} stopped receiving.", client.id);
