@@ -4,7 +4,6 @@ mod botslot;
 mod chat;
 mod client;
 mod game;
-mod killer;
 mod lobby;
 mod login;
 mod message;

@@ -20,7 +20,7 @@ vec-drain-where = "*"
 rand = "0.7.0"
 openssl = "*"
 reqwest = { version = "*", features = ["json"] }
-futures = "0.3"
+futures = "^0.3.5"
 tokio = { version = "0.2", features = ["rt-threaded", "macros", "time", "sync", "tcp", "signal", "fs", "io-util"] }
 backtrace = "*"
 owning_ref = "*"

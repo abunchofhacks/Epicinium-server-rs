@@ -5,7 +5,6 @@ use crate::common::keycode::*;
 use crate::logic::ruleset;
 use crate::server::chat;
 use crate::server::client;
-use crate::server::killer;
 use crate::server::login;
 use crate::server::portal;
 use crate::server::rating;
@@ -18,10 +17,10 @@ use std::sync::atomic;
 
 use futures::future;
 use futures::select;
-use futures::FutureExt;
-use futures::TryFutureExt;
+use futures::{FutureExt, StreamExt, TryFutureExt};
 
 use tokio::net::TcpListener;
+use tokio::signal::unix::SignalKind;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 
@@ -49,18 +48,11 @@ pub async fn run_server(
 	let (rating_in, rating_out) = mpsc::channel::<rating::Update>(10000);
 	let rating_task = rating::run(settings, rating_out);
 
-	let (killcount_in, killcount_out) = watch::channel(0u8);
-	let killer_task = killer::run(killcount_in).map_err(|e| e.into());
-
 	let (state_in, state_out) = watch::channel(State::Open);
 	let (client_canary_in, client_canary_out) = mpsc::channel::<()>(1);
 	let (general_canary_in, general_canary_out) = mpsc::channel::<()>(1);
-	let close_task = wait_for_close(
-		killcount_out,
-		general_canary_out,
-		client_canary_out,
-		state_in,
-	);
+	let close_task =
+		wait_for_close(general_canary_out, client_canary_out, state_in);
 
 	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
 	let chat_task = chat::run(general_out, general_canary_in).map(|()| Ok(()));
@@ -74,14 +66,9 @@ pub async fn run_server(
 		client_canary_in,
 	);
 
-	let server_task = future::try_join5(
-		acceptance_task,
-		chat_task,
-		rating_task,
-		killer_task,
-		close_task,
-	)
-	.map_ok(|((), (), (), (), ())| ());
+	let server_task =
+		future::try_join4(acceptance_task, chat_task, rating_task, close_task)
+			.map_ok(|((), (), (), ())| ());
 
 	server_task.await
 }
@@ -179,17 +166,30 @@ async fn listen(
 }
 
 async fn wait_for_close(
-	mut killcount: watch::Receiver<u8>,
 	chat_canary: mpsc::Receiver<()>,
 	client_canary: mpsc::Receiver<()>,
 	server_state: watch::Sender<State>,
 ) -> Result<(), Box<dyn error::Error>>
 {
-	wait_for_kill(&mut killcount, 1).await;
-	println!("Closing...");
-	server_state.broadcast(State::Closing)?;
+	let handler = tokio::signal::unix::signal(SignalKind::terminate())?;
+	let mut signals = handler.take_until(wait_for_canary(chat_canary).boxed());
 
-	wait_for_canary_or_kill(chat_canary, &mut killcount, 2).await;
+	let mut is_open = true;
+
+	while let Some(()) = signals.next().await
+	{
+		if is_open
+		{
+			println!("Closing...");
+			server_state.broadcast(State::Closing)?;
+			is_open = false;
+		}
+		else
+		{
+			break;
+		}
+	}
+
 	println!("Closed.");
 	// If all clients are disconnected, no one will receive the broadcast.
 	let _ = server_state.broadcast(State::Closed);
@@ -199,34 +199,11 @@ async fn wait_for_close(
 	Ok(())
 }
 
-async fn wait_for_kill(killcount: &mut watch::Receiver<u8>, threshold: u8)
-{
-	while let Some(x) = killcount.recv().await
-	{
-		if x >= threshold
-		{
-			break;
-		}
-	}
-}
-
 async fn wait_for_canary(mut canary: mpsc::Receiver<()>)
 {
 	while let Some(()) = canary.recv().await
 	{
 		// Nothing to do.
-	}
-}
-
-async fn wait_for_canary_or_kill(
-	canary: mpsc::Receiver<()>,
-	killcount: &mut watch::Receiver<u8>,
-	threshold: u8,
-)
-{
-	select! {
-		() = wait_for_canary(canary).fuse() => (),
-		() = wait_for_kill(killcount, threshold).fuse() => (),
 	}
 }
 
