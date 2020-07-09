@@ -16,7 +16,6 @@ use std::sync;
 use std::sync::atomic;
 
 use futures::future;
-use futures::select;
 use futures::{FutureExt, StreamExt, TryFutureExt};
 
 use tokio::net::TcpListener;
@@ -112,34 +111,25 @@ async fn listen(
 	login: sync::Arc<login::Server>,
 	general_chat: mpsc::Sender<chat::Update>,
 	ratings: mpsc::Sender<rating::Update>,
-	mut server_state: watch::Receiver<State>,
+	server_state: watch::Receiver<State>,
 	client_canary: mpsc::Sender<()>,
 )
 {
 	let mut ticker: u64 = rand::random();
 	let lobbyticker = sync::Arc::new(atomic::AtomicU64::new(rand::random()));
 
-	loop
+	let closing = wait_for_closing(server_state.clone()).boxed();
+	let mut connections = listener.incoming().take_until(closing);
+
+	while let Some(socket) = connections.next().await
 	{
-		let socket = select! {
-			listened = listener.accept().fuse() => match listened
+		let socket = match socket
+		{
+			Ok(socket) => socket,
+			Err(error) =>
 			{
-				Ok((socket, _addr)) =>
-				{
-					socket
-				},
-				Err(error) =>
-				{
-					println!("Failed to connect client: {:?}", error);
-					continue
-				}
-			},
-			state = server_state.recv().fuse() => match state
-			{
-				Some(State::Open) => continue,
-				Some(State::Closing) => break,
-				Some(State::Closed) => break,
-				None => break,
+				println!("Failed to connect client: {:?}", error);
+				continue;
 			}
 		};
 
@@ -165,6 +155,19 @@ async fn listen(
 	}
 }
 
+async fn wait_for_closing(mut server_state: watch::Receiver<State>)
+{
+	while let Some(state) = server_state.next().await
+	{
+		match state
+		{
+			State::Open => continue,
+			State::Closing => break,
+			State::Closed => break,
+		}
+	}
+}
+
 async fn wait_for_close(
 	chat_canary: mpsc::Receiver<()>,
 	client_canary: mpsc::Receiver<()>,
@@ -172,10 +175,10 @@ async fn wait_for_close(
 ) -> Result<(), Box<dyn error::Error>>
 {
 	let handler = tokio::signal::unix::signal(SignalKind::terminate())?;
-	let mut signals = handler.take_until(wait_for_canary(chat_canary).boxed());
+	let chat_closed = wait_for_canary(chat_canary).boxed();
+	let mut signals = handler.take_until(chat_closed);
 
 	let mut is_open = true;
-
 	while let Some(()) = signals.next().await
 	{
 		if is_open
