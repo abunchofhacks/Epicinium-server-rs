@@ -238,8 +238,6 @@ async fn run(
 		}
 	};
 
-	// TODO list lobby as in-progress
-
 	if let Some(game) = game
 	{
 		println!("Game started in lobby {}.", lobby_id);
@@ -255,8 +253,6 @@ async fn run(
 			}
 		}
 	}
-
-	// TODO unlist lobby
 
 	println!("Lobby {} has disbanded.", lobby_id);
 	let _discarded = canary;
@@ -868,7 +864,6 @@ async fn handle_leave(
 
 	handle_removed(lobby, clients, removed).await?;
 
-	// TODO dont disband if rejoinable etcetera
 	if clients.is_empty()
 	{
 		let update = chat::Update::DisbandLobby { lobby_id: lobby.id };
@@ -1841,15 +1836,21 @@ async fn try_start(
 ) -> Result<Option<game::Setup>, Error>
 {
 	// Make sure all the clients are still valid.
+	let client_count = clients.len();
 	let removed = clients.e_drain_where(|client| client.is_dead).collect();
 	handle_removed(lobby, clients, removed).await?;
 
-	// TODO if we removed clients, describe_lobby and/or disband lobby
-
 	if clients.len() < 1
 	{
-		eprintln!("Cannot start lobby {} without clients.", lobby.id);
+		let update = chat::Update::DisbandLobby { lobby_id: lobby.id };
+		general_chat.send(update).await?;
+
+		eprintln!("Disbanding lobby {}: no clients at game start.", lobby.id);
 		return Ok(None);
+	}
+	else if clients.len() < client_count
+	{
+		describe_lobby(lobby, general_chat).await?;
 	}
 
 	if lobby.num_players < lobby.max_players

@@ -898,11 +898,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!(
-					"Invalid message from unlobbied client: {:?}",
-					message
-				);
-				return Err(Error::Illegal);
+				println!("Ignoring LeaveLobby from unlobbied client.");
 			}
 		},
 		Message::LeaveLobby { .. } =>

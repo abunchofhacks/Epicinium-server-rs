@@ -11,6 +11,7 @@ use crate::logic::map;
 use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
+use crate::server::chat;
 use crate::server::lobby::Update;
 use crate::server::login::UserId;
 use crate::server::message::*;
@@ -306,6 +307,7 @@ pub async fn run(
 	loop
 	{
 		let state = iterate(
+			lobby_id,
 			&mut automaton,
 			&mut players,
 			&mut bots,
@@ -362,6 +364,7 @@ enum State
 }
 
 async fn iterate(
+	lobby_id: Keycode,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	bots: &mut Vec<Bot>,
@@ -395,7 +398,7 @@ async fn iterate(
 		}
 	}
 
-	rest(automaton, players, watchers, updates).await?;
+	rest(lobby_id, automaton, players, watchers, updates).await?;
 
 	// If the game has ended, we are done.
 	// We waited with this check until all players have finished animating,
@@ -408,7 +411,8 @@ async fn iterate(
 	// If all live players are disconnected during the resting phase,
 	// the game cannot continue until at least one player reconnects
 	// and has finished rejoining.
-	ensure_live_players(automaton, players, watchers, updates).await?;
+	ensure_live_players(lobby_id, automaton, players, watchers, updates)
+		.await?;
 
 	let message = Message::Sync {
 		planning_time_in_seconds,
@@ -434,12 +438,12 @@ async fn iterate(
 	}
 
 	let num_bots = bots.len();
-	sleep(automaton, players, num_bots, watchers, updates).await?;
+	sleep(lobby_id, automaton, players, num_bots, watchers, updates).await?;
 
 	let cset = automaton.awake()?;
 	broadcast(players, bots, watchers, cset)?;
 
-	stage(automaton, players, watchers, updates).await?;
+	stage(lobby_id, automaton, players, watchers, updates).await?;
 
 	for player in players.into_iter()
 	{
@@ -495,6 +499,7 @@ fn broadcast(
 }
 
 async fn rest(
+	lobby_id: Keycode,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -545,10 +550,17 @@ async fn rest(
 			}
 			Update::Leave {
 				client_id,
-				general_chat: _,
+				mut general_chat,
 			} =>
 			{
-				handle_leave(players, client_id).await?;
+				handle_leave(
+					lobby_id,
+					players,
+					watchers,
+					client_id,
+					&mut general_chat,
+				)
+				.await?;
 			}
 			Update::Join { .. } =>
 			{
@@ -595,6 +607,7 @@ fn all_players_or_watchers_have_synced(
 }
 
 async fn ensure_live_players(
+	lobby_id: Keycode,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -632,10 +645,17 @@ async fn ensure_live_players(
 			}
 			Update::Leave {
 				client_id,
-				general_chat: _,
+				mut general_chat,
 			} =>
 			{
-				handle_leave(players, client_id).await?;
+				handle_leave(
+					lobby_id,
+					players,
+					watchers,
+					client_id,
+					&mut general_chat,
+				)
+				.await?;
 			}
 			Update::Join { .. } =>
 			{
@@ -669,6 +689,7 @@ fn at_least_one_live_player(players: &mut Vec<PlayerClient>) -> bool
 }
 
 async fn sleep(
+	lobby_id: Keycode,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	num_bots: usize,
@@ -726,10 +747,17 @@ async fn sleep(
 			}
 			Update::Leave {
 				client_id,
-				general_chat: _,
+				mut general_chat,
 			} =>
 			{
-				handle_leave(players, client_id).await?;
+				handle_leave(
+					lobby_id,
+					players,
+					watchers,
+					client_id,
+					&mut general_chat,
+				)
+				.await?;
 			}
 			Update::Join { .. } =>
 			{
@@ -776,6 +804,7 @@ fn all_players_have_submitted_orders(players: &mut Vec<PlayerClient>) -> bool
 }
 
 async fn stage(
+	lobby_id: Keycode,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -819,10 +848,17 @@ async fn stage(
 			}
 			Update::Leave {
 				client_id,
-				general_chat: _,
+				mut general_chat,
 			} =>
 			{
-				handle_leave(players, client_id).await?;
+				handle_leave(
+					lobby_id,
+					players,
+					watchers,
+					client_id,
+					&mut general_chat,
+				)
+				.await?;
 			}
 			Update::Join { .. } =>
 			{
@@ -896,17 +932,59 @@ async fn retire(
 }
 
 async fn handle_leave(
+	lobby_id: Keycode,
 	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
 	client_id: Keycode,
+	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
-	let client = match players.iter_mut().find(|x| x.id == client_id)
-	{
-		Some(client) => client,
-		None => return Err(Error::ClientGone { client_id }),
+	let (username, sendbuffer) = {
+		if let Some(client) = players.iter_mut().find(|x| x.id == client_id)
+		{
+			(client.username.clone(), client.sendbuffer.take())
+		}
+		else if let Some(client) =
+			watchers.iter_mut().find(|x| x.id == client_id)
+		{
+			(client.username.clone(), client.sendbuffer.take())
+		}
+		else
+		{
+			return Err(Error::ClientGone { client_id });
+		}
 	};
 
-	client.sendbuffer = None;
+	let message = Message::LeaveLobby {
+		lobby_id: Some(lobby_id),
+		username: Some(username),
+	};
+
+	for client in players.iter_mut()
+	{
+		client.send(message.clone());
+	}
+	for client in watchers.iter_mut()
+	{
+		client.send(message.clone());
+	}
+
+	if let Some(mut sendbuffer) = sendbuffer
+	{
+		match sendbuffer.try_send(message)
+		{
+			Ok(()) => (),
+			Err(e) => eprintln!("Send error while processing leave: {:?}", e),
+		}
+	}
+
+	if players.iter().all(|x| x.is_disconnected())
+		&& watchers.iter().all(|x| x.is_disconnected())
+	{
+		let update = chat::Update::DisbandLobby { lobby_id: lobby_id };
+		general_chat.send(update).await?;
+	}
+
 	Ok(())
 }
 
@@ -922,6 +1000,10 @@ pub enum Error
 	{
 		error: mpsc::error::SendError<rating::Update>,
 	},
+	GeneralChat
+	{
+		error: mpsc::error::SendError<chat::Update>,
+	},
 	Interface(automaton::InterfaceError),
 }
 
@@ -930,6 +1012,14 @@ impl From<mpsc::error::SendError<rating::Update>> for Error
 	fn from(error: mpsc::error::SendError<rating::Update>) -> Self
 	{
 		Error::ResultDropped { error }
+	}
+}
+
+impl From<mpsc::error::SendError<chat::Update>> for Error
+{
+	fn from(error: mpsc::error::SendError<chat::Update>) -> Self
+	{
+		Error::GeneralChat { error }
 	}
 }
 
@@ -950,6 +1040,7 @@ impl fmt::Display for Error
 			Error::LobbyGone => write!(f, "{:#?}", &self),
 			Error::ClientGone { .. } => write!(f, "{:#?}", &self),
 			Error::ResultDropped { .. } => write!(f, "{:#?}", &self),
+			Error::GeneralChat { .. } => write!(f, "{:#?}", &self),
 			Error::Interface(error) => error.fmt(f),
 		}
 	}
