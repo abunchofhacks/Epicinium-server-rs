@@ -85,7 +85,6 @@ async fn run_test(
 
 	// Wait for count + 1 JoinServer messages because the first JoinServer is
 	// information about us successfully joining.
-	// TODO separate these message types and remove this hack
 	let mut waiting = if number == 0 { count + 1 } else { 0 };
 
 	let (mut reader, mut writer) = tokio::io::split(connection);

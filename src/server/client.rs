@@ -592,7 +592,7 @@ async fn handle_update(
 							);
 							// If the chat cannot handle more updates, it is
 							// probably too busy to handle more clients.
-							// TODO better error handling (#962)
+							// FUTURE better error handling (#962)
 							let message = Message::JoinServer {
 								status: Some(ResponseStatus::UnknownError),
 								content: None,
@@ -687,7 +687,6 @@ async fn handle_update(
 		}
 		Update::JoinedLobby { lobby } =>
 		{
-			// TODO what else to do here?
 			client.lobby = Some(lobby);
 			Ok(None)
 		}
@@ -779,7 +778,7 @@ async fn handle_message(
 				// JOIN_SERVER {}? Maybe it has something
 				// to do with MainMenu. Well, let's leave
 				// it until we do proper error handling.
-				// TODO #962
+				// FUTURE better error handling (#962)
 				let rejection = Message::LeaveServer { content: None };
 				client.sendbuffer.try_send(rejection)?;
 			}
@@ -843,7 +842,11 @@ async fn handle_message(
 		{
 			Some(ref mut general_chat) =>
 			{
-				// TODO refuse if already in lobby
+				if client.lobby.is_some()
+				{
+					println!("Ignoring JoinLobby from client in lobby.");
+					return Ok(None);
+				}
 
 				let lobby_callback = match &client.lobby_callback
 				{
@@ -1655,7 +1658,7 @@ fn joining_server(
 			// We only process one login request at a time. Does it make sense
 			// to respond to a second request if the first response is still
 			// underway?
-			// TODO better error handling (#962)
+			// FUTURE better error handling (#962)
 			let message = Message::JoinServer {
 				status: Some(ResponseStatus::ConnectionFailed),
 				content: None,

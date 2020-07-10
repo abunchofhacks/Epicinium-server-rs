@@ -947,7 +947,7 @@ fn handle_claim_role(
 		None =>
 		{
 			// Client not found.
-			// TODO let the sender know somehow?
+			// FUTURE let the sender know somehow?
 			return Ok(());
 		}
 	};
@@ -968,10 +968,6 @@ fn change_role(
 		.find(|x| x.id == client_id)
 		.ok_or(Error::ClientMissing)?;
 	let client_username = client.username.clone();
-
-	// If a game is already in progress, the user might be a disconnected user.
-	let inprogress = false;
-	// TODO determine role if was disconnected
 
 	let assigned_role = match preferred_role
 	{
@@ -1001,7 +997,7 @@ fn change_role(
 		Some(Role::Observer) => Role::Observer,
 		None =>
 		{
-			if !inprogress && lobby.num_players < lobby.max_players
+			if lobby.num_players < lobby.max_players
 			{
 				Role::Player
 			}
@@ -1073,7 +1069,7 @@ fn change_color(
 				None =>
 				{
 					eprintln!("Failed to find client named {}.", username);
-					// TODO let the sender know somehow?
+					// FUTURE let the sender know somehow?
 					return;
 				}
 			};
@@ -1085,7 +1081,7 @@ fn change_color(
 				Some(Role::Observer) | None =>
 				{
 					eprintln!("Cannot assign to non-player {}.", client_id);
-					// TODO let the sender know somehow?
+					// FUTURE let the sender know somehow?
 					return;
 				}
 			}
@@ -1127,7 +1123,7 @@ fn change_color(
 			if lobby.bots.iter_mut().find(|x| x.slot == slot).is_none()
 			{
 				eprintln!("Failed to find bot '{:?}'.", slot);
-				// TODO let the sender know somehow?
+				// FUTURE let the sender know somehow?
 				return;
 			}
 
@@ -1193,7 +1189,7 @@ fn change_visiontype(
 				None =>
 				{
 					eprintln!("Failed to find client named {}.", username);
-					// TODO let the sender know somehow?
+					// FUTURE let the sender know somehow?
 					return;
 				}
 			};
@@ -1205,7 +1201,7 @@ fn change_visiontype(
 				Some(Role::Observer) | None =>
 				{
 					eprintln!("Cannot assign to non-player {}.", client_id);
-					// TODO let the sender know somehow?
+					// FUTURE let the sender know somehow?
 					return;
 				}
 			}
@@ -1217,7 +1213,7 @@ fn change_visiontype(
 			if lobby.bots.iter_mut().find(|x| x.slot == slot).is_none()
 			{
 				eprintln!("Failed to find bot '{:?}'.", slot);
-				// TODO let the sender know somehow?
+				// FUTURE let the sender know somehow?
 				return;
 			}
 
@@ -1254,7 +1250,7 @@ fn change_ai(
 			None =>
 			{
 				eprintln!("Failed to find bot '{:?}'.", slot);
-				// TODO let the sender know somehow?
+				// FUTURE let the sender know somehow?
 				return;
 			}
 		}
@@ -1263,7 +1259,7 @@ fn change_ai(
 	if !ai::exists(&ai_name)
 	{
 		eprintln!("Cannot set AI to non-existing '{}'.", ai_name);
-		// TODO let the sender know somehow?
+		// FUTURE let the sender know somehow?
 		return;
 	}
 
@@ -1309,7 +1305,7 @@ fn change_difficulty(
 			None =>
 			{
 				eprintln!("Failed to find bot '{:?}'.", slot);
-				// TODO let the sender know somehow?
+				// FUTURE let the sender know somehow?
 				return;
 			}
 		}
@@ -1318,7 +1314,7 @@ fn change_difficulty(
 	if difficulty == Difficulty::None && bot.ai_name != "Dummy"
 	{
 		eprintln!("Cannot send difficulty of AI '{}' to none.", bot.ai_name);
-		// TODO let the sender know somehow?
+		// FUTURE let the sender know somehow?
 		return;
 	}
 
@@ -1411,7 +1407,7 @@ async fn pick_map(
 	map_name: String,
 ) -> Result<(), Error>
 {
-	// TODO check if client is host
+	// FUTURE check if client is host
 
 	// Is this a game lobby?
 	if lobby.is_replay
@@ -1426,7 +1422,7 @@ async fn pick_map(
 	{
 		found
 	}
-	// TODO check if map in hidden pool or client is developer
+	// FUTURE check if map in hidden pool or client is developer
 	else if map::exists(&map_name)
 	{
 		let metadata = map::load_metadata(&map_name).await?;
@@ -1558,7 +1554,7 @@ async fn become_tutorial_lobby(
 	clients: &mut Vec<Client>,
 ) -> Result<(), Error>
 {
-	// TODO check if client is host
+	// FUTURE check if client is host
 
 	// Is this a game lobby?
 	if lobby.is_replay
@@ -1619,7 +1615,7 @@ async fn become_challenge_lobby(
 	clients: &mut Vec<Client>,
 ) -> Result<(), Error>
 {
-	// TODO check if client is host
+	// FUTURE check if client is host
 
 	// Is this a game lobby?
 	if lobby.is_replay
@@ -1686,7 +1682,7 @@ async fn pick_timer(
 	timer_in_seconds: u32,
 ) -> Result<(), Error>
 {
-	// TODO check if client is host
+	// FUTURE check if client is host
 
 	// Is this a game lobby?
 	if lobby.is_replay
@@ -1721,8 +1717,8 @@ async fn pick_ruleset(
 	ruleset_name: String,
 ) -> Result<(), Error>
 {
-	// TODO check if client is host
-	// TODO check if ruleset in pool or client is developer or replay
+	// FUTURE check if client is host
+	// FUTURE check if ruleset in pool or client is developer or replay
 
 	// Is this a game lobby?
 	if lobby.is_replay

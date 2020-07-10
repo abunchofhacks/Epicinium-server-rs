@@ -274,7 +274,7 @@ impl Ghostbuster
 			"Client {} successfully ghostbusted client {}.",
 			self.id, self.ghost_id
 		);
-		// TODO is this the most sensible message type for this?
+		// FUTURE is this the most sensible message type for this? (#962)
 		let message = Message::LeaveServer {
 			content: Some(self.username),
 		};
@@ -405,7 +405,7 @@ fn handle_join(
 	}
 
 	// Tell the newcomer that they are online.
-	// TODO this is weird (#1411)
+	// FUTURE this is weird (#1411)
 	newcomer.send(message);
 
 	newcomer.send(Message::ListChallenge {
