@@ -1193,6 +1193,8 @@ fn do_join(
 	if let Some(player) =
 		players.iter_mut().find(|x| x.user_id == client_user_id)
 	{
+		player.id = client_id;
+		debug_assert!(player.username == client_username);
 		player.has_synced = false;
 		player.sendbuffer = Some(client_sendbuffer);
 		for message in newcomer_messages
@@ -1203,6 +1205,8 @@ fn do_join(
 	else if let Some(watcher) =
 		watchers.iter_mut().find(|x| x.user_id == client_user_id)
 	{
+		watcher.id = client_id;
+		debug_assert!(watcher.username == client_username);
 		watcher.has_synced = false;
 		watcher.sendbuffer = Some(client_sendbuffer);
 		for message in newcomer_messages
