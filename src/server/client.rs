@@ -1456,7 +1456,7 @@ async fn handle_message(
 			}
 		},
 		Message::Sync {
-			planning_time_in_seconds: None,
+			time_remaining_in_seconds: None,
 		} => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -1581,6 +1581,7 @@ async fn handle_message(
 		| Message::AssignColor { .. }
 		| Message::Skins { .. }
 		| Message::InGame { .. }
+		| Message::ReplayWithAnimations { .. }
 		| Message::Changes { .. }
 		| Message::OrdersOld { .. }
 		| Message::Closing

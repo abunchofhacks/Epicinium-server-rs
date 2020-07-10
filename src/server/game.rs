@@ -12,6 +12,7 @@ use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
 use crate::server::chat;
+use crate::server::client;
 use crate::server::lobby::Update;
 use crate::server::login::UserId;
 use crate::server::message::*;
@@ -82,6 +83,7 @@ pub struct Bot
 pub struct WatcherClient
 {
 	pub id: Keycode,
+	pub user_id: UserId,
 	pub username: String,
 	pub sendbuffer: Option<mpsc::Sender<Message>>,
 
@@ -117,6 +119,9 @@ impl WatcherClient
 pub struct Setup
 {
 	pub lobby_id: Keycode,
+	pub lobby_name: String,
+	pub lobby_description_metadata: LobbyMetadata,
+
 	pub players: Vec<PlayerClient>,
 	pub bots: Vec<Bot>,
 	pub watchers: Vec<WatcherClient>,
@@ -127,6 +132,7 @@ pub struct Setup
 	pub challenge: Option<ChallengeId>,
 	pub is_tutorial: bool,
 	pub is_rated: bool,
+	pub is_public: bool,
 }
 
 pub async fn run(
@@ -136,6 +142,8 @@ pub async fn run(
 {
 	let Setup {
 		lobby_id,
+		lobby_name,
+		lobby_description_metadata,
 		mut players,
 		mut bots,
 		mut watchers,
@@ -146,6 +154,7 @@ pub async fn run(
 		challenge,
 		is_tutorial,
 		is_rated,
+		is_public,
 	} = setup;
 
 	let mut playercolors = Vec::new();
@@ -301,13 +310,21 @@ pub async fn run(
 		// TODO rating
 	}
 
-	// TODO pass initial_messages to iterate for rejoiners
-	let _ = initial_messages;
+	let lobby_info = LobbyInfo {
+		id: lobby_id,
+		name: lobby_name,
+		description_metadata: lobby_description_metadata,
+		is_public,
+		num_bots: bots.len(),
+		ruleset_name,
+		planning_time_in_seconds,
+		initial_messages,
+	};
 
 	loop
 	{
 		let state = iterate(
-			lobby_id,
+			&lobby_info,
 			&mut automaton,
 			&mut players,
 			&mut bots,
@@ -356,6 +373,19 @@ pub enum Sub
 	},
 }
 
+#[derive(Debug)]
+struct LobbyInfo
+{
+	id: Keycode,
+	name: String,
+	is_public: bool,
+	num_bots: usize,
+	ruleset_name: String,
+	planning_time_in_seconds: Option<u32>,
+	description_metadata: LobbyMetadata,
+	initial_messages: Vec<Message>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum State
 {
@@ -364,7 +394,7 @@ enum State
 }
 
 async fn iterate(
-	lobby_id: Keycode,
+	lobby: &LobbyInfo,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	bots: &mut Vec<Bot>,
@@ -398,7 +428,7 @@ async fn iterate(
 		}
 	}
 
-	rest(lobby_id, automaton, players, watchers, updates).await?;
+	rest(lobby, automaton, players, watchers, updates).await?;
 
 	// If the game has ended, we are done.
 	// We waited with this check until all players have finished animating,
@@ -411,11 +441,10 @@ async fn iterate(
 	// If all live players are disconnected during the resting phase,
 	// the game cannot continue until at least one player reconnects
 	// and has finished rejoining.
-	ensure_live_players(lobby_id, automaton, players, watchers, updates)
-		.await?;
+	ensure_live_players(lobby, automaton, players, watchers, updates).await?;
 
 	let message = Message::Sync {
-		planning_time_in_seconds,
+		time_remaining_in_seconds: planning_time_in_seconds,
 	};
 	for client in players.into_iter()
 	{
@@ -437,13 +466,12 @@ async fn iterate(
 		bot.ai.prepare_orders();
 	}
 
-	let num_bots = bots.len();
-	sleep(lobby_id, automaton, players, num_bots, watchers, updates).await?;
+	sleep(lobby, automaton, players, watchers, updates).await?;
 
 	let cset = automaton.awake()?;
 	broadcast(players, bots, watchers, cset)?;
 
-	stage(lobby_id, automaton, players, watchers, updates).await?;
+	stage(lobby, automaton, players, watchers, updates).await?;
 
 	for player in players.into_iter()
 	{
@@ -499,7 +527,7 @@ fn broadcast(
 }
 
 async fn rest(
-	lobby_id: Keycode,
+	lobby: &LobbyInfo,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -554,7 +582,7 @@ async fn rest(
 			} =>
 			{
 				handle_leave(
-					lobby_id,
+					lobby.id,
 					players,
 					watchers,
 					client_id,
@@ -562,9 +590,31 @@ async fn rest(
 				)
 				.await?;
 			}
-			Update::Join { .. } =>
+			Update::Join {
+				client_id,
+				client_user_id,
+				client_username,
+				client_sendbuffer,
+				client_callback,
+				lobby_sendbuffer,
+				mut general_chat,
+			} =>
 			{
-				// TODO handle joins
+				handle_join(
+					lobby,
+					automaton,
+					players,
+					watchers,
+					RejoinPhase::Other,
+					client_id,
+					client_user_id,
+					client_username,
+					client_sendbuffer,
+					client_callback,
+					lobby_sendbuffer,
+					&mut general_chat,
+				)
+				.await?;
 			}
 			Update::ForSetup(..) =>
 			{}
@@ -607,7 +657,7 @@ fn all_players_or_watchers_have_synced(
 }
 
 async fn ensure_live_players(
-	lobby_id: Keycode,
+	lobby: &LobbyInfo,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -649,7 +699,7 @@ async fn ensure_live_players(
 			} =>
 			{
 				handle_leave(
-					lobby_id,
+					lobby.id,
 					players,
 					watchers,
 					client_id,
@@ -657,9 +707,31 @@ async fn ensure_live_players(
 				)
 				.await?;
 			}
-			Update::Join { .. } =>
+			Update::Join {
+				client_id,
+				client_user_id,
+				client_username,
+				client_sendbuffer,
+				client_callback,
+				lobby_sendbuffer,
+				mut general_chat,
+			} =>
 			{
-				// TODO handle joins
+				handle_join(
+					lobby,
+					automaton,
+					players,
+					watchers,
+					RejoinPhase::Other,
+					client_id,
+					client_user_id,
+					client_username,
+					client_sendbuffer,
+					client_callback,
+					lobby_sendbuffer,
+					&mut general_chat,
+				)
+				.await?;
 			}
 			Update::ForSetup(..) =>
 			{}
@@ -689,14 +761,14 @@ fn at_least_one_live_player(players: &mut Vec<PlayerClient>) -> bool
 }
 
 async fn sleep(
-	lobby_id: Keycode,
+	lobby: &LobbyInfo,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
-	num_bots: usize,
 	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
 ) -> Result<(), Error>
 {
+	let num_bots = lobby.num_bots;
 	if too_few_potential_winners(players, num_bots)
 	{
 		println!("Ending sleep early");
@@ -751,7 +823,7 @@ async fn sleep(
 			} =>
 			{
 				handle_leave(
-					lobby_id,
+					lobby.id,
 					players,
 					watchers,
 					client_id,
@@ -759,9 +831,35 @@ async fn sleep(
 				)
 				.await?;
 			}
-			Update::Join { .. } =>
+			Update::Join {
+				client_id,
+				client_user_id,
+				client_username,
+				client_sendbuffer,
+				client_callback,
+				lobby_sendbuffer,
+				mut general_chat,
+			} =>
 			{
-				// TODO handle joins
+				// TODO timer
+				let time_remaining_in_seconds = None;
+				handle_join(
+					lobby,
+					automaton,
+					players,
+					watchers,
+					RejoinPhase::Planning {
+						time_remaining_in_seconds,
+					},
+					client_id,
+					client_user_id,
+					client_username,
+					client_sendbuffer,
+					client_callback,
+					lobby_sendbuffer,
+					&mut general_chat,
+				)
+				.await?;
 			}
 			Update::ForSetup(..) =>
 			{}
@@ -804,7 +902,7 @@ fn all_players_have_submitted_orders(players: &mut Vec<PlayerClient>) -> bool
 }
 
 async fn stage(
-	lobby_id: Keycode,
+	lobby: &LobbyInfo,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -852,7 +950,7 @@ async fn stage(
 			} =>
 			{
 				handle_leave(
-					lobby_id,
+					lobby.id,
 					players,
 					watchers,
 					client_id,
@@ -860,9 +958,31 @@ async fn stage(
 				)
 				.await?;
 			}
-			Update::Join { .. } =>
+			Update::Join {
+				client_id,
+				client_user_id,
+				client_username,
+				client_sendbuffer,
+				client_callback,
+				lobby_sendbuffer,
+				mut general_chat,
+			} =>
 			{
-				// TODO handle joins
+				handle_join(
+					lobby,
+					automaton,
+					players,
+					watchers,
+					RejoinPhase::Other,
+					client_id,
+					client_user_id,
+					client_username,
+					client_sendbuffer,
+					client_callback,
+					lobby_sendbuffer,
+					&mut general_chat,
+				)
+				.await?;
 			}
 			Update::ForSetup(..) =>
 			{}
@@ -881,6 +1001,251 @@ async fn stage(
 	}
 
 	Ok(())
+}
+
+async fn handle_join(
+	lobby: &LobbyInfo,
+	automaton: &mut Automaton,
+	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
+	rejoin_phase: RejoinPhase,
+	client_id: Keycode,
+	client_user_id: UserId,
+	client_username: String,
+	client_sendbuffer: mpsc::Sender<Message>,
+	client_callback: mpsc::Sender<client::Update>,
+	lobby_sendbuffer: mpsc::Sender<Update>,
+	general_chat: &mut mpsc::Sender<chat::Update>,
+) -> Result<(), Error>
+{
+	match do_join(
+		lobby,
+		automaton,
+		players,
+		watchers,
+		rejoin_phase,
+		client_id,
+		client_user_id,
+		client_username.clone(),
+		client_sendbuffer.clone(),
+		client_callback,
+		lobby_sendbuffer,
+	)
+	{
+		Ok(RejoinResult::Joined) => (),
+		Ok(RejoinResult::AccessDenied) => return Ok(()),
+		Err(error) => return Err(error),
+	}
+
+	let message = Message::JoinLobby {
+		lobby_id: Some(lobby.id),
+		username: Some(client_username.clone()),
+		metadata: None,
+	};
+	let update = chat::Update::Msg(message);
+	general_chat.send(update).await?;
+
+	Ok(())
+}
+
+fn do_join(
+	lobby: &LobbyInfo,
+	automaton: &mut Automaton,
+	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
+	rejoin_phase: RejoinPhase,
+	client_id: Keycode,
+	client_user_id: UserId,
+	client_username: String,
+	client_sendbuffer: mpsc::Sender<Message>,
+	mut client_callback: mpsc::Sender<client::Update>,
+	lobby_sendbuffer: mpsc::Sender<Update>,
+) -> Result<RejoinResult, Error>
+{
+	let (disconnected_role, disconnected_player_color) = {
+		if let Some(player) =
+			players.iter_mut().find(|x| x.user_id == client_user_id)
+		{
+			(Some(Role::Player), Some(player.color))
+		}
+		else if let Some(watcher) =
+			watchers.iter_mut().find(|x| x.user_id == client_user_id)
+		{
+			(Some(watcher.role), None)
+		}
+		else
+		{
+			(None, None)
+		}
+	};
+
+	// TODO check invitation
+	let is_invited = false;
+
+	if disconnected_role.is_none() && !lobby.is_public && !is_invited
+	{
+		return Ok(RejoinResult::AccessDenied);
+	}
+
+	let mut newcomer_messages = Vec::new();
+
+	// Tell the newcomer which users are already in the lobby.
+	for other in players.iter().filter(|x| !x.is_disconnected())
+	{
+		newcomer_messages.push(Message::JoinLobby {
+			lobby_id: Some(lobby.id),
+			username: Some(other.username.clone()),
+			metadata: None,
+		});
+	}
+	for other in watchers.iter().filter(|x| !x.is_disconnected())
+	{
+		newcomer_messages.push(Message::JoinLobby {
+			lobby_id: Some(lobby.id),
+			username: Some(other.username.clone()),
+			metadata: None,
+		});
+	}
+
+	// Tell everyone who the newcomer is.
+	let message = Message::JoinLobby {
+		lobby_id: Some(lobby.id),
+		username: Some(client_username.clone()),
+		metadata: None,
+	};
+	for other in players.iter_mut()
+	{
+		other.send(message.clone());
+	}
+	for other in watchers.iter_mut()
+	{
+		other.send(message.clone());
+	}
+	newcomer_messages.push(message);
+
+	// Describe the lobby to the client so that Discord presence is updated.
+	let message = Message::ListLobby {
+		lobby_id: lobby.id,
+		lobby_name: lobby.name.clone(),
+		metadata: lobby.description_metadata.clone(),
+	};
+	newcomer_messages.push(message);
+
+	// Tell the newcomer that the game has started.
+	let role = disconnected_role.unwrap_or(Role::Observer);
+	if let Some(color) = disconnected_player_color
+	{
+		newcomer_messages.push(Message::Game {
+			role: Some(role),
+			player: Some(color),
+			ruleset_name: Some(lobby.ruleset_name.clone()),
+			timer_in_seconds: lobby.planning_time_in_seconds,
+		});
+	}
+	else
+	{
+		newcomer_messages.push(Message::Game {
+			role: Some(role),
+			player: None,
+			ruleset_name: Some(lobby.ruleset_name.clone()),
+			timer_in_seconds: lobby.planning_time_in_seconds,
+		});
+	}
+
+	// Tell the newcomer the player colors, skins and if there is a challenge.
+	newcomer_messages.extend_from_slice(&lobby.initial_messages);
+
+	let vision = match disconnected_player_color
+	{
+		Some(color) => color,
+		None => role.vision_level(),
+	};
+	let cset = automaton.rejoin(vision)?;
+	let changes = cset.get(vision);
+
+	newcomer_messages.push(Message::ReplayWithAnimations {
+		on_or_off: OnOrOff::Off,
+	});
+	newcomer_messages.push(Message::Changes { changes });
+	newcomer_messages.push(Message::ReplayWithAnimations {
+		on_or_off: OnOrOff::On,
+	});
+	match rejoin_phase
+	{
+		RejoinPhase::Planning {
+			time_remaining_in_seconds,
+		} =>
+		{
+			newcomer_messages.push(Message::Sync {
+				time_remaining_in_seconds,
+			});
+		}
+		RejoinPhase::Other =>
+		{}
+	}
+
+	client_callback
+		.try_send(client::Update::JoinedLobby {
+			lobby: lobby_sendbuffer,
+		})
+		.unwrap_or_else(|e| eprintln!("Callback error in join: {:?}", e));
+
+	if let Some(player) =
+		players.iter_mut().find(|x| x.user_id == client_user_id)
+	{
+		player.has_synced = false;
+		player.sendbuffer = Some(client_sendbuffer);
+		for message in newcomer_messages
+		{
+			player.send(message);
+		}
+	}
+	else if let Some(watcher) =
+		watchers.iter_mut().find(|x| x.user_id == client_user_id)
+	{
+		watcher.has_synced = false;
+		watcher.sendbuffer = Some(client_sendbuffer);
+		for message in newcomer_messages
+		{
+			watcher.send(message);
+		}
+	}
+	else
+	{
+		let mut newcomer = WatcherClient {
+			id: client_id,
+			user_id: client_user_id,
+			username: client_username.clone(),
+			sendbuffer: Some(client_sendbuffer),
+
+			role,
+			vision_level: role.vision_level(),
+
+			has_synced: false,
+		};
+		for message in newcomer_messages
+		{
+			newcomer.send(message);
+		}
+		watchers.push(newcomer);
+	}
+
+	Ok(RejoinResult::Joined)
+}
+
+enum RejoinPhase
+{
+	Planning
+	{
+		time_remaining_in_seconds: Option<u32>,
+	},
+	Other,
+}
+
+enum RejoinResult
+{
+	Joined,
+	AccessDenied,
 }
 
 async fn handle_resign(

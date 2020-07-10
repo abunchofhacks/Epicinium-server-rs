@@ -228,6 +228,12 @@ pub enum Message
 		timer_in_seconds: Option<u32>,
 	},
 	Challenge,
+	#[serde(rename = "replay")]
+	ReplayWithAnimations
+	{
+		#[serde(rename = "time")]
+		on_or_off: OnOrOff,
+	},
 	Resign
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
@@ -251,7 +257,7 @@ pub enum Message
 	Sync
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "time")]
-		planning_time_in_seconds: Option<u32>,
+		time_remaining_in_seconds: Option<u32>,
 	},
 	Init,
 	Closing,
@@ -362,4 +368,12 @@ pub enum ResponseStatus
 	ResponseMalformed = 97,
 	ConnectionFailed = 98,
 	UnknownError = 99,
+}
+
+#[derive(Debug, Copy, Clone, Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
+pub enum OnOrOff
+{
+	Off = 0,
+	On = 1,
 }

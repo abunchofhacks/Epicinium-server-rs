@@ -1919,6 +1919,7 @@ async fn try_start(
 			{
 				watcher_clients.push(game::WatcherClient {
 					id: client.id,
+					user_id: client.user_id,
 					username: client.username.clone(),
 					sendbuffer: Some(client.sendbuffer.clone()),
 
@@ -2015,6 +2016,8 @@ async fn try_start(
 	// We are truly starting.
 	let game = game::Setup {
 		lobby_id: lobby.id,
+		lobby_name: lobby.name.clone(),
+		lobby_description_metadata: make_description_metadata(lobby),
 		players: player_clients,
 		bots,
 		watchers: watcher_clients,
@@ -2025,6 +2028,7 @@ async fn try_start(
 		challenge: lobby.challenge_id,
 		is_tutorial: lobby.is_tutorial,
 		is_rated: lobby.is_rated,
+		is_public: lobby.is_public,
 	};
 
 	for client in clients.iter()
