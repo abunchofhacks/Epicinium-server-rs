@@ -318,7 +318,7 @@ pub enum Update
 #[derive(Debug)]
 enum Error
 {
-	Illegal,
+	Invalid,
 	Unexpected,
 	Send
 	{
@@ -505,7 +505,7 @@ impl fmt::Display for Error
 	{
 		match self
 		{
-			Error::Illegal => write!(f, "Illegal message received"),
+			Error::Invalid => write!(f, "Invalid message received"),
 			Error::Unexpected => write!(f, "Something unexpected happened"),
 			Error::Send { error } => error.fmt(f),
 			Error::TrySend { error } => error.fmt(f),
@@ -570,7 +570,7 @@ async fn handle_update(
 						Some(callback) => callback.clone(),
 						None =>
 						{
-							eprintln!("Expected lobby_callback");
+							eprintln!("Expected general_chat_callback");
 							return Err(Error::Unexpected);
 						}
 					};
@@ -794,7 +794,7 @@ async fn handle_message(
 		Message::JoinServer { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
+			return Err(Error::Invalid);
 		}
 		Message::LeaveServer { content: _ } => match client.general_chat.take()
 		{
@@ -838,9 +838,9 @@ async fn handle_message(
 			lobby_id: Some(lobby_id),
 			username: None,
 			metadata: _,
-		} => match client.general_chat
+		} =>
 		{
-			Some(ref mut general_chat) =>
+			if let Some(ref mut general_chat) = client.general_chat
 			{
 				if client.lobby.is_some()
 				{
@@ -865,23 +865,22 @@ async fn handle_message(
 				};
 				general_chat.send(update).await?;
 			}
-			None =>
+			else
 			{
-				println!("Invalid message from offline client: {:?}", message);
-				return Err(Error::Illegal);
+				println!("Ignoring JoinLobby from offline client.");
 			}
-		},
+		}
 		Message::JoinLobby { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
+			return Err(Error::Invalid);
 		}
 		Message::LeaveLobby {
 			lobby_id: None,
 			username: None,
-		} => match client.lobby.take()
+		} =>
 		{
-			Some(ref mut lobby) =>
+			if let Some(ref mut lobby) = client.lobby.take()
 			{
 				let general_chat = match &client.general_chat
 				{
@@ -899,15 +898,15 @@ async fn handle_message(
 				};
 				lobby.send(update).await?;
 			}
-			None =>
+			else
 			{
 				println!("Ignoring LeaveLobby from unlobbied client.");
 			}
-		},
+		}
 		Message::LeaveLobby { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
+			return Err(Error::Invalid);
 		}
 		Message::MakeLobby {} if client.closing =>
 		{
@@ -959,8 +958,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid message from offline client: {:?}", message);
-				return Err(Error::Illegal);
+				println!("Ignoring message from offline client: {:?}", message);
 			}
 		},
 		Message::SaveLobby {} if client.closing =>
@@ -990,10 +988,9 @@ async fn handle_message(
 			None =>
 			{
 				println!(
-					"Invalid message from unlobbied client: {:?}",
+					"Ignoring message from unlobbied client: {:?}",
 					message
 				);
-				return Err(Error::Illegal);
 			}
 		},
 		Message::LockLobby {} => match client.lobby
@@ -1017,10 +1014,9 @@ async fn handle_message(
 			None =>
 			{
 				println!(
-					"Invalid message from unlobbied client: {:?}",
+					"Ignoring message from unlobbied client: {:?}",
 					message
 				);
-				return Err(Error::Illegal);
 			}
 		},
 		Message::UnlockLobby {} => match client.lobby
@@ -1045,10 +1041,9 @@ async fn handle_message(
 			None =>
 			{
 				println!(
-					"Invalid message from unlobbied client: {:?}",
+					"Ignoring message from unlobbied client: {:?}",
 					message
 				);
-				return Err(Error::Illegal);
 			}
 		},
 		Message::NameLobby { lobby_name } => match client.lobby
@@ -1073,8 +1068,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid NameLobby message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring NameLobby message from unlobbied client");
 			}
 		},
 		Message::ClaimRole { username, role } => match client.lobby
@@ -1100,8 +1094,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid ClaimRole message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring ClaimRole from unlobbied client");
 			}
 		},
 		Message::ClaimColor {
@@ -1119,8 +1112,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid ClaimColor message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring ClaimColor from unlobbied client");
 			}
 		},
 		Message::ClaimVisionType {
@@ -1139,8 +1131,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid vision message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring ClaimVisionType from unlobbied client");
 			}
 		},
 		Message::ClaimAi { slot, ai_name } => match client.lobby
@@ -1155,8 +1146,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid ClaimAi message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring ClaimAi from unlobbied client");
 			}
 		},
 		Message::ClaimDifficulty { slot, difficulty } => match client.lobby
@@ -1172,8 +1162,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid ClaimAi message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring ClaimDifficulty from unlobbied client");
 			}
 		},
 		Message::PickMap { map_name } => match client.lobby
@@ -1198,8 +1187,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid PickMap message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring PickMap from unlobbied client");
 			}
 		},
 		Message::PickTimer { seconds } => match client.lobby
@@ -1212,8 +1200,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid PickTimer message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring PickTimer from unlobbied client");
 			}
 		},
 		Message::PickRuleset { ruleset_name } => match client.lobby
@@ -1227,8 +1214,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid PickRuleset message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring PickRuleset from unlobbied client");
 			}
 		},
 		Message::ListRuleset { ruleset_name } => match client.lobby
@@ -1255,8 +1241,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid ListRuleset message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring ListRuleset from unlobbied client");
 			}
 		},
 		Message::AddBot { slot: None } => match client.lobby
@@ -1280,14 +1265,13 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid AddBot message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring AddBot from unlobbied client");
 			}
 		},
 		Message::AddBot { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
+			return Err(Error::Invalid);
 		}
 		Message::RemoveBot { slot } => match client.lobby
 		{
@@ -1311,8 +1295,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid RemoveBot message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring RemoveBot from unlobbied client");
 			}
 		},
 		Message::Game {
@@ -1340,14 +1323,13 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid Game message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring Game from unlobbied client");
 			}
 		},
 		Message::Game { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
+			return Err(Error::Invalid);
 		}
 		Message::Tutorial {
 			role: None,
@@ -1380,14 +1362,13 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid Tutorial message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring Tutorial from unlobbied client");
 			}
 		},
 		Message::Tutorial { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
+			return Err(Error::Invalid);
 		}
 		Message::Challenge => match client.lobby
 		{
@@ -1415,8 +1396,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid Challenge message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring Challenge from unlobbied client");
 			}
 		},
 		Message::Resign { username: None } => match client.lobby
@@ -1430,14 +1410,13 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid Sync message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring Sync from unlobbied client");
 			}
 		},
 		Message::Resign { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
+			return Err(Error::Invalid);
 		}
 		Message::OrdersNew { orders } => match client.lobby
 		{
@@ -1451,8 +1430,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid Sync message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring Sync from unlobbied client");
 			}
 		},
 		Message::Sync {
@@ -1468,14 +1446,13 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid Sync message from unlobbied client");
-				return Err(Error::Illegal);
+				println!("Ignoring Sync from unlobbied client");
 			}
 		},
 		Message::Sync { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
+			return Err(Error::Invalid);
 		}
 		Message::Init => match client.general_chat
 		{
@@ -1493,14 +1470,15 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Invalid message from offline client: {:?}", message);
-				return Err(Error::Illegal);
+				println!("Ignoring message from offline client: {:?}", message);
 			}
 		},
 		Message::Chat { .. } if client.username.is_empty() =>
 		{
-			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
+			println!(
+				"Ignoring Chat from client without username: {:?}",
+				message
+			);
 		}
 		Message::Chat {
 			content,
@@ -1524,13 +1502,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				let message = Message::Chat {
-					content,
-					sender: None,
-					target: ChatTarget::General,
-				};
-				println!("Invalid message from offline client: {:?}", message);
-				return Err(Error::Illegal);
+				println!("Ignoring Chat from offline client: '{:?}'", content);
 			}
 		},
 		Message::Chat {
@@ -1555,22 +1527,16 @@ async fn handle_message(
 			}
 			None =>
 			{
-				let message = Message::Chat {
-					content,
-					sender: None,
-					target: ChatTarget::Lobby,
-				};
 				println!(
-					"Invalid message from unlobbied client: {:?}",
-					message
+					"Ignoring Chat to lobby from unlobbied client: '{:?}'",
+					content
 				);
-				return Err(Error::Illegal);
 			}
 		},
 		Message::Chat { .. } =>
 		{
 			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
+			return Err(Error::Invalid);
 		}
 		Message::DisbandLobby { .. }
 		| Message::ListLobby { .. }
@@ -1588,7 +1554,7 @@ async fn handle_message(
 		| Message::Closed =>
 		{
 			println!("Invalid message from client: {:?}", message);
-			return Err(Error::Illegal);
+			return Err(Error::Invalid);
 		}
 	}
 
