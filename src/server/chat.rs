@@ -10,6 +10,8 @@ use crate::server::message::*;
 
 use std::collections::HashMap;
 
+use log::*;
+
 use tokio::sync::mpsc;
 
 use enumset::*;
@@ -93,7 +95,7 @@ pub async fn run(mut updates: mpsc::Receiver<Update>, canary: mpsc::Sender<()>)
 		handle_removed(removed, &mut clients, &mut ghostbusters);
 	}
 
-	println!("General chat has disbanded.");
+	info!("General chat has disbanded.");
 	let _discarded = canary;
 }
 
@@ -213,7 +215,7 @@ impl Client
 			Ok(()) => (),
 			Err(error) =>
 			{
-				println!("Error sending to client {}: {:?}", self.id, error);
+				error!("Error sending to client {}: {:?}", self.id, error);
 				self.dead = true
 			}
 		}
@@ -226,7 +228,7 @@ impl Client
 			Ok(()) => (),
 			Err(error) =>
 			{
-				println!("Error force-pinging client {}: {:?}", self.id, error);
+				error!("Error force-pinging client {}: {:?}", self.id, error);
 				self.dead = true
 			}
 		}
@@ -245,7 +247,7 @@ impl Ghostbuster
 {
 	fn deny(mut self)
 	{
-		println!(
+		debug!(
 			"Client {} did not ghostbust client {}.",
 			self.id, self.ghost_id
 		);
@@ -260,17 +262,14 @@ impl Ghostbuster
 			Ok(()) => (),
 			Err(error) =>
 			{
-				println!(
-					"Error sending to ghostbuster {}: {:?}",
-					self.id, error
-				);
+				error!("Error sending to ghostbuster {}: {:?}", self.id, error);
 			}
 		}
 	}
 
 	fn resolve(mut self)
 	{
-		println!(
+		debug!(
 			"Client {} successfully ghostbusted client {}.",
 			self.id, self.ghost_id
 		);
@@ -283,10 +282,7 @@ impl Ghostbuster
 			Ok(()) => (),
 			Err(error) =>
 			{
-				println!(
-					"Error sending to ghostbuster {}: {:?}",
-					self.id, error
-				);
+				error!("Error sending to ghostbuster {}: {:?}", self.id, error);
 			}
 		}
 	}
@@ -317,7 +313,7 @@ fn handle_join(
 	{
 		Some(otherclient) =>
 		{
-			println!(
+			debug!(
 				"Client {} is ghostbusting client {}, both named {}.",
 				id, otherclient.id, username
 			);
@@ -461,7 +457,7 @@ fn handle_init(
 	match do_init(sendbuffer, clients, lobbies, current_challenge)
 	{
 		Ok(()) => (),
-		Err(e) => eprintln!("Send error while processing init: {:?}", e),
+		Err(e) => error!("Send error while processing init: {:?}", e),
 	}
 }
 
@@ -551,7 +547,7 @@ fn handle_removed(
 		match sendbuffer.try_send(message)
 		{
 			Ok(()) => (),
-			Err(e) => eprintln!("Send error while processing leave: {:?}", e),
+			Err(e) => error!("Send error while processing leave: {:?}", e),
 		}
 
 		let ghostbuster = ghostbusters.remove(&id);
@@ -580,7 +576,7 @@ fn handle_still_alive(
 		}
 		None =>
 		{
-			eprintln!("Missing client {} is still alive.", client_id);
+			warn!("Missing client {} is still alive.", client_id);
 
 			let ghostbuster = ghostbusters.remove(&client_id);
 			if let Some(ghostbuster) = ghostbuster
@@ -619,7 +615,7 @@ fn handle_describe_lobby(
 		Some(lobby) => lobby,
 		None =>
 		{
-			eprintln!("Fail to describe missing lobby {:?}.", lobby_id);
+			warn!("Cannot describe missing lobby {:?}.", lobby_id);
 			return;
 		}
 	};
@@ -692,7 +688,7 @@ fn handle_find_lobby(
 			match client_callback.try_send(update)
 			{
 				Ok(()) => (),
-				Err(e) => eprintln!("Send error while finding lobby: {:?}", e),
+				Err(e) => error!("Send error while finding lobby: {:?}", e),
 			}
 			return;
 		}
@@ -702,7 +698,7 @@ fn handle_find_lobby(
 	match client_callback.try_send(update)
 	{
 		Ok(()) => (),
-		Err(e) => eprintln!("Send error while finding lobby: {:?}", e),
+		Err(e) => error!("Send error while finding lobby: {:?}", e),
 	}
 }
 

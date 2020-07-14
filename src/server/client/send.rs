@@ -5,12 +5,16 @@ use super::limit::*;
 use crate::common::keycode::Keycode;
 use crate::server::message::*;
 
+use log::*;
+
 use futures::StreamExt;
 
 use tokio::io::WriteHalf;
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio::sync::mpsc;
+
+use itertools::Itertools;
 
 pub async fn run(
 	client_id: Keycode,
@@ -24,7 +28,7 @@ pub async fn run(
 		send_bytes(&mut socket, buffer).await?;
 	}
 
-	println!("Client {} stopped sending.", client_id);
+	debug!("Client {} stopped sending.", client_id);
 	Ok(())
 }
 
@@ -35,8 +39,7 @@ async fn send_bytes(
 {
 	socket.write_all(&buffer).await?;
 
-	/*verbose*/
-	println!("Sent {} bytes.", buffer.len());
+	trace!("Sent {} bytes.", buffer.len());
 	Ok(())
 }
 
@@ -44,8 +47,7 @@ fn prepare_message(message: Message) -> Vec<u8>
 {
 	if let Message::Pulse = message
 	{
-		/*verbose*/
-		println!("Sending pulse...");
+		trace!("Sending pulse...");
 
 		let zeroes = [0u8; 4];
 		return zeroes.to_vec();
@@ -83,16 +85,17 @@ fn prepare_message_data(message: Message) -> (String, u32)
 
 	if length as usize >= MESSAGE_SIZE_WARNING_LIMIT
 	{
-		println!("Sending very large message of length {}", length);
+		warn!("Sending very large message of length {}", length);
 	}
 
-	/*verbose*/
-	println!("Sending message of length {}...", length);
+	trace!("Sending message of length {}...", length);
 
-	if length < 200
+	if log_enabled!(log::Level::Trace)
 	{
-		/*verbose*/
-		println!("Sending message: {}", jsonstr);
+		// TODO add dots if longer than 200 characters
+		let preview = jsonstr.chars().take(200);
+		// TODO escape newlines (#1266)
+		trace!("Sending message: {}", preview.format(""));
 	}
 
 	(jsonstr, length)

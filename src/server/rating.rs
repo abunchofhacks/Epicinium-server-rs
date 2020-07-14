@@ -12,6 +12,8 @@ use crate::server::settings::*;
 use std::collections::HashMap;
 use std::error;
 
+use log::*;
+
 use tokio::sync::mpsc;
 
 use reqwest as http;
@@ -57,7 +59,7 @@ pub async fn run(
 		}
 	}
 
-	println!("Ratings have been pushed.");
+	info!("Ratings have been pushed.");
 	Ok(())
 }
 
@@ -80,8 +82,9 @@ impl Database
 			Some(entry) => entry,
 			None =>
 			{
-				eprintln!("Missing entry for user id {:?}!", user_id);
+				error!("Missing entry for user id {:?}!", user_id);
 				// We do not want this to end the rating task.
+				// FUTURE insert entry now to avoid losing data?
 				return Ok(());
 			}
 		};
@@ -257,7 +260,7 @@ impl Connection
 			.error_for_status()?
 			.json()
 			.await?;
-		println!("Got a response from database: {:?}", response);
+		debug!("Got a response from database: {:?}", response);
 		response.verify()?;
 		Ok(())
 	}
@@ -283,7 +286,7 @@ impl Connection
 			.error_for_status()?
 			.json()
 			.await?;
-		println!("Got a response from database: {:?}", response);
+		debug!("Got a response from database: {:?}", response);
 		response.verify()?;
 		Ok(())
 	}

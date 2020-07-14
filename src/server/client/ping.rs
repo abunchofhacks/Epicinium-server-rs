@@ -2,6 +2,8 @@
 
 use crate::common::keycode::Keycode;
 
+use log::*;
+
 use futures::stream;
 use futures::StreamExt;
 
@@ -82,7 +84,7 @@ async fn wait_for_pong(
 		}
 		else
 		{
-			eprintln!("Disconnecting inactive client {}", client_id);
+			warn!("Disconnecting inactive client {}...", client_id);
 			// TODO slack
 			return Err(Error::Timeout);
 		}
@@ -90,8 +92,8 @@ async fn wait_for_pong(
 
 	if let Some(Ok(())) = events.take_result()
 	{
-		println!(
-			"Client {} has {}ms ping",
+		debug!(
+			"Client {} has {}ms ping.",
 			client_id,
 			sendtime.elapsed().as_millis()
 		);

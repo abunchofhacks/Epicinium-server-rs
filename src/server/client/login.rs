@@ -9,6 +9,8 @@ pub use crate::server::login::Server;
 
 use std::sync;
 
+use log::*;
+
 use tokio::sync::mpsc;
 
 pub async fn run(
@@ -30,7 +32,7 @@ pub async fn run(
 				}
 				else
 				{
-					println!("Login failed due to insufficient access");
+					debug!("Login failed due to insufficient access.");
 					let message = Message::JoinServer {
 						status: Some(ResponseStatus::KeyRequired),
 						content: None,
@@ -42,7 +44,7 @@ pub async fn run(
 			}
 			Err(responsestatus) =>
 			{
-				eprintln!("Login failed with {:?}", responsestatus);
+				debug!("Login failed with {:?}", responsestatus);
 				let message = Message::JoinServer {
 					status: Some(responsestatus),
 					content: None,

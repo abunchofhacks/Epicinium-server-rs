@@ -1,8 +1,11 @@
 /* Server */
 
 extern crate epicinium;
+extern crate log;
 
 use epicinium::*;
+
+use log::info;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>>
 {
@@ -23,14 +26,16 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>>
 		}
 	}
 
-	println!(
-		"[ Epicinium Server ] ({} v{})",
-		logname,
-		currentversion.to_string()
-	);
+	epicinium::log::start()?;
+
+	println!("[ Epicinium Server ] ({} v{})", logname, currentversion);
 	println!("");
 
+	info!("Server started.");
+
 	run_server(&settings)?;
+
+	info!("Server stopped.");
 
 	println!("");
 	println!("[ Done ]");

@@ -8,9 +8,13 @@ use crate::server::message::*;
 use std::sync;
 use std::sync::atomic;
 
+use log::*;
+
 use tokio::io::ReadHalf;
 use tokio::net::TcpStream;
 use tokio::prelude::*;
+
+use itertools::Itertools;
 
 pub struct Client
 {
@@ -37,19 +41,18 @@ async fn receive_message(
 	versioned: bool,
 ) -> Result<Message, Error>
 {
-	println!("Starting to receive...");
+	trace!("Starting to receive...");
 	let length = socket.read_u32().await?;
 
 	if length == 0
 	{
-		/*verbose*/
-		println!("Received pulse.");
+		trace!("Received pulse.");
 
 		return Ok(Message::Pulse);
 	}
 	else if !versioned && length as usize >= MESSAGE_SIZE_UNVERSIONED_LIMIT
 	{
-		println!(
+		warn!(
 			"Unversioned client {} tried to send \
 			 very large message of length {}, \
 			 which is more than MESSAGE_SIZE_UNVERSIONED_LIMIT.",
@@ -59,7 +62,7 @@ async fn receive_message(
 	}
 	else if length as usize >= MESSAGE_SIZE_LIMIT
 	{
-		println!(
+		warn!(
 			"Client {} tried to send very large message of length {}, \
 			 which is more than MESSAGE_SIZE_LIMIT.",
 			client_id, length
@@ -68,17 +71,15 @@ async fn receive_message(
 	}
 	else if length as usize >= MESSAGE_SIZE_WARNING_LIMIT
 	{
-		println!("Receiving very large message of length {}...", length);
+		warn!("Receiving very large message of length {}...", length);
 	}
 
-	/*verbose*/
-	println!("Receiving message of length {}...", length);
+	trace!("Receiving message of length {}...", length);
 
 	let mut buffer = vec![0; length as usize];
 	socket.read_exact(&mut buffer).await?;
 
-	/*verbose*/
-	println!("Received message of length {}.", buffer.len());
+	trace!("Received message of length {}.", buffer.len());
 	let message = parse_message(buffer)?;
 
 	Ok(message)
@@ -88,10 +89,12 @@ fn parse_message(buffer: Vec<u8>) -> Result<Message, Error>
 {
 	let jsonstr = String::from_utf8(buffer)?;
 
-	if jsonstr.len() < 200
+	if log_enabled!(log::Level::Trace)
 	{
-		/*verbose*/
-		println!("Received message: {}", jsonstr);
+		// TODO add dots if longer than 200 characters
+		let preview = jsonstr.chars().take(200);
+		// TODO escape newlines (#1266)
+		trace!("Received message: {}", preview.format(""));
 	}
 
 	let message: Message = serde_json::from_str(&jsonstr)?;

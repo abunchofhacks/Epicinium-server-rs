@@ -21,6 +21,8 @@ use crate::server::rating;
 
 use std::fmt;
 
+use log::*;
+
 use tokio::sync::mpsc;
 use tokio::time as timer;
 use tokio::time::{Duration, Instant};
@@ -395,7 +397,7 @@ pub async fn run(
 		retire(&lobby_info, &mut automaton, client).await?;
 	}
 
-	println!("Game has finished in lobby {}; lingering...", lobby_id);
+	debug!("Game has finished in lobby {}; lingering...", lobby_id);
 	linger(&lobby_info, &mut players, &mut watchers, &mut updates).await?;
 
 	Ok(())
@@ -592,7 +594,7 @@ async fn rest(
 	// and watchers wait until other watchers have rejoined.
 	while !all_players_or_watchers_have_synced(players, watchers)
 	{
-		println!("Waiting until all players/watchers have synced...");
+		trace!("Waiting until all players/watchers have synced...");
 
 		let update = match updates.recv().await
 		{
@@ -604,7 +606,7 @@ async fn rest(
 		{
 			Update::ForGame(Sub::Orders { client_id, .. }) =>
 			{
-				eprintln!("Ignoring orders from {} while resting", client_id);
+				debug!("Ignoring orders from {} while resting", client_id);
 			}
 			Update::ForGame(Sub::Sync { client_id }) =>
 			{
@@ -724,7 +726,7 @@ async fn ensure_live_players(
 
 	while !at_least_one_live_player(players)
 	{
-		println!("Waiting for at least one live player...");
+		trace!("Waiting for at least one live player...");
 
 		let update = match updates.recv().await
 		{
@@ -736,11 +738,11 @@ async fn ensure_live_players(
 		{
 			Update::ForGame(Sub::Orders { client_id, .. }) =>
 			{
-				eprintln!("Ignoring orders from {} after resting", client_id);
+				debug!("Ignoring orders from {} after resting", client_id);
 			}
 			Update::ForGame(Sub::Sync { client_id }) =>
 			{
-				eprintln!("Ignoring sync from {} after resting", client_id);
+				debug!("Ignoring sync from {} after resting", client_id);
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
@@ -826,7 +828,7 @@ async fn sleep(
 	let num_bots = lobby.num_bots;
 	if too_few_potential_winners(players, num_bots)
 	{
-		println!("Ending sleep early");
+		trace!("Ending sleep early");
 		return Ok(());
 	}
 
@@ -844,7 +846,7 @@ async fn sleep(
 	// planning phase if there is still time.
 	while !all_players_have_submitted_orders(players)
 	{
-		println!("Waiting until all players have submitted orders...");
+		trace!("Waiting until all players have submitted orders...");
 
 		let update = match timer::timeout_at(end, updates.recv()).await
 		{
@@ -852,7 +854,7 @@ async fn sleep(
 			Ok(None) => return Err(Error::Abandoned),
 			Err(timer::Elapsed { .. }) =>
 			{
-				println!("Planning phase ending...");
+				trace!("Planning phase ending...");
 				break;
 			}
 		};
@@ -872,7 +874,7 @@ async fn sleep(
 			}
 			Update::ForGame(Sub::Sync { client_id }) =>
 			{
-				eprintln!("Ignoring sync from {} while sleeping", client_id);
+				debug!("Ignoring sync from {} while sleeping", client_id);
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
@@ -880,7 +882,7 @@ async fn sleep(
 
 				if too_few_potential_winners(players, num_bots)
 				{
-					println!("Ending sleep early");
+					trace!("Ending sleep early");
 					return Ok(());
 				}
 			}
@@ -987,7 +989,7 @@ async fn stage(
 	// receiving the staging announcement.
 	while !all_players_have_submitted_orders(players)
 	{
-		println!("Waiting until all players have staged orders...");
+		trace!("Waiting until all players have staged orders...");
 
 		let update = match timer::timeout_at(end, updates.recv()).await
 		{
@@ -995,7 +997,7 @@ async fn stage(
 			Ok(None) => return Err(Error::Abandoned),
 			Err(timer::Elapsed { .. }) =>
 			{
-				println!("Staging phase ending...");
+				trace!("Staging phase ending...");
 				break;
 			}
 		};
@@ -1015,7 +1017,7 @@ async fn stage(
 			}
 			Update::ForGame(Sub::Sync { client_id }) =>
 			{
-				eprintln!("Ignoring sync from {} while staging", client_id);
+				debug!("Ignoring sync from {} while staging", client_id);
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
@@ -1321,7 +1323,7 @@ fn do_join(
 		.try_send(client::Update::JoinedLobby {
 			lobby: lobby_sendbuffer,
 		})
-		.unwrap_or_else(|e| eprintln!("Callback error in join: {:?}", e));
+		.unwrap_or_else(|e| error!("Callback error in join: {:?}", e));
 
 	if let Some(player) =
 		players.iter_mut().find(|x| x.user_id == client_user_id)
@@ -1479,7 +1481,7 @@ async fn handle_leave(
 		match sendbuffer.try_send(message)
 		{
 			Ok(()) => (),
-			Err(e) => eprintln!("Send error while processing leave: {:?}", e),
+			Err(e) => error!("Send error while processing leave: {:?}", e),
 		}
 	}
 

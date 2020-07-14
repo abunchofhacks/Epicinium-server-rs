@@ -22,6 +22,8 @@ use std::fmt;
 use std::sync;
 use std::sync::atomic;
 
+use log::*;
+
 use futures::future;
 use futures::future::Either;
 use futures::pin_mut;
@@ -79,7 +81,7 @@ impl Drop for Client
 				match general_chat.try_send(update)
 				{
 					Ok(()) => (),
-					Err(e) => eprintln!("Error while dropping client: {:?}", e),
+					Err(e) => error!("Error while dropping client: {:?}", e),
 				}
 			}
 			None =>
@@ -101,13 +103,13 @@ impl Drop for Client
 						Ok(()) => (),
 						Err(e) =>
 						{
-							eprintln!("Error while dropping client: {:?}", e)
+							error!("Error while dropping client: {:?}", e)
 						}
 					}
 				}
 				None =>
 				{
-					eprintln!("Expected general_chat when dropping lobby");
+					warn!("Expected general_chat when dropping lobby");
 				}
 			},
 			None =>
@@ -211,9 +213,9 @@ pub fn accept(
 	// of things to send and finish as well.
 	let task = future::try_join(main_task, send_task)
 		.map_ok(|((), ())| ())
-		.map_err(move |e| eprintln!("Error in client {}: {:?}", id, e))
+		.map_err(move |e| error!("Error in client {}: {:?}", id, e))
 		.map(move |_result| {
-			println!("Client {} has disconnected.", id);
+			info!("Client {} has disconnected.", id);
 			let _discarded = canary;
 		});
 
@@ -276,7 +278,7 @@ async fn start_receive_task(
 		}
 	}
 
-	println!("Client {} stopped receiving.", client.id);
+	info!("Client {} stopped receiving.", client.id);
 	Ok(())
 }
 
@@ -570,7 +572,7 @@ async fn handle_update(
 						Some(callback) => callback.clone(),
 						None =>
 						{
-							eprintln!("Expected general_chat_callback");
+							error!("Expected general_chat_callback");
 							return Err(Error::Unexpected);
 						}
 					};
@@ -586,7 +588,7 @@ async fn handle_update(
 						Ok(()) => Ok(None),
 						Err(error) =>
 						{
-							eprintln!(
+							error!(
 								"Client {} failed to join chat: {:?}",
 								client.id, error
 							);
@@ -622,7 +624,7 @@ async fn handle_update(
 						Some(user_id) => user_id,
 						None =>
 						{
-							eprintln!("Expected user_id");
+							error!("Expected user_id");
 							return Err(Error::Unexpected);
 						}
 					};
@@ -651,7 +653,7 @@ async fn handle_update(
 				Some(callback) => callback.clone(),
 				None =>
 				{
-					eprintln!("Expected lobby_callback");
+					error!("Expected lobby_callback");
 					return Err(Error::Unexpected);
 				}
 			};
@@ -660,7 +662,7 @@ async fn handle_update(
 				Some(user_id) => user_id,
 				None =>
 				{
-					eprintln!("Expected user_id");
+					error!("Expected user_id");
 					return Err(Error::Unexpected);
 				}
 			};
@@ -751,13 +753,13 @@ async fn handle_message(
 		}
 		Message::Quit =>
 		{
-			println!("Client {} is gracefully disconnecting...", client.id);
+			info!("Client {} is gracefully disconnecting...", client.id);
 			client.sendbuffer.try_send(Message::Quit)?;
 			return Ok(Some(HasQuit));
 		}
 		Message::JoinServer { .. } if client.general_chat.is_some() =>
 		{
-			println!("Ignoring message from online client: {:?}", message);
+			debug!("Ignoring message from online client: {:?}", message);
 		}
 		Message::JoinServer { .. } if client.closing =>
 		{
@@ -793,7 +795,7 @@ async fn handle_message(
 		}
 		Message::JoinServer { .. } =>
 		{
-			println!("Invalid message from client: {:?}", message);
+			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
 		Message::LeaveServer { content: _ } => match client.general_chat.take()
@@ -844,7 +846,7 @@ async fn handle_message(
 			{
 				if client.lobby.is_some()
 				{
-					println!("Ignoring JoinLobby from client in lobby.");
+					debug!("Ignoring JoinLobby from client in lobby.");
 					return Ok(None);
 				}
 
@@ -853,7 +855,7 @@ async fn handle_message(
 					Some(callback) => callback.clone(),
 					None =>
 					{
-						eprintln!("Expected lobby_callback");
+						error!("Expected lobby_callback");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -867,12 +869,12 @@ async fn handle_message(
 			}
 			else
 			{
-				println!("Ignoring JoinLobby from offline client.");
+				debug!("Ignoring JoinLobby from offline client.");
 			}
 		}
 		Message::JoinLobby { .. } =>
 		{
-			println!("Invalid message from client: {:?}", message);
+			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
 		Message::LeaveLobby {
@@ -887,7 +889,7 @@ async fn handle_message(
 					Some(general_chat) => general_chat.clone(),
 					None =>
 					{
-						eprintln!("Expected general_chat");
+						error!("Expected general_chat");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -900,12 +902,12 @@ async fn handle_message(
 			}
 			else
 			{
-				println!("Ignoring LeaveLobby from unlobbied client.");
+				debug!("Ignoring LeaveLobby from unlobbied client.");
 			}
 		}
 		Message::LeaveLobby { .. } =>
 		{
-			println!("Invalid message from client: {:?}", message);
+			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
 		Message::MakeLobby {} if client.closing =>
@@ -914,7 +916,7 @@ async fn handle_message(
 		}
 		Message::MakeLobby {} if client.lobby.is_some() =>
 		{
-			println!("Ignoring message from lobbied client: {:?}", message);
+			debug!("Ignoring message from lobbied client: {:?}", message);
 		}
 		Message::MakeLobby {} => match client.general_chat
 		{
@@ -925,7 +927,7 @@ async fn handle_message(
 					Some(callback) => callback.clone(),
 					None =>
 					{
-						eprintln!("Expected lobby_callback");
+						error!("Expected lobby_callback");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -940,7 +942,7 @@ async fn handle_message(
 					Some(user_id) => user_id,
 					None =>
 					{
-						eprintln!("Expected user_id");
+						error!("Expected user_id");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -958,7 +960,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring message from offline client: {:?}", message);
+				debug!("Ignoring message from offline client: {:?}", message);
 			}
 		},
 		Message::SaveLobby {} if client.closing =>
@@ -974,7 +976,7 @@ async fn handle_message(
 					Some(general_chat) => general_chat.clone(),
 					None =>
 					{
-						eprintln!("Expected general_chat");
+						error!("Expected general_chat");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -987,10 +989,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!(
-					"Ignoring message from unlobbied client: {:?}",
-					message
-				);
+				debug!("Ignoring message from unlobbied client: {:?}", message);
 			}
 		},
 		Message::LockLobby {} => match client.lobby
@@ -1002,7 +1001,7 @@ async fn handle_message(
 					Some(general_chat) => general_chat.clone(),
 					None =>
 					{
-						eprintln!("Expected general_chat");
+						error!("Expected general_chat");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -1013,10 +1012,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!(
-					"Ignoring message from unlobbied client: {:?}",
-					message
-				);
+				debug!("Ignoring message from unlobbied client: {:?}", message);
 			}
 		},
 		Message::UnlockLobby {} => match client.lobby
@@ -1028,7 +1024,7 @@ async fn handle_message(
 					Some(general_chat) => general_chat.clone(),
 					None =>
 					{
-						eprintln!("Expected general_chat");
+						error!("Expected general_chat");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -1040,10 +1036,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!(
-					"Ignoring message from unlobbied client: {:?}",
-					message
-				);
+				debug!("Ignoring UnlockLobby from unlobbied client.");
 			}
 		},
 		Message::NameLobby { lobby_name } => match client.lobby
@@ -1055,7 +1048,7 @@ async fn handle_message(
 					Some(general_chat) => general_chat.clone(),
 					None =>
 					{
-						eprintln!("Expected general_chat");
+						error!("Expected general_chat");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -1068,7 +1061,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring NameLobby message from unlobbied client");
+				debug!("Ignoring NameLobby message from unlobbied client");
 			}
 		},
 		Message::ClaimRole { username, role } => match client.lobby
@@ -1080,7 +1073,7 @@ async fn handle_message(
 					Some(general_chat) => general_chat.clone(),
 					None =>
 					{
-						eprintln!("Expected general_chat");
+						error!("Expected general_chat");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -1094,7 +1087,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring ClaimRole from unlobbied client");
+				debug!("Ignoring ClaimRole from unlobbied client");
 			}
 		},
 		Message::ClaimColor {
@@ -1112,7 +1105,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring ClaimColor from unlobbied client");
+				debug!("Ignoring ClaimColor from unlobbied client");
 			}
 		},
 		Message::ClaimVisionType {
@@ -1131,7 +1124,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring ClaimVisionType from unlobbied client");
+				debug!("Ignoring ClaimVisionType from unlobbied client");
 			}
 		},
 		Message::ClaimAi { slot, ai_name } => match client.lobby
@@ -1146,7 +1139,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring ClaimAi from unlobbied client");
+				debug!("Ignoring ClaimAi from unlobbied client");
 			}
 		},
 		Message::ClaimDifficulty { slot, difficulty } => match client.lobby
@@ -1162,7 +1155,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring ClaimDifficulty from unlobbied client");
+				debug!("Ignoring ClaimDifficulty from unlobbied client");
 			}
 		},
 		Message::PickMap { map_name } => match client.lobby
@@ -1174,7 +1167,7 @@ async fn handle_message(
 					Some(general_chat) => general_chat.clone(),
 					None =>
 					{
-						eprintln!("Expected general_chat");
+						error!("Expected general_chat");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -1187,7 +1180,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring PickMap from unlobbied client");
+				debug!("Ignoring PickMap from unlobbied client");
 			}
 		},
 		Message::PickTimer { seconds } => match client.lobby
@@ -1200,7 +1193,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring PickTimer from unlobbied client");
+				debug!("Ignoring PickTimer from unlobbied client");
 			}
 		},
 		Message::PickRuleset { ruleset_name } => match client.lobby
@@ -1214,7 +1207,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring PickRuleset from unlobbied client");
+				debug!("Ignoring PickRuleset from unlobbied client");
 			}
 		},
 		Message::ListRuleset { ruleset_name } => match client.lobby
@@ -1226,7 +1219,7 @@ async fn handle_message(
 					Some(general_chat) => general_chat.clone(),
 					None =>
 					{
-						eprintln!("Expected general_chat");
+						error!("Expected general_chat");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -1241,7 +1234,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring ListRuleset from unlobbied client");
+				debug!("Ignoring ListRuleset from unlobbied client");
 			}
 		},
 		Message::AddBot { slot: None } => match client.lobby
@@ -1253,7 +1246,7 @@ async fn handle_message(
 					Some(general_chat) => general_chat.clone(),
 					None =>
 					{
-						eprintln!("Expected general_chat");
+						error!("Expected general_chat");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -1265,12 +1258,12 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring AddBot from unlobbied client");
+				debug!("Ignoring AddBot from unlobbied client");
 			}
 		},
 		Message::AddBot { .. } =>
 		{
-			println!("Invalid message from client: {:?}", message);
+			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
 		Message::RemoveBot { slot } => match client.lobby
@@ -1282,7 +1275,7 @@ async fn handle_message(
 					Some(general_chat) => general_chat.clone(),
 					None =>
 					{
-						eprintln!("Expected general_chat");
+						error!("Expected general_chat");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -1295,7 +1288,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring RemoveBot from unlobbied client");
+				debug!("Ignoring RemoveBot from unlobbied client");
 			}
 		},
 		Message::Game {
@@ -1312,7 +1305,7 @@ async fn handle_message(
 					Some(general_chat) => general_chat.clone(),
 					None =>
 					{
-						eprintln!("Expected general_chat");
+						error!("Expected general_chat");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -1323,12 +1316,12 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring Game from unlobbied client");
+				debug!("Ignoring Game from unlobbied client");
 			}
 		},
 		Message::Game { .. } =>
 		{
-			println!("Invalid message from client: {:?}", message);
+			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
 		Message::Tutorial {
@@ -1345,7 +1338,7 @@ async fn handle_message(
 					Some(general_chat) => general_chat.clone(),
 					None =>
 					{
-						eprintln!("Expected general_chat");
+						error!("Expected general_chat");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -1362,12 +1355,12 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring Tutorial from unlobbied client");
+				debug!("Ignoring Tutorial from unlobbied client");
 			}
 		},
 		Message::Tutorial { .. } =>
 		{
-			println!("Invalid message from client: {:?}", message);
+			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
 		Message::Challenge => match client.lobby
@@ -1379,7 +1372,7 @@ async fn handle_message(
 					Some(general_chat) => general_chat.clone(),
 					None =>
 					{
-						eprintln!("Expected general_chat");
+						error!("Expected general_chat");
 						return Err(Error::Unexpected);
 					}
 				};
@@ -1396,7 +1389,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring Challenge from unlobbied client");
+				debug!("Ignoring Challenge from unlobbied client");
 			}
 		},
 		Message::Resign { username: None } => match client.lobby
@@ -1410,12 +1403,12 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring Sync from unlobbied client");
+				debug!("Ignoring Sync from unlobbied client");
 			}
 		},
 		Message::Resign { .. } =>
 		{
-			println!("Invalid message from client: {:?}", message);
+			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
 		Message::OrdersNew { orders } => match client.lobby
@@ -1430,7 +1423,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring Sync from unlobbied client");
+				debug!("Ignoring Sync from unlobbied client");
 			}
 		},
 		Message::Sync {
@@ -1446,12 +1439,12 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring Sync from unlobbied client");
+				debug!("Ignoring Sync from unlobbied client");
 			}
 		},
 		Message::Sync { .. } =>
 		{
-			println!("Invalid message from client: {:?}", message);
+			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
 		Message::Init => match client.general_chat
@@ -1470,15 +1463,12 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring message from offline client: {:?}", message);
+				debug!("Ignoring message from offline client: {:?}", message);
 			}
 		},
 		Message::Chat { .. } if client.username.is_empty() =>
 		{
-			println!(
-				"Ignoring Chat from client without username: {:?}",
-				message
-			);
+			info!("Ignoring Chat from client without username: {:?}", message);
 		}
 		Message::Chat {
 			content,
@@ -1488,7 +1478,7 @@ async fn handle_message(
 		{
 			Some(ref mut general_chat) =>
 			{
-				println!(
+				info!(
 					"Client {} '{}' sent chat message: {}",
 					client.id, client.username, content
 				);
@@ -1502,7 +1492,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!("Ignoring Chat from offline client: '{:?}'", content);
+				info!("Ignoring Chat from offline client: '{:?}'", content);
 			}
 		},
 		Message::Chat {
@@ -1513,7 +1503,7 @@ async fn handle_message(
 		{
 			Some(ref mut lobby) =>
 			{
-				println!(
+				info!(
 					"Client {} '{}' sent lobby chat message: {}",
 					client.id, client.username, content
 				);
@@ -1527,7 +1517,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				println!(
+				info!(
 					"Ignoring Chat to lobby from unlobbied client: '{:?}'",
 					content
 				);
@@ -1535,7 +1525,7 @@ async fn handle_message(
 		},
 		Message::Chat { .. } =>
 		{
-			println!("Invalid message from client: {:?}", message);
+			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
 		Message::DisbandLobby { .. }
@@ -1554,7 +1544,7 @@ async fn handle_message(
 		| Message::Closing
 		| Message::Closed =>
 		{
-			println!("Invalid message from client: {:?}", message);
+			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
 	}
@@ -1565,8 +1555,7 @@ async fn handle_message(
 fn greet_client(client: &mut Client, version: Version) -> Result<(), Error>
 {
 	client.version = version;
-	/*verbose*/
-	println!("Client {} has version {}.", client.id, version.to_string());
+	info!("Client {} has version {}.", client.id, version.to_string());
 
 	let myversion = Version::current();
 	let response = Message::Version { version: myversion };
@@ -1614,14 +1603,14 @@ fn joining_server(
 	request: login::Request,
 ) -> Result<(), Error>
 {
-	println!("Client {} is logging in...", client.id);
+	info!("Client {} is logging in...", client.id);
 
 	match client.login.try_send(request)
 	{
 		Ok(()) => Ok(()),
 		Err(mpsc::error::TrySendError::Full(_request)) =>
 		{
-			eprintln!("Failed to enqueue for login, login task busy.");
+			error!("Failed to enqueue for login, login task busy.");
 
 			// We only process one login request at a time. Does it make sense
 			// to respond to a second request if the first response is still

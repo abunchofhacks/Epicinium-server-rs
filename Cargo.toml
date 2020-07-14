@@ -25,6 +25,11 @@ tokio = { version = "0.2", features = ["rt-threaded", "macros", "time", "sync", 
 backtrace = "*"
 owning_ref = "*"
 libc = "*"
+log = "*"
+fern = "*"
+chrono = "*"
+thread-id = "*"
+itertools = "*"
 
 [features]
 defaults = []

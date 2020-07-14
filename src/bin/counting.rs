@@ -4,20 +4,12 @@ extern crate epicinium;
 
 use epicinium::*;
 
-fn main()
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>>
 {
 	let mut logname = "counting".to_string();
 	let currentversion = Version::current();
 
-	let mut settings = match Settings::create("settings-counting.json")
-	{
-		Ok(settings) => settings,
-		Err(e) =>
-		{
-			eprintln!("Error while loading the settings: {}", e);
-			return;
-		}
-	};
+	let mut settings = Settings::create("settings-counting.json")?;
 
 	match settings.logname()
 	{
@@ -31,24 +23,17 @@ fn main()
 		}
 	}
 
+	epicinium::log::start()?;
+
 	println!(
 		"[ Epicinium Counting Stress Test ] ({} v{})",
-		logname,
-		currentversion.to_string()
+		logname, currentversion
 	);
 	println!("");
 
-	match server::countingtest::run(&settings)
-	{
-		Ok(()) =>
-		{
-			println!("");
-			println!("[ Done ]");
-		}
-		Err(e) =>
-		{
-			eprintln!("Error while running stress test: {}", e);
-			return;
-		}
-	}
+	server::countingtest::run(&settings)?;
+
+	println!("");
+	println!("[ Done ]");
+	Ok(())
 }

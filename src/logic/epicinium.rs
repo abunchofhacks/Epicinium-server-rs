@@ -6,6 +6,8 @@ use crate::logic::change::{Change, ChangeSet};
 use crate::logic::order::Order;
 use crate::logic::ruleset::InitializationError;
 
+use log::*;
+
 use libc::c_char;
 use std::ffi::{CStr, CString};
 
@@ -302,7 +304,7 @@ pub fn ruleset_exists(name: &str) -> bool
 		Ok(name) => name,
 		Err(error) =>
 		{
-			eprintln!("Ruleset with nul character: {}, {:?}", name, error);
+			error!("Ruleset with nul character: {}, {:?}", name, error);
 			return false;
 		}
 	};
@@ -328,7 +330,7 @@ pub fn ai_exists(name: &str) -> bool
 		Ok(name) => name,
 		Err(error) =>
 		{
-			eprintln!("AI with nul character: {}, {:?}", name, error);
+			error!("AI with nul character: {}, {:?}", name, error);
 			return false;
 		}
 	};

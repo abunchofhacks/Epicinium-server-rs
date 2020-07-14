@@ -25,6 +25,8 @@ use std::io;
 use std::sync;
 use std::sync::atomic;
 
+use log::*;
+
 use rand::Rng;
 
 use tokio::sync::mpsc;
@@ -225,7 +227,7 @@ async fn run(
 		Ok(lobby) => lobby,
 		Err(error) =>
 		{
-			eprintln!("Failed to create lobby: {:?}", error);
+			error!("Failed to create lobby: {:?}", error);
 			return;
 		}
 	};
@@ -235,14 +237,14 @@ async fn run(
 		Ok(game) => game,
 		Err(error) =>
 		{
-			eprintln!("Lobby {} crashed: {:?}", lobby_id, error);
+			error!("Lobby {} crashed: {:?}", lobby_id, error);
 			return;
 		}
 	};
 
 	if let Some(game) = game
 	{
-		println!("Game started in lobby {}.", lobby_id);
+		debug!("Game started in lobby {}.", lobby_id);
 
 		match game::run(game, updates).await
 		{
@@ -250,13 +252,13 @@ async fn run(
 			{}
 			Err(error) =>
 			{
-				eprintln!("Game crashed in lobby {}: {:?}", lobby_id, error);
+				error!("Game crashed in lobby {}: {:?}", lobby_id, error);
 				return;
 			}
 		}
 	}
 
-	println!("Lobby {} has disbanded.", lobby_id);
+	debug!("Lobby {} has disbanded.", lobby_id);
 	let _discarded = canary;
 }
 
@@ -537,7 +539,7 @@ async fn list_lobby(
 {
 	if lobby.has_been_listed
 	{
-		eprintln!("Refusing to re-list lobby {}.", lobby.id);
+		trace!("Refusing to re-list lobby {}.", lobby.id);
 		return Ok(());
 	}
 
@@ -690,7 +692,7 @@ async fn handle_join(
 	match sendbuffer_for_listing.try_send(message)
 	{
 		Ok(()) => (),
-		Err(error) => eprintln!("Send error in join: {}", error),
+		Err(error) => error!("Send error in join: {}", error),
 	}
 
 	if Some(&Role::Player) == lobby.roles.get(&client_id)
@@ -849,7 +851,7 @@ fn do_join(
 		.try_send(client::Update::JoinedLobby {
 			lobby: lobby_sendbuffer,
 		})
-		.unwrap_or_else(|e| eprintln!("Callback error in join: {:?}", e));
+		.unwrap_or_else(|e| error!("Callback error in join: {:?}", e));
 
 	clients.push(newcomer);
 
@@ -913,10 +915,7 @@ async fn handle_removed(
 			match sendbuffer.try_send(message)
 			{
 				Ok(()) => (),
-				Err(e) =>
-				{
-					eprintln!("Send error while processing leave: {:?}", e)
-				}
+				Err(e) => error!("Send error while processing leave: {:?}", e),
 			}
 		}
 
@@ -1073,7 +1072,7 @@ fn change_color(
 				Some(client) => client.id,
 				None =>
 				{
-					eprintln!("Failed to find client named {}.", username);
+					warn!("Failed to find client named {}.", username);
 					// FUTURE let the sender know somehow?
 					return;
 				}
@@ -1085,7 +1084,7 @@ fn change_color(
 				{}
 				Some(Role::Observer) | None =>
 				{
-					eprintln!("Cannot assign to non-player {}.", client_id);
+					warn!("Cannot assign to non-player {}.", client_id);
 					// FUTURE let the sender know somehow?
 					return;
 				}
@@ -1127,7 +1126,7 @@ fn change_color(
 		{
 			if lobby.bots.iter_mut().find(|x| x.slot == slot).is_none()
 			{
-				eprintln!("Failed to find bot '{:?}'.", slot);
+				warn!("Failed to find bot '{:?}'.", slot);
 				// FUTURE let the sender know somehow?
 				return;
 			}
@@ -1193,7 +1192,7 @@ fn change_visiontype(
 				Some(client) => client.id,
 				None =>
 				{
-					eprintln!("Failed to find client named {}.", username);
+					warn!("Failed to find client named {}.", username);
 					// FUTURE let the sender know somehow?
 					return;
 				}
@@ -1205,7 +1204,7 @@ fn change_visiontype(
 				{}
 				Some(Role::Observer) | None =>
 				{
-					eprintln!("Cannot assign to non-player {}.", client_id);
+					warn!("Cannot assign to non-player {}.", client_id);
 					// FUTURE let the sender know somehow?
 					return;
 				}
@@ -1217,7 +1216,7 @@ fn change_visiontype(
 		{
 			if lobby.bots.iter_mut().find(|x| x.slot == slot).is_none()
 			{
-				eprintln!("Failed to find bot '{:?}'.", slot);
+				warn!("Failed to find bot '{:?}'.", slot);
 				// FUTURE let the sender know somehow?
 				return;
 			}
@@ -1254,7 +1253,7 @@ fn change_ai(
 			Some(bot) => bot,
 			None =>
 			{
-				eprintln!("Failed to find bot '{:?}'.", slot);
+				warn!("Failed to find bot '{:?}'.", slot);
 				// FUTURE let the sender know somehow?
 				return;
 			}
@@ -1263,7 +1262,7 @@ fn change_ai(
 
 	if !ai::exists(&ai_name)
 	{
-		eprintln!("Cannot set AI to non-existing '{}'.", ai_name);
+		warn!("Cannot set AI to non-existing '{}'.", ai_name);
 		// FUTURE let the sender know somehow?
 		return;
 	}
@@ -1309,7 +1308,7 @@ fn change_difficulty(
 			Some(bot) => bot,
 			None =>
 			{
-				eprintln!("Failed to find bot '{:?}'.", slot);
+				warn!("Failed to find bot '{:?}'.", slot);
 				// FUTURE let the sender know somehow?
 				return;
 			}
@@ -1318,7 +1317,7 @@ fn change_difficulty(
 
 	if difficulty == Difficulty::None && bot.ai_name != "Dummy"
 	{
-		eprintln!("Cannot send difficulty of AI '{}' to none.", bot.ai_name);
+		warn!("Cannot send difficulty of AI '{}' to none.", bot.ai_name);
 		// FUTURE let the sender know somehow?
 		return;
 	}
@@ -1338,14 +1337,14 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 {
 	if lobby.num_players >= lobby.max_players
 	{
-		eprintln!("Cannot add bot to lobby {}: lobby full", lobby.id);
+		warn!("Cannot add bot to lobby {}: lobby full", lobby.id);
 		return;
 	}
 
 	let slot = {
 		if lobby.open_botslots.is_empty()
 		{
-			eprintln!("Cannot add bot to lobby {}: all slots taken", lobby.id);
+			warn!("Cannot add bot to lobby {}: all slots taken", lobby.id);
 			return;
 		}
 		let mut rng = rand::thread_rng();
@@ -1417,7 +1416,7 @@ async fn pick_map(
 	// Is this a game lobby?
 	if lobby.is_replay
 	{
-		eprintln!("Cannot pick map for replay lobby {}.", lobby.id);
+		warn!("Cannot pick map for replay lobby {}.", lobby.id);
 		return Ok(());
 	}
 
@@ -1461,7 +1460,7 @@ async fn pick_map(
 		None =>
 		{
 			// Pick failed, send the current map.
-			eprintln!(
+			warn!(
 				"Cannot pick non-existing map '{}' in lobby {}.",
 				map_name, lobby.id
 			);
@@ -1564,7 +1563,7 @@ async fn become_tutorial_lobby(
 	// Is this a game lobby?
 	if lobby.is_replay
 	{
-		eprintln!("Cannot turn replay lobby {} into tutorial.", lobby.id);
+		warn!("Cannot turn replay lobby {} into tutorial.", lobby.id);
 		return Ok(());
 	}
 
@@ -1572,7 +1571,7 @@ async fn become_tutorial_lobby(
 	// multiple human players present.
 	if clients.len() > 1
 	{
-		eprintln!(
+		warn!(
 			"Cannot turn lobby {} with {} clients into tutorial.",
 			lobby.id,
 			clients.len()
@@ -1585,7 +1584,7 @@ async fn become_tutorial_lobby(
 		Some(client) => client.id,
 		None =>
 		{
-			eprintln!(
+			warn!(
 				"Cannot turn lobby {} without clients into tutorial.",
 				lobby.id,
 			);
@@ -1625,7 +1624,7 @@ async fn become_challenge_lobby(
 	// Is this a game lobby?
 	if lobby.is_replay
 	{
-		eprintln!("Cannot turn replay lobby {} into challenge.", lobby.id);
+		warn!("Cannot turn replay lobby {} into challenge.", lobby.id);
 		return Ok(());
 	}
 
@@ -1633,7 +1632,7 @@ async fn become_challenge_lobby(
 	// multiple human players present.
 	if clients.len() > 1
 	{
-		eprintln!(
+		warn!(
 			"Cannot turn lobby {} with {} clients into challenge.",
 			lobby.id,
 			clients.len()
@@ -1728,7 +1727,7 @@ async fn pick_ruleset(
 	// Is this a game lobby?
 	if lobby.is_replay
 	{
-		eprintln!("Cannot pick ruleset in replay lobby {}.", lobby.id);
+		warn!("Cannot pick ruleset in replay lobby {}.", lobby.id);
 		return Ok(());
 	}
 
@@ -1745,7 +1744,7 @@ async fn pick_ruleset(
 	else
 	{
 		// Pick failed, send the current ruleset.
-		eprintln!(
+		warn!(
 			"Cannot pick non-existing ruleset '{}' in lobby {}.",
 			ruleset_name, lobby.id
 		);
@@ -1791,7 +1790,7 @@ async fn handle_ruleset_confirmation(
 {
 	if ruleset_name != lobby.ruleset_name
 	{
-		println!(
+		debug!(
 			"Ignoring confirmation for ruleset '{}' \
 			 when current ruleset is '{}'.",
 			ruleset_name, lobby.ruleset_name
@@ -1846,7 +1845,7 @@ async fn try_start(
 		let update = chat::Update::DisbandLobby { lobby_id: lobby.id };
 		general_chat.send(update).await?;
 
-		eprintln!("Disbanding lobby {}: no clients at game start.", lobby.id);
+		debug!("Disbanding lobby {}: no clients at game start.", lobby.id);
 		return Ok(None);
 	}
 	else if clients.len() < client_count
@@ -1856,7 +1855,7 @@ async fn try_start(
 
 	if lobby.num_players < lobby.max_players
 	{
-		println!("Cannot start lobby {}: not enough players.", lobby.id);
+		debug!("Cannot start lobby {}: not enough players.", lobby.id);
 		return Ok(None);
 	}
 
@@ -1991,7 +1990,7 @@ async fn try_start(
 	// Check that all clients have access to the ruleset that we will use.
 	if !is_ruleset_confirmed(lobby, clients)
 	{
-		println!("Delaying start in lobby {}: ruleset unconfirmed.", lobby.id);
+		debug!("Delaying start in lobby {}: ruleset unconfirmed.", lobby.id);
 
 		// List the new ruleset to trigger additional confirmations.
 		let message = Message::ListRuleset {

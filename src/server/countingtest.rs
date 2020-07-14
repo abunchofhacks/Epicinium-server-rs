@@ -10,10 +10,15 @@ use std::io;
 use std::io::ErrorKind;
 use std::net::SocketAddr;
 
+use log::*;
+
 use rand::seq::SliceRandom;
+
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::prelude::*;
+
+use itertools::Itertools;
 
 #[tokio::main]
 pub async fn run(settings: &Settings) -> Result<(), Box<dyn error::Error>>
@@ -43,8 +48,8 @@ pub async fn run(settings: &Settings) -> Result<(), Box<dyn error::Error>>
 	let server = settings.get_server()?;
 	let port = settings.get_port()?;
 
-	println!(
-		"ntests = {}, fakeversion = v{}, server = {}, port = {}",
+	info!(
+		"Starting (ntests = {}, fakeversion = v{}, server = {}, port = {})...",
 		ntests,
 		fakeversion.to_string(),
 		server,
@@ -71,11 +76,11 @@ async fn run_test(
 	serveraddress: &SocketAddr,
 ) -> Result<(), Box<dyn error::Error>>
 {
-	println!("[{}] Connecting...", number);
+	debug!("[{}] Connecting...", number);
 
 	let connection = TcpStream::connect(&serveraddress).await?;
 
-	println!("[{}] Connected.", number);
+	debug!("[{}] Connected.", number);
 
 	let initialmessage = Message::Version {
 		version: fakeversion,
@@ -110,7 +115,7 @@ async fn run_test(
 
 	if !has_quit
 	{
-		eprintln!("[{}] Stopped receiving unexpectedly", number);
+		error!("[{}] Stopped receiving unexpectedly", number);
 	}
 
 	Ok(())
@@ -132,15 +137,15 @@ async fn receive_message(
 	};
 	if length == 0
 	{
-		println!("[{}] Received pulse.", number);
+		trace!("[{}] Received pulse.", number);
 		return Ok(Some(Message::Pulse));
 	}
 
-	println!("[{}] Receiving message of length {}...", number, length);
+	trace!("[{}] Receiving message of length {}...", number, length);
 	let mut buffer = vec![0u8; length as usize];
 	socket.read_exact(&mut buffer).await?;
 
-	println!("[{}] Received message of length {}.", number, buffer.len());
+	trace!("[{}] Received message of length {}.", number, buffer.len());
 	let message = parse_message(number, buffer)?;
 
 	Ok(Some(message))
@@ -157,9 +162,12 @@ fn parse_message(number: usize, buffer: Vec<u8>) -> io::Result<Message>
 		}
 	};
 
-	if jsonstr.len() < 200
+	if log_enabled!(log::Level::Trace)
 	{
-		println!("[{}] Received message: {}", number, jsonstr);
+		// TODO add dots if longer than 200 characters
+		let preview = jsonstr.chars().take(200);
+		// TODO escape newlines (#1266)
+		trace!("[{}] Received message: {}", number, preview.format(""));
 	}
 
 	let message: Message = serde_json::from_str(&jsonstr)?;
@@ -186,7 +194,7 @@ fn handle_message(
 		}]),
 		Message::JoinServer { content: None, .. } =>
 		{
-			eprintln!("[{}] Failed to join chat", number);
+			error!("[{}] Failed to join chat", number);
 			Err(())
 		}
 		Message::JoinServer {
@@ -196,7 +204,7 @@ fn handle_message(
 		{
 			if number == 0
 			{
-				println!("{}...", waiting);
+				info!("{}...", waiting);
 
 				if *waiting > 1
 				{
@@ -204,7 +212,7 @@ fn handle_message(
 				}
 				else if *waiting == 1
 				{
-					println!("{}!", number);
+					info!("{}!", number);
 					*has_quit = true;
 					return Ok(vec![
 						Message::Chat {
@@ -227,15 +235,12 @@ fn handle_message(
 		} =>
 		{
 			let x: usize = content.parse().map_err(|error| {
-				eprintln!(
-					"[{}] Failed to parse {}: {}",
-					number, content, error
-				);
+				error!("[{}] Failed to parse {}: {}", number, content, error);
 			})?;
 
 			if x + 1 == number
 			{
-				println!("{}!", number);
+				info!("{}!", number);
 				*has_quit = true;
 				return Ok(vec![
 					Message::Chat {
@@ -252,17 +257,17 @@ fn handle_message(
 		Message::LeaveServer { .. } => Ok(Vec::new()),
 		Message::Closing =>
 		{
-			eprintln!("[{}] Server closing unexpectedly", number);
+			error!("[{}] Server closing unexpectedly", number);
 			Err(())
 		}
 		Message::Closed =>
 		{
-			eprintln!("[{}] Server closed unexpectedly", number);
+			error!("[{}] Server closed unexpectedly", number);
 			Err(())
 		}
 		Message::Quit =>
 		{
-			eprintln!("[{}] Server closed unexpectedly", number);
+			error!("[{}] Server closed unexpectedly", number);
 			Err(())
 		}
 		_ =>
@@ -282,8 +287,7 @@ async fn send_message(
 
 	socket.write_all(&buffer).await?;
 
-	/*verbose*/
-	println!("[{}] Sent {} bytes.", number, buffer.len());
+	trace!("[{}] Sent {} bytes.", number, buffer.len());
 	Ok(())
 }
 
@@ -291,7 +295,7 @@ fn prepare_message(number: usize, message: Message) -> Vec<u8>
 {
 	if let Message::Pulse = message
 	{
-		println!("[{}] Sending pulse...", number);
+		trace!("[{}] Sending pulse...", number);
 
 		let zeroes = [0u8; 4];
 		return zeroes.to_vec();
@@ -318,11 +322,14 @@ fn prepare_message_data(number: usize, message: Message) -> (String, u32)
 
 	let length = jsonstr.len() as u32;
 
-	println!("[{}] Sending message of length {}...", number, length);
+	trace!("[{}] Sending message of length {}...", number, length);
 
-	if length < 200
+	if log_enabled!(log::Level::Trace)
 	{
-		println!("[{}] Sending message: {}", number, jsonstr);
+		// TODO add dots if longer than 200 characters
+		let preview = jsonstr.chars().take(200);
+		// TODO escape newlines (#912)
+		trace!("[{}] Sending message: {}", number, preview.format(""));
 	}
 
 	(jsonstr, length)

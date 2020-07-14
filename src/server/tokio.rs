@@ -15,6 +15,8 @@ use std::net::SocketAddr;
 use std::sync;
 use std::sync::atomic;
 
+use log::*;
+
 use futures::future;
 use futures::{FutureExt, StreamExt, TryFutureExt};
 
@@ -89,7 +91,7 @@ async fn accept_clients(
 	let listener = TcpListener::bind(&address).await?;
 	binding.confirm().await?;
 
-	println!("Listening on {}:{}", ipaddress, port);
+	info!("Listening on {}:{}...", ipaddress, port);
 
 	listen(
 		listener,
@@ -101,7 +103,7 @@ async fn accept_clients(
 	)
 	.await;
 
-	println!("Stopped listening.");
+	info!("Stopped listening.");
 
 	binding.unbind().await
 }
@@ -128,12 +130,12 @@ async fn listen(
 			Ok(socket) => socket,
 			Err(error) =>
 			{
-				println!("Failed to connect client: {:?}", error);
+				warn!("Failed to connect client: {:?}", error);
 				continue;
 			}
 		};
 
-		println!("Accepting incoming connection: {:?}", socket);
+		info!("Accepting incoming connection: {:?}", socket);
 
 		let serial = ticker;
 		ticker += 1;
@@ -151,7 +153,7 @@ async fn listen(
 			lobbyticker.clone(),
 		);
 
-		println!("Accepted client {}.", id);
+		info!("Accepted client {}.", id);
 	}
 }
 
@@ -183,7 +185,7 @@ async fn wait_for_close(
 	{
 		if is_open
 		{
-			println!("Closing...");
+			info!("Closing...");
 			server_state.broadcast(State::Closing)?;
 			is_open = false;
 		}
@@ -193,12 +195,12 @@ async fn wait_for_close(
 		}
 	}
 
-	println!("Closed.");
+	info!("Closed.");
 	// If all clients are disconnected, no one will receive the broadcast.
 	let _ = server_state.broadcast(State::Closed);
 
 	wait_for_canary(client_canary).await;
-	println!("All clients have disconnected.");
+	info!("All clients have disconnected.");
 	Ok(())
 }
 

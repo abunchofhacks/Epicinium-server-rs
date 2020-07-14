@@ -10,6 +10,8 @@ use crate::server::settings::*;
 
 use std::error;
 
+use log::*;
+
 use reqwest as http;
 
 use enumset::*;
@@ -182,27 +184,27 @@ impl Connection
 			.send()
 			.await
 			.map_err(|error| {
-				eprintln!("Login failed: {:?}", error);
+				error!("Login failed: {:?}", error);
 
 				ResponseStatus::ConnectionFailed
 			})?
 			.error_for_status()
 			.map_err(|error| {
-				eprintln!("Login failed: {:?}", error);
+				error!("Login failed: {:?}", error);
 
 				ResponseStatus::ConnectionFailed
 			})?
 			.json()
 			.await
 			.map_err(|error| {
-				eprintln!(
+				error!(
 					"Received malformed response from login server: {}",
 					error
 				);
 				ResponseStatus::ResponseMalformed
 			})?;
 
-		println!("Got a response from login server: {:?}", response);
+		debug!("Got a response from login server: {:?}", response);
 
 		if response.status == ResponseStatus::Success
 		{
