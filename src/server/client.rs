@@ -1547,6 +1547,7 @@ async fn handle_message(
 		| Message::AssignColor { .. }
 		| Message::Skins { .. }
 		| Message::InGame { .. }
+		| Message::Briefing { .. }
 		| Message::ReplayWithAnimations { .. }
 		| Message::Changes { .. }
 		| Message::OrdersOld { .. }

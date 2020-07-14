@@ -5,6 +5,7 @@ use crate::logic::ai;
 use crate::logic::automaton;
 use crate::logic::automaton as metadata;
 use crate::logic::automaton::Automaton;
+use crate::logic::challenge;
 use crate::logic::challenge::ChallengeId;
 use crate::logic::change::ChangeSet;
 use crate::logic::map;
@@ -246,8 +247,14 @@ pub async fn run(
 	});
 
 	// A challenge might be set.
-	// TODO set in automaton
-	// TODO initial_messages.push(Message::Briefing{...});
+	if let Some(challenge_id) = challenge
+	{
+		automaton.set_challenge(challenge_id)?;
+
+		initial_messages.push(Message::Briefing {
+			briefing: challenge::load_briefing(challenge_id),
+		});
+	}
 
 	// Send the initial messages.
 	for client in &mut players

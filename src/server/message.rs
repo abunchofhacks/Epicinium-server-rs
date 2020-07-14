@@ -228,6 +228,11 @@ pub enum Message
 		timer_in_seconds: Option<u32>,
 	},
 	Challenge,
+	Briefing
+	{
+		#[serde(rename = "metadata")]
+		briefing: challenge::MissionBriefing,
+	},
 	#[serde(rename = "replay")]
 	ReplayWithAnimations
 	{
