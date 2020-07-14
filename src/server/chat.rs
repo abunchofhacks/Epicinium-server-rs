@@ -147,7 +147,6 @@ fn handle_update(
 				id: lobby_id,
 				description_message,
 				sendbuffer,
-				dead: false,
 			};
 			handle_list_lobby(lobby, clients, lobbies)
 		}
@@ -171,6 +170,7 @@ fn handle_update(
 			general_chat,
 		} =>
 		{
+			verify_lobby(lobby_id, clients, lobbies);
 			handle_find_lobby(lobbies, lobby_id, callback, general_chat);
 		}
 
@@ -298,7 +298,6 @@ struct Lobby
 	id: Keycode,
 	description_message: Message,
 	sendbuffer: mpsc::Sender<lobby::Update>,
-	dead: bool,
 }
 
 fn handle_join(
@@ -646,6 +645,32 @@ fn handle_disband_lobby(
 	{
 		client.send(message.clone())
 	}
+}
+
+fn verify_lobby(
+	lobby_id: Keycode,
+	clients: &mut Vec<Client>,
+	lobbies: &mut Vec<Lobby>,
+)
+{
+	if let Some(lobby) = lobbies.iter_mut().find(|x| x.id == lobby_id)
+	{
+		if lobby.sendbuffer.try_send(lobby::Update::Pulse).is_ok()
+		{
+			return;
+		}
+		else
+		{
+			// Continue below.
+		}
+	}
+	else
+	{
+		return;
+	}
+
+	// The lobby crashed, so we disband it now.
+	handle_disband_lobby(lobby_id, clients, lobbies);
 }
 
 fn handle_find_lobby(

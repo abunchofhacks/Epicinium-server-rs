@@ -341,8 +341,6 @@ pub async fn run(
 		}
 	}
 
-	// TODO handle rejoins of observers that joined at the last moment
-
 	// Is this a competitive 1v1 match with two humans?
 	// TODO rating
 
@@ -351,6 +349,9 @@ pub async fn run(
 	{
 		retire(&mut automaton, client).await?;
 	}
+
+	println!("Game has finished in lobby {}; lingering...", lobby_id);
+	linger(&lobby_info, &mut players, &mut watchers, &mut updates).await?;
 
 	Ok(())
 }
@@ -546,7 +547,7 @@ async fn rest(
 		let update = match updates.recv().await
 		{
 			Some(update) => update,
-			None => return Err(Error::LobbyGone),
+			None => return Err(Error::Abandoned),
 		};
 
 		match update
@@ -629,6 +630,8 @@ async fn rest(
 					client.send(message.clone());
 				}
 			}
+			Update::Pulse =>
+			{}
 		}
 	}
 
@@ -676,7 +679,7 @@ async fn ensure_live_players(
 		let update = match updates.recv().await
 		{
 			Some(update) => update,
-			None => return Err(Error::LobbyGone),
+			None => return Err(Error::Abandoned),
 		};
 
 		match update
@@ -746,6 +749,8 @@ async fn ensure_live_players(
 					client.send(message.clone());
 				}
 			}
+			Update::Pulse =>
+			{}
 		}
 	}
 
@@ -787,7 +792,7 @@ async fn sleep(
 		let update = match updates.recv().await
 		{
 			Some(update) => update,
-			None => return Err(Error::LobbyGone),
+			None => return Err(Error::Abandoned),
 		};
 
 		match update
@@ -874,6 +879,8 @@ async fn sleep(
 					client.send(message.clone());
 				}
 			}
+			Update::Pulse =>
+			{}
 		}
 	}
 
@@ -920,7 +927,7 @@ async fn stage(
 		let update = match updates.recv().await
 		{
 			Some(update) => update,
-			None => return Err(Error::LobbyGone),
+			None => return Err(Error::Abandoned),
 		};
 
 		match update
@@ -997,6 +1004,61 @@ async fn stage(
 					client.send(message.clone());
 				}
 			}
+			Update::Pulse =>
+			{}
+		}
+	}
+
+	Ok(())
+}
+
+async fn linger(
+	lobby: &LobbyInfo,
+	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
+	updates: &mut mpsc::Receiver<Update>,
+) -> Result<(), Error>
+{
+	while let Some(update) = updates.recv().await
+	{
+		match update
+		{
+			Update::Leave {
+				client_id,
+				mut general_chat,
+			} =>
+			{
+				handle_leave(
+					lobby.id,
+					players,
+					watchers,
+					client_id,
+					&mut general_chat,
+				)
+				.await?;
+			}
+			Update::Join { .. } =>
+			{
+				// The game has ended, no longer accept joins.
+				// TODO send joinlobby{}?
+			}
+			Update::ForSetup(..) =>
+			{}
+			Update::ForGame(..) =>
+			{}
+			Update::Msg(message) =>
+			{
+				for client in players.iter_mut()
+				{
+					client.send(message.clone());
+				}
+				for client in watchers.iter_mut()
+				{
+					client.send(message.clone());
+				}
+			}
+			Update::Pulse =>
+			{}
 		}
 	}
 
@@ -1084,6 +1146,7 @@ fn do_join(
 
 	if disconnected_role.is_none() && !lobby.is_public && !is_invited
 	{
+		// TODO send joinlobby{}?
 		return Ok(RejoinResult::AccessDenied);
 	}
 
@@ -1360,7 +1423,7 @@ async fn handle_leave(
 #[derive(Debug)]
 pub enum Error
 {
-	LobbyGone,
+	Abandoned,
 	ClientGone
 	{
 		client_id: Keycode,
@@ -1406,7 +1469,7 @@ impl fmt::Display for Error
 	{
 		match self
 		{
-			Error::LobbyGone => write!(f, "{:#?}", &self),
+			Error::Abandoned => write!(f, "{:#?}", &self),
 			Error::ClientGone { .. } => write!(f, "{:#?}", &self),
 			Error::ResultDropped { .. } => write!(f, "{:#?}", &self),
 			Error::GeneralChat { .. } => write!(f, "{:#?}", &self),

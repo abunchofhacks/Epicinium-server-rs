@@ -34,6 +34,8 @@ use vec_drain_where::VecDrainWhereExt;
 #[derive(Debug)]
 pub enum Update
 {
+	Pulse,
+
 	Join
 	{
 		client_id: Keycode,
@@ -371,6 +373,9 @@ async fn handle_update(
 			}
 			Ok(None)
 		}
+
+		// The chat is making sure that this lobby still exists.
+		Update::Pulse => Ok(None),
 	}
 }
 
