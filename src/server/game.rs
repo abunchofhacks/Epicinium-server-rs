@@ -21,6 +21,8 @@ use crate::server::rating;
 use std::fmt;
 
 use tokio::sync::mpsc;
+use tokio::time as timer;
+use tokio::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub struct PlayerClient
@@ -462,6 +464,8 @@ async fn iterate(
 	broadcast(players, bots, watchers, cset)?;
 
 	// Allow the bots to calculate their next move.
+	// FUTURE bots could prepare orders asynchronously
+	// FUTURE start planning phase timer before bots prepare orders
 	for bot in bots.into_iter()
 	{
 		bot.ai.prepare_orders();
@@ -780,19 +784,31 @@ async fn sleep(
 		return Ok(());
 	}
 
+	let start = Instant::now();
+	let duration = match lobby.planning_time_in_seconds
+	{
+		Some(value) => Duration::from_secs(value as u64),
+		None => Duration::from_secs(24 * 60 * 60),
+	};
+	let end = start + duration;
+
 	// Start staging when either the timer runs out or all non-defeated
-	// players are ready, or when all players except one are undefeated
+	// players are ready, or when all players except one are defeated
 	// or have retired. Players and watchers can reconnect in the
 	// planning phase if there is still time.
-	// TODO timer
 	while !all_players_have_submitted_orders(players)
 	{
 		println!("Waiting until all players have submitted orders...");
 
-		let update = match updates.recv().await
+		let update = match timer::timeout_at(end, updates.recv()).await
 		{
-			Some(update) => update,
-			None => return Err(Error::Abandoned),
+			Ok(Some(update)) => update,
+			Ok(None) => return Err(Error::Abandoned),
+			Err(timer::Elapsed { .. }) =>
+			{
+				println!("Planning phase ending...");
+				break;
+			}
 		};
 
 		match update
@@ -846,8 +862,9 @@ async fn sleep(
 				mut general_chat,
 			} =>
 			{
-				// TODO timer
-				let time_remaining_in_seconds = None;
+				let time_remaining_in_seconds = lobby
+					.planning_time_in_seconds
+					.map(|timer| timer - start.elapsed().as_secs() as u32);
 				handle_join(
 					lobby,
 					automaton,
@@ -916,18 +933,25 @@ async fn stage(
 	updates: &mut mpsc::Receiver<Update>,
 ) -> Result<(), Error>
 {
+	let start = Instant::now();
+	let end = start + Duration::from_secs(10);
+
 	// There is a 10 second grace period for anyone whose orders we
 	// haven't received; they might have sent their orders before
 	// receiving the staging announcement.
-	// TODO timer
 	while !all_players_have_submitted_orders(players)
 	{
 		println!("Waiting until all players have staged orders...");
 
-		let update = match updates.recv().await
+		let update = match timer::timeout_at(end, updates.recv()).await
 		{
-			Some(update) => update,
-			None => return Err(Error::Abandoned),
+			Ok(Some(update)) => update,
+			Ok(None) => return Err(Error::Abandoned),
+			Err(timer::Elapsed { .. }) =>
+			{
+				println!("Staging phase ending...");
+				break;
+			}
 		};
 
 		match update
