@@ -152,6 +152,11 @@ pub fn automaton_is_defeated(
 	unsafe { epicinium_automaton_is_defeated(automaton.ptr, player) }
 }
 
+pub fn automaton_current_round(automaton: &mut AllocatedAutomaton) -> u32
+{
+	unsafe { epicinium_automaton_current_round(automaton.ptr) }
+}
+
 pub fn automaton_global_score(automaton: &mut AllocatedAutomaton) -> i32
 {
 	unsafe { epicinium_automaton_global_score(automaton.ptr) }
@@ -492,7 +497,7 @@ pub enum PlayerColor
 	SelfInternalDoNotUse,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChallengeId(u16);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -685,6 +690,7 @@ extern "C" {
 		automaton: *mut Automaton,
 		player: u8,
 	) -> bool;
+	fn epicinium_automaton_current_round(automaton: *mut Automaton) -> u32;
 	fn epicinium_automaton_global_score(automaton: *mut Automaton) -> i32;
 	fn epicinium_automaton_score(automaton: *mut Automaton, player: u8) -> i32;
 	fn epicinium_automaton_award(automaton: *mut Automaton, player: u8) -> i32;

@@ -314,9 +314,39 @@ pub async fn run(
 	automaton.load(map_name, shuffleplayers)?;
 	automaton.start_recording(metadata, lobby_id.to_string())?;
 
-	if is_rated
+	// Is this game rated?
+	let match_type = if !is_rated
 	{
-		// TODO rating
+		MatchType::Unrated
+	}
+	// Is this a competitive 1v1 match with two humans?
+	else if players.len() == 2 && bots.len() == 0
+	{
+		MatchType::Competitive
+	}
+	// Is this a free for all match with at least two humans?
+	else if players.len() >= 2
+	{
+		MatchType::FreeForAll {
+			num_non_bot_players: players.len(),
+		}
+	}
+	// Is this a versus AI match?
+	else if players.len() == 1
+	{
+		MatchType::VersusAi
+	}
+	// Otherwise this match contains only bots.
+	else
+	{
+		MatchType::Unrated
+	};
+
+	// Is this a (rated or unrated) 1v1 match between two humans?
+	let should_mention_on_discord = players.len() == 2 && bots.len() == 0;
+	if should_mention_on_discord
+	{
+		// TODO mention on discord
 	}
 
 	let lobby_info = LobbyInfo {
@@ -324,6 +354,9 @@ pub async fn run(
 		name: lobby_name,
 		description_metadata: lobby_description_metadata,
 		is_public,
+		match_type,
+		challenge,
+		should_mention_on_discord,
 		num_bots: bots.len(),
 		ruleset_name,
 		planning_time_in_seconds,
@@ -350,13 +383,16 @@ pub async fn run(
 		}
 	}
 
-	// Is this a competitive 1v1 match with two humans?
-	// TODO rating
+	// Did we send a gameStarted post?
+	if should_mention_on_discord
+	{
+		// TODO mention on discord
+	}
 
 	// If there are non-bot non-observer participants, adjust their ratings.
 	for client in players.iter_mut()
 	{
-		retire(&mut automaton, client).await?;
+		retire(&lobby_info, &mut automaton, client).await?;
 	}
 
 	println!("Game has finished in lobby {}; lingering...", lobby_id);
@@ -389,6 +425,9 @@ struct LobbyInfo
 	id: Keycode,
 	name: String,
 	is_public: bool,
+	match_type: MatchType,
+	challenge: Option<ChallengeId>,
+	should_mention_on_discord: bool,
 	num_bots: usize,
 	ruleset_name: String,
 	planning_time_in_seconds: Option<u32>,
@@ -586,7 +625,7 @@ async fn rest(
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
-				handle_resign(automaton, players, client_id).await?;
+				handle_resign(lobby, automaton, players, client_id).await?;
 			}
 			Update::Leave {
 				client_id,
@@ -705,7 +744,7 @@ async fn ensure_live_players(
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
-				handle_resign(automaton, players, client_id).await?;
+				handle_resign(lobby, automaton, players, client_id).await?;
 			}
 			Update::Leave {
 				client_id,
@@ -837,7 +876,7 @@ async fn sleep(
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
-				handle_resign(automaton, players, client_id).await?;
+				handle_resign(lobby, automaton, players, client_id).await?;
 
 				if too_few_potential_winners(players, num_bots)
 				{
@@ -980,7 +1019,7 @@ async fn stage(
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
-				handle_resign(automaton, players, client_id).await?;
+				handle_resign(lobby, automaton, players, client_id).await?;
 			}
 			Update::Leave {
 				client_id,
@@ -1347,6 +1386,7 @@ enum RejoinResult
 }
 
 async fn handle_resign(
+	lobby: &LobbyInfo,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
 	client_id: Keycode,
@@ -1360,10 +1400,11 @@ async fn handle_resign(
 
 	automaton.resign(client.color);
 
-	retire(automaton, client).await
+	retire(lobby, automaton, client).await
 }
 
 async fn retire(
+	lobby: &LobbyInfo,
 	automaton: &mut Automaton,
 	client: &mut PlayerClient,
 ) -> Result<(), Error>
@@ -1379,17 +1420,18 @@ async fn retire(
 	// which is when the Automaton updates its _round variable.
 	// Note that this means it is possible for someone to resign while unrated
 	// even though their opponent keeps playing a rated game.
-	// TODO is_rated && (defeated || round >= 3)
-	let is_rated = automaton.is_defeated(client.color);
-	// TODO add stars
-	let stars_for_current_challenge = 0;
+	let is_rated =
+		automaton.is_defeated(client.color) || automaton.current_round() >= 3;
 	let result = PlayerResult {
 		user_id: client.user_id,
 		username: client.username.clone(),
 		is_rated,
-		stars_for_current_challenge,
+		score: automaton.score(client.color),
+		awarded_stars: automaton.award(client.color),
+		match_type: lobby.match_type,
+		challenge: lobby.challenge,
 	};
-	let update = rating::Update::GameResult { result };
+	let update = rating::Update::GameResult(result);
 	callback.send(update).await?;
 	Ok(())
 }
@@ -1517,6 +1559,21 @@ pub struct PlayerResult
 	pub user_id: UserId,
 	pub username: String,
 	pub is_rated: bool,
-	pub stars_for_current_challenge: i32,
-	// TODO score, rating value etcetera
+	pub score: i32,
+	pub awarded_stars: i32,
+
+	pub match_type: MatchType,
+	pub challenge: Option<ChallengeId>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum MatchType
+{
+	Competitive,
+	FreeForAll
+	{
+		num_non_bot_players: usize,
+	},
+	VersusAi,
+	Unrated,
 }

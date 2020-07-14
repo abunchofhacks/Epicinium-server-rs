@@ -101,6 +101,11 @@ impl Automaton
 		epicinium::automaton_is_defeated(&mut self.0, player)
 	}
 
+	pub fn current_round(&mut self) -> u32
+	{
+		epicinium::automaton_current_round(&mut self.0)
+	}
+
 	pub fn global_score(&mut self) -> i32
 	{
 		epicinium::automaton_global_score(&mut self.0)

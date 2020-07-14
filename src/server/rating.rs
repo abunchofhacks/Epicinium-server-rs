@@ -4,6 +4,7 @@ use crate::common::platform::*;
 use crate::common::version::*;
 use crate::logic::challenge;
 use crate::server::game;
+use crate::server::game::MatchType;
 use crate::server::login::UserId;
 use crate::server::message::ResponseStatus;
 use crate::server::settings::*;
@@ -18,7 +19,7 @@ use reqwest as http;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Data
 {
-	pub rating: f32,
+	pub rating: f64,
 	pub stars: i32,
 	pub recent_stars: i32,
 }
@@ -28,12 +29,10 @@ pub enum Update
 {
 	Fresh
 	{
-		user_id: UserId, data: Data
+		user_id: UserId,
+		data: Data,
 	},
-	GameResult
-	{
-		result: game::PlayerResult
-	},
+	GameResult(game::PlayerResult),
 }
 
 pub async fn run(
@@ -51,7 +50,7 @@ pub async fn run(
 			{
 				database.cache.insert(user_id, data);
 			}
-			Update::GameResult { result } =>
+			Update::GameResult(result) =>
 			{
 				database.handle_result(result).await?
 			}
@@ -86,20 +85,26 @@ impl Database
 				return Ok(());
 			}
 		};
+
 		if result.is_rated
 		{
-			// TODO calculate rating
-
-			if let Some(connection) = &mut self.connection
+			let result = adjust(entry.rating, result.score, result.match_type);
+			if let Some(new_rating) = result
 			{
-				connection.update_rating(user_id, entry.rating).await?;
+				entry.rating = new_rating;
+				if let Some(connection) = &mut self.connection
+				{
+					connection.update_rating(user_id, entry.rating).await?;
+				}
 			}
 		}
-		if result.stars_for_current_challenge > entry.recent_stars
+
+		if result.challenge == Some(challenge::current_id())
+			&& result.awarded_stars > entry.recent_stars
 		{
-			let diff = result.stars_for_current_challenge - entry.recent_stars;
+			let diff = result.awarded_stars - entry.recent_stars;
 			entry.stars += diff;
-			entry.recent_stars = result.stars_for_current_challenge;
+			entry.recent_stars = result.awarded_stars;
 
 			if let Some(connection) = &mut self.connection
 			{
@@ -108,6 +113,64 @@ impl Database
 		}
 		Ok(())
 	}
+}
+
+fn adjust(rating: f64, score: i32, match_type: MatchType) -> Option<f64>
+{
+	let (mut gain_percentage, loss_percentage) = match match_type
+	{
+		MatchType::Competitive => (10, 10),
+		MatchType::FreeForAll {
+			num_non_bot_players: num,
+		} => (num as i32, 1),
+		MatchType::VersusAi => (1, 1),
+		MatchType::Unrated => return None,
+	};
+
+	// Represent 12.3f as 123 tenths.
+	let ratingtenths = (10.0 * rating + 0.5) as i32;
+	let scoretenths = 10 * score;
+
+	// For players with a rating below 9.0f, the gain percentage is increased.
+	if ratingtenths < 90
+	{
+		// At least 10% for a rating of 0.0f; at least 2% for a rating of 8.9f.
+		let minimum = 10 - (ratingtenths / 10);
+		gain_percentage = std::cmp::max(gain_percentage, minimum);
+	}
+
+	// Should the rating increase...
+	let ratingtenths = if scoretenths > ratingtenths
+	{
+		// Get the absolute difference.
+		let difference = scoretenths - ratingtenths;
+		// Rating gain is a percentage of the difference,
+		// rounded down to the nearest tenth,
+		// but at least a tenth.
+		let gaintenths = std::cmp::max(1, (gain_percentage * difference) / 100);
+		// Increase the rating by the gain.
+		std::cmp::max(0, std::cmp::min(ratingtenths + gaintenths, 1000))
+	}
+	// ... or decrease...
+	else if scoretenths < ratingtenths
+	{
+		// Get the absolute difference.
+		let difference = ratingtenths - scoretenths;
+		// Rating loss is a percentage of the difference,
+		// rounded down to the nearest tenth,
+		// but at least a tenth.
+		let losstenths = std::cmp::max(1, (loss_percentage * difference) / 100);
+		// Lower the rating by the loss.
+		std::cmp::max(0, std::cmp::min(ratingtenths - losstenths, 1000))
+	}
+	// ... or stay the same?
+	else
+	{
+		ratingtenths
+	};
+
+	// Convert back to real rating.
+	Some(0.1 * (ratingtenths as f64))
 }
 
 async fn initialize(
@@ -177,7 +240,7 @@ impl Connection
 	async fn update_rating(
 		&self,
 		user_id: UserId,
-		rating: f32,
+		rating: f64,
 	) -> Result<(), Box<dyn error::Error>>
 	{
 		let payload = json!({
