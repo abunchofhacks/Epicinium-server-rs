@@ -26,7 +26,7 @@ backtrace = "*"
 owning_ref = "*"
 libc = "*"
 log = "*"
-fern = "*"
+fern = { version = "^0.6", features = ["reopen-03"] }
 chrono = "*"
 thread-id = "*"
 itertools = "*"
