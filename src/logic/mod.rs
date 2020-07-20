@@ -12,3 +12,5 @@ pub mod ruleset;
 pub mod vision;
 
 mod epicinium;
+
+pub use epicinium::log_initialize;

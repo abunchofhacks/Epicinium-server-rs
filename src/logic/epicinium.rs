@@ -16,6 +16,7 @@ pub fn allocate_automaton(
 	ruleset_name: &str,
 ) -> Result<AllocatedAutomaton, InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let playercount = players.len();
 	let ruleset_name: CString = CString::new(ruleset_name)?;
 	let ptr = unsafe {
@@ -45,6 +46,7 @@ pub fn automaton_grant_global_vision(
 	player: PlayerColor,
 )
 {
+	let _scoped = LogGuard::create();
 	let player: u8 = unsafe { std::mem::transmute(player) };
 	unsafe { epicinium_automaton_grant_global_vision(automaton.ptr, player) }
 }
@@ -55,6 +57,7 @@ pub fn automaton_load_map(
 	shuffleplayers: bool,
 ) -> Result<(), InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let map_name: CString = CString::new(map_name)?;
 	unsafe {
 		epicinium_automaton_load_map(
@@ -71,6 +74,7 @@ pub fn automaton_restore(
 	recording_name: String,
 ) -> Result<(), InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let recording_name: CString = CString::new(recording_name)?;
 	unsafe {
 		epicinium_automaton_restore(automaton.ptr, recording_name.as_ptr())
@@ -83,6 +87,7 @@ pub fn automaton_load_replay(
 	recording_name: String,
 ) -> Result<(), InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let recording_name: CString = CString::new(recording_name)?;
 	unsafe {
 		epicinium_automaton_load_replay(automaton.ptr, recording_name.as_ptr())
@@ -96,6 +101,7 @@ pub fn automaton_start_recording(
 	recording_name: String,
 ) -> Result<(), InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let metadata: String = serde_json::to_string(&metadata)?;
 	let metadata: CString = CString::new(metadata)?;
 	let recording_name: CString = CString::new(recording_name)?;
@@ -114,17 +120,20 @@ pub fn automaton_set_challenge(
 	challenge_id: ChallengeId,
 ) -> Result<(), InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	unsafe { epicinium_automaton_set_challenge(automaton.ptr, challenge_id.0) }
 	Ok(())
 }
 
 pub fn automaton_is_active(automaton: &mut AllocatedAutomaton) -> bool
 {
+	let _scoped = LogGuard::create();
 	unsafe { epicinium_automaton_is_active(automaton.ptr) }
 }
 
 pub fn automaton_is_replay_active(automaton: &mut AllocatedAutomaton) -> bool
 {
+	let _scoped = LogGuard::create();
 	unsafe { epicinium_automaton_is_replay_active(automaton.ptr) }
 }
 
@@ -132,6 +141,7 @@ pub fn automaton_act(
 	automaton: &mut AllocatedAutomaton,
 ) -> Result<ChangeSet, InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_automaton_act(automaton.ptr, automaton.buffer))
 	};
@@ -142,6 +152,7 @@ pub fn automaton_act(
 
 pub fn automaton_is_gameover(automaton: &mut AllocatedAutomaton) -> bool
 {
+	let _scoped = LogGuard::create();
 	unsafe { epicinium_automaton_is_gameover(automaton.ptr) }
 }
 
@@ -150,17 +161,20 @@ pub fn automaton_is_defeated(
 	player: PlayerColor,
 ) -> bool
 {
+	let _scoped = LogGuard::create();
 	let player: u8 = unsafe { std::mem::transmute(player) };
 	unsafe { epicinium_automaton_is_defeated(automaton.ptr, player) }
 }
 
 pub fn automaton_current_round(automaton: &mut AllocatedAutomaton) -> u32
 {
+	let _scoped = LogGuard::create();
 	unsafe { epicinium_automaton_current_round(automaton.ptr) }
 }
 
 pub fn automaton_global_score(automaton: &mut AllocatedAutomaton) -> i32
 {
+	let _scoped = LogGuard::create();
 	unsafe { epicinium_automaton_global_score(automaton.ptr) }
 }
 
@@ -169,6 +183,7 @@ pub fn automaton_score(
 	player: PlayerColor,
 ) -> i32
 {
+	let _scoped = LogGuard::create();
 	let player: u8 = unsafe { std::mem::transmute(player) };
 	unsafe { epicinium_automaton_score(automaton.ptr, player) }
 }
@@ -178,12 +193,14 @@ pub fn automaton_award(
 	player: PlayerColor,
 ) -> i32
 {
+	let _scoped = LogGuard::create();
 	let player: u8 = unsafe { std::mem::transmute(player) };
 	unsafe { epicinium_automaton_award(automaton.ptr, player) }
 }
 
 pub fn automaton_resign(automaton: &mut AllocatedAutomaton, player: PlayerColor)
 {
+	let _scoped = LogGuard::create();
 	let player: u8 = unsafe { std::mem::transmute(player) };
 	unsafe { epicinium_automaton_resign(automaton.ptr, player) }
 }
@@ -192,6 +209,7 @@ pub fn automaton_hibernate(
 	automaton: &mut AllocatedAutomaton,
 ) -> Result<ChangeSet, InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_automaton_hibernate(
 			automaton.ptr,
@@ -207,6 +225,7 @@ pub fn automaton_awake(
 	automaton: &mut AllocatedAutomaton,
 ) -> Result<ChangeSet, InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_automaton_awake(
 			automaton.ptr,
@@ -224,6 +243,7 @@ pub fn automaton_receive(
 	orders: Vec<Order>,
 ) -> Result<(), InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let player: u8 = unsafe { std::mem::transmute(player) };
 	let orders: String = serde_json::to_string(&orders)?;
 	let orders: CString = CString::new(orders)?;
@@ -237,6 +257,7 @@ pub fn automaton_prepare(
 	automaton: &mut AllocatedAutomaton,
 ) -> Result<ChangeSet, InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_automaton_prepare(
 			automaton.ptr,
@@ -253,6 +274,7 @@ pub fn automaton_rejoin(
 	player: PlayerColor,
 ) -> Result<ChangeSet, InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let player: u8 = unsafe { std::mem::transmute(player) };
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_automaton_rejoin(
@@ -268,6 +290,7 @@ pub fn automaton_rejoin(
 
 pub fn map_pool() -> Vec<String>
 {
+	let _scoped = LogGuard::create();
 	let len = unsafe { epicinium_map_pool_size() };
 	let mut pool = Vec::with_capacity(len);
 	for i in 0..len
@@ -280,6 +303,7 @@ pub fn map_pool() -> Vec<String>
 
 pub fn initialize_ruleset_collection() -> Result<(), InitializationError>
 {
+	let _scoped = LogGuard::create();
 	let success = unsafe { epicinium_ruleset_initialize_collection() };
 	if success
 	{
@@ -293,12 +317,14 @@ pub fn initialize_ruleset_collection() -> Result<(), InitializationError>
 
 pub fn name_current_ruleset() -> String
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe { CStr::from_ptr(epicinium_ruleset_current_name()) };
 	s.to_string_lossy().to_string()
 }
 
 pub fn ruleset_exists(name: &str) -> bool
 {
+	let _scoped = LogGuard::create();
 	let name = match CString::new(name)
 	{
 		Ok(name) => name,
@@ -313,6 +339,7 @@ pub fn ruleset_exists(name: &str) -> bool
 
 pub fn ai_pool() -> Vec<String>
 {
+	let _scoped = LogGuard::create();
 	let len = unsafe { epicinium_ai_pool_size() };
 	let mut pool = Vec::with_capacity(len);
 	for i in 0..len
@@ -325,6 +352,7 @@ pub fn ai_pool() -> Vec<String>
 
 pub fn ai_exists(name: &str) -> bool
 {
+	let _scoped = LogGuard::create();
 	let name = match CString::new(name)
 	{
 		Ok(name) => name,
@@ -345,6 +373,7 @@ pub fn allocate_ai(
 	character: u8,
 ) -> Result<AllocatedAi, InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let ai_name: CString = CString::new(name)?;
 	let player: u8 = unsafe { std::mem::transmute(player) };
 	let difficulty: u8 = unsafe { std::mem::transmute(difficulty) };
@@ -376,6 +405,7 @@ pub fn ai_receive(
 	changes: Vec<Change>,
 ) -> Result<(), InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let changes: String = serde_json::to_string(&changes)?;
 	let changes: CString = CString::new(changes)?;
 	unsafe {
@@ -386,6 +416,7 @@ pub fn ai_receive(
 
 pub fn ai_prepare_orders(ai: &mut AllocatedAi)
 {
+	let _scoped = LogGuard::create();
 	unsafe { epicinium_ai_prepare_orders(ai.ptr) }
 }
 
@@ -393,6 +424,7 @@ pub fn ai_retrieve_orders(
 	ai: &mut AllocatedAi,
 ) -> Result<Vec<Order>, InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_ai_retrieve_orders(ai.ptr, ai.buffer)) //
 	};
@@ -405,6 +437,7 @@ pub fn ai_descriptive_name(
 	ai: &mut AllocatedAi,
 ) -> Result<String, InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_ai_descriptive_name(ai.ptr, ai.buffer)) //
 	};
@@ -416,6 +449,7 @@ pub fn ai_descriptive_metadata(
 	ai: &mut AllocatedAi,
 ) -> Result<ai::Metadata, InterfaceError>
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_ai_descriptive_metadata(ai.ptr, ai.buffer)) //
 	};
@@ -515,12 +549,14 @@ pub enum Difficulty
 
 pub fn current_challenge_id() -> ChallengeId
 {
+	let _scoped = LogGuard::create();
 	let id = unsafe { epicinium_current_challenge_id() };
 	ChallengeId(id)
 }
 
 pub fn challenge_key(id: ChallengeId) -> String
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_challenge_key(id.0)) //
 	};
@@ -529,11 +565,13 @@ pub fn challenge_key(id: ChallengeId) -> String
 
 pub fn challenge_num_bots(id: ChallengeId) -> usize
 {
+	let _scoped = LogGuard::create();
 	unsafe { epicinium_challenge_num_bots(id.0) }
 }
 
 pub fn challenge_bot_name(id: ChallengeId) -> String
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_challenge_bot_name(id.0)) //
 	};
@@ -542,11 +580,13 @@ pub fn challenge_bot_name(id: ChallengeId) -> String
 
 pub fn challenge_bot_difficulty(id: ChallengeId) -> Difficulty
 {
+	let _scoped = LogGuard::create();
 	unsafe { std::mem::transmute(epicinium_challenge_bot_difficulty(id.0)) }
 }
 
 pub fn challenge_map_name(id: ChallengeId) -> String
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_challenge_map_name(id.0)) //
 	};
@@ -555,6 +595,7 @@ pub fn challenge_map_name(id: ChallengeId) -> String
 
 pub fn challenge_ruleset_name(id: ChallengeId) -> Option<String>
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_challenge_ruleset_name(id.0)) //
 	};
@@ -563,6 +604,7 @@ pub fn challenge_ruleset_name(id: ChallengeId) -> Option<String>
 
 pub fn challenge_display_name(id: ChallengeId) -> String
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_challenge_display_name(id.0)) //
 	};
@@ -571,6 +613,7 @@ pub fn challenge_display_name(id: ChallengeId) -> String
 
 pub fn challenge_panel_picture_name(id: ChallengeId) -> String
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_challenge_panel_picture_name(id.0)) //
 	};
@@ -579,6 +622,7 @@ pub fn challenge_panel_picture_name(id: ChallengeId) -> String
 
 pub fn challenge_discord_image_key(id: ChallengeId) -> String
 {
+	let _scoped = LogGuard::create();
 	let s: &CStr = unsafe {
 		CStr::from_ptr(epicinium_challenge_discord_image_key(id.0)) //
 	};
@@ -587,6 +631,7 @@ pub fn challenge_discord_image_key(id: ChallengeId) -> String
 
 pub fn challenge_mission_briefing(id: ChallengeId) -> serde_json::Value
 {
+	let _scoped = LogGuard::create();
 	let num = unsafe { epicinium_challenge_briefing_size(id.0) };
 	let mut data = serde_json::Map::with_capacity(num);
 	for i in 0..num
@@ -617,6 +662,7 @@ impl Drop for AllocatedAutomaton
 {
 	fn drop(&mut self)
 	{
+		let _scoped = LogGuard::create();
 		unsafe { epicinium_automaton_deallocate(self.ptr) }
 		unsafe { epicinium_buffer_deallocate(self.buffer) }
 	}
@@ -637,6 +683,7 @@ impl Drop for AllocatedAi
 {
 	fn drop(&mut self)
 	{
+		let _scoped = LogGuard::create();
 		unsafe { epicinium_ai_deallocate(self.ptr) }
 		unsafe { epicinium_buffer_deallocate(self.buffer) }
 	}
@@ -645,6 +692,63 @@ impl Drop for AllocatedAi
 enum AICommander {}
 
 enum Buffer {}
+
+#[repr(u8)]
+enum PlogSeverity
+{
+	None,
+	Fatal,
+	Error,
+	Warning,
+	Info,
+	Debug,
+	Verbose,
+}
+
+pub fn log_initialize()
+{
+	// TODO loglevel
+	let severity = PlogSeverity::Verbose;
+
+	let severity: u8 = unsafe { std::mem::transmute(severity) };
+	unsafe { epicinium_log_initialize(severity) };
+}
+
+extern "C" fn log_callback(severity: u8, record: *const c_char)
+{
+	let severity: PlogSeverity = unsafe { std::mem::transmute(severity) };
+	let record: &CStr = unsafe { CStr::from_ptr(record) };
+	let record = record.to_string_lossy();
+	match severity
+	{
+		PlogSeverity::None | PlogSeverity::Fatal | PlogSeverity::Error =>
+		{
+			error!("{}", record)
+		}
+		PlogSeverity::Warning => warn!("{}", record),
+		PlogSeverity::Info => info!("{}", record),
+		PlogSeverity::Debug => debug!("{}", record),
+		PlogSeverity::Verbose => trace!("{}", record),
+	}
+}
+
+struct LogGuard {}
+
+impl LogGuard
+{
+	fn create()
+	{
+		unsafe { epicinium_log_callback_install(log_callback) }
+	}
+}
+
+impl Drop for LogGuard
+{
+	fn drop(&mut self)
+	{
+		unsafe { epicinium_log_callback_deinstall() }
+	}
+}
 
 #[link(name = "epicinium", kind = "static")]
 extern "C" {
@@ -771,4 +875,10 @@ extern "C" {
 
 	fn epicinium_buffer_allocate() -> *mut Buffer;
 	fn epicinium_buffer_deallocate(tmp: *mut Buffer);
+
+	fn epicinium_log_initialize(severity: u8);
+	fn epicinium_log_callback_install(
+		callback: extern "C" fn(u8, *const c_char),
+	);
+	fn epicinium_log_callback_deinstall();
 }
