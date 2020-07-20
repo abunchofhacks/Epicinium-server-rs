@@ -277,6 +277,10 @@ pub enum Message
 
 		target: ChatTarget,
 	},
+	Debug
+	{
+		content: String,
+	},
 }
 
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]

@@ -76,6 +76,24 @@ async fn run_test(
 	serveraddress: &SocketAddr,
 ) -> Result<(), Box<dyn error::Error>>
 {
+	match run_test_impl(number, count, fakeversion, serveraddress).await
+	{
+		Ok(()) => Ok(()),
+		Err(error) =>
+		{
+			error!("[{}] {:?}", number, error);
+			Err(error)
+		}
+	}
+}
+
+async fn run_test_impl(
+	number: usize,
+	count: usize,
+	fakeversion: Version,
+	serveraddress: &SocketAddr,
+) -> Result<(), Box<dyn error::Error>>
+{
 	debug!("[{}] Connecting...", number);
 
 	let connection = TcpStream::connect(&serveraddress).await?;
@@ -95,6 +113,11 @@ async fn run_test(
 	let (mut reader, mut writer) = tokio::io::split(connection);
 
 	send_message(number, &mut writer, initialmessage).await?;
+
+	let debugmessage = Message::Debug {
+		content: format_args!("I am number {}", number).to_string(),
+	};
+	send_message(number, &mut writer, debugmessage).await?;
 
 	while let Some(message) = receive_message(number, &mut reader).await?
 	{

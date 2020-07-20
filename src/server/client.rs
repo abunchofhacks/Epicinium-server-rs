@@ -132,7 +132,7 @@ pub fn accept(
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
 )
 {
-	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
+	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(10000);
 	let sendbuffer_pulse = sendbuffer_in.clone();
 	let sendbuffer_login = sendbuffer_in.clone();
 	let sendbuffer_handle = sendbuffer_in.clone();
@@ -1512,6 +1512,11 @@ async fn handle_message(
 		{
 			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
+		}
+		Message::Debug { content } =>
+		{
+			// TODO escape newlines etcetera (#1266)
+			debug!("Client {} says: {}", client.id, content);
 		}
 		Message::DisbandLobby { .. }
 		| Message::ListLobby { .. }
