@@ -1,6 +1,6 @@
 /* Log */
 
-pub fn start(logname: &str) -> Result<(), fern::InitError>
+pub fn start(logname: &str, level: Level) -> Result<(), fern::InitError>
 {
 	let tracelogfilename: std::path::PathBuf =
 		format_args!("logs/{}.trace.log", logname)
@@ -15,6 +15,15 @@ pub fn start(logname: &str) -> Result<(), fern::InitError>
 
 	let sighup = Some(libc::SIGHUP);
 
+	let levelfilter = match level
+	{
+		Level::Error => log::LevelFilter::Error,
+		Level::Warn => log::LevelFilter::Warn,
+		Level::Info => log::LevelFilter::Info,
+		Level::Debug => log::LevelFilter::Debug,
+		Level::Verbose => log::LevelFilter::Trace,
+	};
+
 	fern::Dispatch::new()
 		.format(|out, message, record| {
 			out.finish(format_args!(
@@ -27,6 +36,7 @@ pub fn start(logname: &str) -> Result<(), fern::InitError>
 				msg = message
 			))
 		})
+		.level(levelfilter)
 		.chain(fern::log_reopen(&tracelogfilename, sighup)?)
 		.chain(
 			fern::Dispatch::new()
@@ -40,4 +50,15 @@ pub fn start(logname: &str) -> Result<(), fern::InitError>
 		)
 		.apply()?;
 	Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Level
+{
+	Error,
+	Warn,
+	Info,
+	Debug,
+	Verbose,
 }

@@ -1,5 +1,6 @@
 /* Epicinium-as-a-library */
 
+use crate::common;
 use crate::logic::ai;
 use crate::logic::automaton;
 use crate::logic::change::{Change, ChangeSet};
@@ -659,11 +660,16 @@ enum PlogSeverity
 	Verbose,
 }
 
-pub fn log_initialize()
+pub fn log_initialize(level: common::log::Level)
 {
-	// TODO loglevel
-	let severity = PlogSeverity::Verbose;
-
+	let severity = match level
+	{
+		common::log::Level::Error => PlogSeverity::Error,
+		common::log::Level::Warn => PlogSeverity::Warning,
+		common::log::Level::Info => PlogSeverity::Info,
+		common::log::Level::Debug => PlogSeverity::Debug,
+		common::log::Level::Verbose => PlogSeverity::Verbose,
+	};
 	let severity: u8 = unsafe { std::mem::transmute(severity) };
 	unsafe { epicinium_log_initialize(log_callback, severity) };
 }

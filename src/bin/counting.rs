@@ -23,7 +23,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>>
 		}
 	}
 
-	epicinium::log::start(&logname)?;
+	let loglevel = settings
+		.loglevel()
+		.unwrap_or(epicinium::log::Level::Verbose);
+	log::start(&logname, loglevel)?;
 
 	println!(
 		"[ Epicinium Counting Stress Test ] ({} v{})",

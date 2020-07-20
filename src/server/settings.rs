@@ -1,6 +1,7 @@
 /* Settings */
 
 use crate::common::header::*;
+use crate::common::log;
 
 use std::error;
 use std::fmt;
@@ -24,9 +25,8 @@ struct SettingContents
 {
 	#[serde(default, skip_serializing_if = "is_zero")]
 	logname: Option<String>,
-	// TODO loglevel
-	// TODO logrollback
-	// TODO perflog
+	#[serde(default, skip_serializing_if = "is_zero")]
+	loglevel: Option<log::Level>,
 	// TODO datafolder
 	// TODO seed
 	#[serde(default, skip_serializing_if = "is_zero")]
@@ -58,6 +58,13 @@ impl Settings
 			.as_ref()
 			.or(self.contents.logname.as_ref())
 			.or(self.defaults.logname.as_ref())
+	}
+	pub fn loglevel(&self) -> Option<log::Level>
+	{
+		self.overrides
+			.loglevel
+			.or(self.contents.loglevel)
+			.or(self.defaults.loglevel)
 	}
 	pub fn server(&self) -> Option<&String>
 	{
@@ -118,6 +125,10 @@ impl Settings
 	{
 		self.logname().ok_or(Error::new("logname"))
 	}
+	pub fn get_loglevel(&self) -> Result<log::Level, Error>
+	{
+		self.loglevel().ok_or(Error::new("loglevel"))
+	}
 	pub fn get_server(&self) -> Result<&String, Error>
 	{
 		self.server().ok_or(Error::new("server"))
@@ -152,6 +163,10 @@ impl Settings
 	{
 		self.contents.logname = Some(value);
 	}
+	pub fn set_loglevel(&mut self, value: log::Level)
+	{
+		self.contents.loglevel = Some(value);
+	}
 	pub fn set_server(&mut self, value: String)
 	{
 		self.contents.server = Some(value);
@@ -184,6 +199,10 @@ impl Settings
 	pub fn override_logname(&mut self, value: String)
 	{
 		self.overrides.logname = Some(value);
+	}
+	pub fn override_loglevel(&mut self, value: log::Level)
+	{
+		self.overrides.loglevel = Some(value);
 	}
 	pub fn override_server(&mut self, value: String)
 	{
@@ -289,6 +308,10 @@ impl Settings
 			if settings.logname.is_some()
 			{
 				self.defaults.logname = settings.logname;
+			}
+			if settings.loglevel.is_some()
+			{
+				self.defaults.loglevel = settings.loglevel;
 			}
 			if settings.server.is_some()
 			{

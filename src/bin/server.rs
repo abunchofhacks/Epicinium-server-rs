@@ -26,8 +26,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>>
 		}
 	}
 
-	epicinium::log::start(&logname)?;
-	epicinium::logic::log_initialize();
+	let loglevel = settings
+		.loglevel()
+		.unwrap_or(epicinium::log::Level::Verbose);
+	epicinium::log::start(&logname, loglevel)?;
+	epicinium::logic::log_initialize(loglevel);
 
 	println!("[ Epicinium Server ] ({} v{})", logname, currentversion);
 	println!("");
