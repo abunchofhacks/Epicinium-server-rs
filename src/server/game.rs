@@ -33,8 +33,7 @@ pub struct PlayerClient
 	pub id: Keycode,
 	pub user_id: UserId,
 	pub username: String,
-	pub sendbuffer: Option<mpsc::Sender<Message>>,
-	pub poison: Option<mpsc::Sender<client::Poison>>,
+	pub handle: client::Handle,
 	pub rating_callback: Option<mpsc::Sender<rating::Update>>,
 
 	pub color: PlayerColor,
@@ -47,46 +46,14 @@ pub struct PlayerClient
 
 impl PlayerClient
 {
-	fn is_disconnected(&self) -> bool
+	fn is_connected(&self) -> bool
 	{
-		self.sendbuffer.is_none()
+		!self.handle.is_disconnected()
 	}
 
 	fn is_retired(&self) -> bool
 	{
 		self.rating_callback.is_none()
-	}
-
-	fn kill(&mut self)
-	{
-		match self.poison.take()
-		{
-			Some(mut poison) =>
-			{
-				let _ = poison.try_send(client::Poison {});
-			}
-			None =>
-			{}
-		}
-	}
-
-	fn send(&mut self, message: Message)
-	{
-		let result = match &mut self.sendbuffer
-		{
-			Some(sendbuffer) => sendbuffer.try_send(message),
-			None => Ok(()),
-		};
-
-		match result
-		{
-			Ok(()) => (),
-			Err(_error) =>
-			{
-				self.sendbuffer = None;
-				self.kill();
-			}
-		}
 	}
 }
 
@@ -108,8 +75,7 @@ pub struct WatcherClient
 	pub id: Keycode,
 	pub user_id: UserId,
 	pub username: String,
-	pub sendbuffer: Option<mpsc::Sender<Message>>,
-	pub poison: Option<mpsc::Sender<client::Poison>>,
+	pub handle: client::Handle,
 
 	pub role: Role,
 	pub vision_level: PlayerColor,
@@ -119,41 +85,9 @@ pub struct WatcherClient
 
 impl WatcherClient
 {
-	fn is_disconnected(&self) -> bool
+	fn is_connected(&self) -> bool
 	{
-		self.sendbuffer.is_none()
-	}
-
-	fn kill(&mut self)
-	{
-		match self.poison.take()
-		{
-			Some(mut poison) =>
-			{
-				let _ = poison.try_send(client::Poison {});
-			}
-			None =>
-			{}
-		}
-	}
-
-	fn send(&mut self, message: Message)
-	{
-		let result = match &mut self.sendbuffer
-		{
-			Some(sendbuffer) => sendbuffer.try_send(message),
-			None => Ok(()),
-		};
-
-		match result
-		{
-			Ok(()) => (),
-			Err(_error) =>
-			{
-				self.sendbuffer = None;
-				self.kill();
-			}
-		}
+		!self.handle.is_disconnected()
 	}
 }
 
@@ -233,7 +167,7 @@ pub async fn run(
 	{
 		if is_tutorial
 		{
-			client.send(Message::Tutorial {
+			client.handle.send(Message::Tutorial {
 				role: Some(Role::Player),
 				player: Some(client.color),
 				ruleset_name: Some(ruleset_name.clone()),
@@ -242,7 +176,7 @@ pub async fn run(
 		}
 		else
 		{
-			client.send(Message::Game {
+			client.handle.send(Message::Game {
 				role: Some(Role::Player),
 				player: Some(client.color),
 				ruleset_name: Some(ruleset_name.clone()),
@@ -253,7 +187,7 @@ pub async fn run(
 
 	for client in &mut watchers
 	{
-		client.send(Message::Game {
+		client.handle.send(Message::Game {
 			role: Some(Role::Observer),
 			player: None,
 			ruleset_name: Some(ruleset_name.clone()),
@@ -299,14 +233,14 @@ pub async fn run(
 	{
 		for message in &initial_messages
 		{
-			client.send(message.clone());
+			client.handle.send(message.clone());
 		}
 	}
 	for client in &mut watchers
 	{
 		for message in &initial_messages
 		{
-			client.send(message.clone());
+			client.handle.send(message.clone());
 		}
 	}
 
@@ -536,12 +470,12 @@ async fn iterate(
 	for client in players.into_iter()
 	{
 		client.has_synced = false;
-		client.send(message.clone());
+		client.handle.send(message.clone());
 	}
 	for client in watchers.into_iter()
 	{
 		client.has_synced = false;
-		client.send(message.clone());
+		client.handle.send(message.clone());
 	}
 
 	let cset = automaton.hibernate()?;
@@ -596,7 +530,7 @@ fn broadcast(
 	{
 		let changes = cset.get(client.color);
 		let message = Message::Changes { changes };
-		client.send(message);
+		client.handle.send(message);
 	}
 
 	for bot in bots
@@ -609,7 +543,7 @@ fn broadcast(
 	{
 		let changes = cset.get(client.vision_level);
 		let message = Message::Changes { changes };
-		client.send(message);
+		client.handle.send(message);
 	}
 
 	Ok(())
@@ -683,9 +617,7 @@ async fn rest(
 				client_id,
 				client_user_id,
 				client_username,
-				client_sendbuffer,
-				client_callback,
-				client_poison,
+				client_handle,
 				lobby_sendbuffer,
 				mut general_chat,
 			} =>
@@ -699,9 +631,7 @@ async fn rest(
 					client_id,
 					client_user_id,
 					client_username,
-					client_sendbuffer,
-					client_callback,
-					client_poison,
+					client_handle,
 					lobby_sendbuffer,
 					&mut general_chat,
 				)
@@ -713,11 +643,11 @@ async fn rest(
 			{
 				for client in players.iter_mut()
 				{
-					client.send(message.clone());
+					client.handle.send(message.clone());
 				}
 				for client in watchers.iter_mut()
 				{
-					client.send(message.clone());
+					client.handle.send(message.clone());
 				}
 			}
 			Update::Pulse =>
@@ -733,18 +663,18 @@ fn all_players_or_watchers_have_synced(
 	watchers: &mut Vec<WatcherClient>,
 ) -> bool
 {
-	if players.iter().find(|x| !x.is_disconnected()).is_some()
+	if players.iter().find(|x| x.is_connected()).is_some()
 	{
 		players
 			.iter()
-			.find(|x| !x.is_disconnected() && !x.has_synced)
+			.find(|x| x.is_connected() && !x.has_synced)
 			.is_none()
 	}
 	else
 	{
 		watchers
 			.iter()
-			.find(|x| !x.is_disconnected() && !x.has_synced)
+			.find(|x| x.is_connected() && !x.has_synced)
 			.is_none()
 	}
 }
@@ -804,9 +734,7 @@ async fn ensure_live_players(
 				client_id,
 				client_user_id,
 				client_username,
-				client_sendbuffer,
-				client_callback,
-				client_poison,
+				client_handle,
 				lobby_sendbuffer,
 				mut general_chat,
 			} =>
@@ -820,9 +748,7 @@ async fn ensure_live_players(
 					client_id,
 					client_user_id,
 					client_username,
-					client_sendbuffer,
-					client_callback,
-					client_poison,
+					client_handle,
 					lobby_sendbuffer,
 					&mut general_chat,
 				)
@@ -834,11 +760,11 @@ async fn ensure_live_players(
 			{
 				for client in players.iter_mut()
 				{
-					client.send(message.clone());
+					client.handle.send(message.clone());
 				}
 				for client in watchers.iter_mut()
 				{
-					client.send(message.clone());
+					client.handle.send(message.clone());
 				}
 			}
 			Update::Pulse =>
@@ -853,7 +779,7 @@ fn at_least_one_live_player(players: &mut Vec<PlayerClient>) -> bool
 {
 	players
 		.iter()
-		.find(|x| !x.is_defeated && !x.is_retired() && !x.is_disconnected())
+		.find(|x| !x.is_defeated && !x.is_retired() && x.is_connected())
 		.is_some()
 }
 
@@ -944,9 +870,7 @@ async fn sleep(
 				client_id,
 				client_user_id,
 				client_username,
-				client_sendbuffer,
-				client_callback,
-				client_poison,
+				client_handle,
 				lobby_sendbuffer,
 				mut general_chat,
 			} =>
@@ -965,9 +889,7 @@ async fn sleep(
 					client_id,
 					client_user_id,
 					client_username,
-					client_sendbuffer,
-					client_callback,
-					client_poison,
+					client_handle,
 					lobby_sendbuffer,
 					&mut general_chat,
 				)
@@ -979,11 +901,11 @@ async fn sleep(
 			{
 				for client in players.iter_mut()
 				{
-					client.send(message.clone());
+					client.handle.send(message.clone());
 				}
 				for client in watchers.iter_mut()
 				{
-					client.send(message.clone());
+					client.handle.send(message.clone());
 				}
 			}
 			Update::Pulse =>
@@ -1011,7 +933,7 @@ fn all_players_have_submitted_orders(players: &mut Vec<PlayerClient>) -> bool
 {
 	players
 		.iter()
-		.filter(|x| !x.is_defeated && !x.is_retired() && !x.is_disconnected())
+		.filter(|x| !x.is_defeated && !x.is_retired() && x.is_connected())
 		.all(|x| x.submitted_orders.is_some())
 }
 
@@ -1083,9 +1005,7 @@ async fn stage(
 				client_id,
 				client_user_id,
 				client_username,
-				client_sendbuffer,
-				client_callback,
-				client_poison,
+				client_handle,
 				lobby_sendbuffer,
 				mut general_chat,
 			} =>
@@ -1099,9 +1019,7 @@ async fn stage(
 					client_id,
 					client_user_id,
 					client_username,
-					client_sendbuffer,
-					client_callback,
-					client_poison,
+					client_handle,
 					lobby_sendbuffer,
 					&mut general_chat,
 				)
@@ -1113,11 +1031,11 @@ async fn stage(
 			{
 				for client in players.iter_mut()
 				{
-					client.send(message.clone());
+					client.handle.send(message.clone());
 				}
 				for client in watchers.iter_mut()
 				{
-					client.send(message.clone());
+					client.handle.send(message.clone());
 				}
 			}
 			Update::Pulse =>
@@ -1166,11 +1084,11 @@ async fn linger(
 			{
 				for client in players.iter_mut()
 				{
-					client.send(message.clone());
+					client.handle.send(message.clone());
 				}
 				for client in watchers.iter_mut()
 				{
-					client.send(message.clone());
+					client.handle.send(message.clone());
 				}
 			}
 			Update::Pulse =>
@@ -1190,9 +1108,7 @@ async fn handle_join(
 	client_id: Keycode,
 	client_user_id: UserId,
 	client_username: String,
-	client_sendbuffer: mpsc::Sender<Message>,
-	client_callback: mpsc::Sender<client::Update>,
-	client_poison: mpsc::Sender<client::Poison>,
+	client_handle: client::Handle,
 	lobby_sendbuffer: mpsc::Sender<Update>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
@@ -1206,9 +1122,7 @@ async fn handle_join(
 		client_id,
 		client_user_id,
 		client_username.clone(),
-		client_sendbuffer,
-		client_callback,
-		client_poison,
+		client_handle,
 		lobby_sendbuffer,
 	)
 	{
@@ -1237,9 +1151,7 @@ fn do_join(
 	client_id: Keycode,
 	client_user_id: UserId,
 	client_username: String,
-	client_sendbuffer: mpsc::Sender<Message>,
-	mut client_callback: mpsc::Sender<client::Update>,
-	mut client_poison: mpsc::Sender<client::Poison>,
+	mut client_handle: client::Handle,
 	lobby_sendbuffer: mpsc::Sender<Update>,
 ) -> Result<RejoinResult, Error>
 {
@@ -1269,20 +1181,18 @@ fn do_join(
 		return Ok(RejoinResult::AccessDenied);
 	}
 
-	let mut newcomer_messages = Vec::new();
-
 	// Tell the newcomer which users are already in the lobby.
-	for other in players.iter().filter(|x| !x.is_disconnected())
+	for other in players.iter().filter(|x| x.is_connected())
 	{
-		newcomer_messages.push(Message::JoinLobby {
+		client_handle.send(Message::JoinLobby {
 			lobby_id: Some(lobby.id),
 			username: Some(other.username.clone()),
 			metadata: None,
 		});
 	}
-	for other in watchers.iter().filter(|x| !x.is_disconnected())
+	for other in watchers.iter().filter(|x| x.is_connected())
 	{
-		newcomer_messages.push(Message::JoinLobby {
+		client_handle.send(Message::JoinLobby {
 			lobby_id: Some(lobby.id),
 			username: Some(other.username.clone()),
 			metadata: None,
@@ -1297,13 +1207,13 @@ fn do_join(
 	};
 	for other in players.iter_mut()
 	{
-		other.send(message.clone());
+		other.handle.send(message.clone());
 	}
 	for other in watchers.iter_mut()
 	{
-		other.send(message.clone());
+		other.handle.send(message.clone());
 	}
-	newcomer_messages.push(message);
+	client_handle.send(message);
 
 	// Describe the lobby to the client so that Discord presence is updated.
 	let message = Message::ListLobby {
@@ -1311,13 +1221,13 @@ fn do_join(
 		lobby_name: lobby.name.clone(),
 		metadata: lobby.description_metadata.clone(),
 	};
-	newcomer_messages.push(message);
+	client_handle.send(message);
 
 	// Tell the newcomer that the game has started.
 	let role = disconnected_role.unwrap_or(Role::Observer);
 	if let Some(color) = disconnected_player_color
 	{
-		newcomer_messages.push(Message::Game {
+		client_handle.send(Message::Game {
 			role: Some(role),
 			player: Some(color),
 			ruleset_name: Some(lobby.ruleset_name.clone()),
@@ -1326,7 +1236,7 @@ fn do_join(
 	}
 	else
 	{
-		newcomer_messages.push(Message::Game {
+		client_handle.send(Message::Game {
 			role: Some(role),
 			player: None,
 			ruleset_name: Some(lobby.ruleset_name.clone()),
@@ -1335,7 +1245,10 @@ fn do_join(
 	}
 
 	// Tell the newcomer the player colors, skins and if there is a challenge.
-	newcomer_messages.extend_from_slice(&lobby.initial_messages);
+	for message in &lobby.initial_messages
+	{
+		client_handle.send(message.clone());
+	}
 
 	let vision = match disconnected_player_color
 	{
@@ -1345,11 +1258,11 @@ fn do_join(
 	let cset = automaton.rejoin(vision)?;
 	let changes = cset.get(vision);
 
-	newcomer_messages.push(Message::ReplayWithAnimations {
+	client_handle.send(Message::ReplayWithAnimations {
 		on_or_off: OnOrOff::Off,
 	});
-	newcomer_messages.push(Message::Changes { changes });
-	newcomer_messages.push(Message::ReplayWithAnimations {
+	client_handle.send(Message::Changes { changes });
+	client_handle.send(Message::ReplayWithAnimations {
 		on_or_off: OnOrOff::On,
 	});
 	match rejoin_phase
@@ -1358,7 +1271,7 @@ fn do_join(
 			time_remaining_in_seconds,
 		} =>
 		{
-			newcomer_messages.push(Message::Sync {
+			client_handle.send(Message::Sync {
 				time_remaining_in_seconds,
 			});
 		}
@@ -1369,15 +1282,7 @@ fn do_join(
 	let update = client::Update::JoinedLobby {
 		lobby: lobby_sendbuffer,
 	};
-	match client_callback.try_send(update)
-	{
-		Ok(()) => (),
-		Err(e) =>
-		{
-			error!("Callback error in join: {:?}", e);
-			let _ = client_poison.try_send(client::Poison {});
-		}
-	}
+	client_handle.notify(update);
 
 	if let Some(player) =
 		players.iter_mut().find(|x| x.user_id == client_user_id)
@@ -1385,12 +1290,7 @@ fn do_join(
 		player.id = client_id;
 		debug_assert!(player.username == client_username);
 		player.has_synced = false;
-		player.sendbuffer = Some(client_sendbuffer);
-		player.poison = Some(client_poison);
-		for message in newcomer_messages
-		{
-			player.send(message);
-		}
+		player.handle = client_handle;
 	}
 	else if let Some(watcher) =
 		watchers.iter_mut().find(|x| x.user_id == client_user_id)
@@ -1398,31 +1298,21 @@ fn do_join(
 		watcher.id = client_id;
 		debug_assert!(watcher.username == client_username);
 		watcher.has_synced = false;
-		watcher.sendbuffer = Some(client_sendbuffer);
-		watcher.poison = Some(client_poison);
-		for message in newcomer_messages
-		{
-			watcher.send(message);
-		}
+		watcher.handle = client_handle;
 	}
 	else
 	{
-		let mut newcomer = WatcherClient {
+		let newcomer = WatcherClient {
 			id: client_id,
 			user_id: client_user_id,
-			username: client_username.clone(),
-			sendbuffer: Some(client_sendbuffer),
-			poison: Some(client_poison),
+			username: client_username,
+			handle: client_handle,
 
 			role,
 			vision_level: role.vision_level(),
 
 			has_synced: false,
 		};
-		for message in newcomer_messages
-		{
-			newcomer.send(message);
-		}
 		watchers.push(newcomer);
 	}
 
@@ -1503,23 +1393,15 @@ async fn handle_leave(
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
-	let (username, sendbuffer, poison) = {
+	let (username, mut handle) = {
 		if let Some(client) = players.iter_mut().find(|x| x.id == client_id)
 		{
-			(
-				client.username.clone(),
-				client.sendbuffer.take(),
-				client.poison.take(),
-			)
+			(client.username.clone(), client.handle.take())
 		}
 		else if let Some(client) =
 			watchers.iter_mut().find(|x| x.id == client_id)
 		{
-			(
-				client.username.clone(),
-				client.sendbuffer.take(),
-				client.poison.take(),
-			)
+			(client.username.clone(), client.handle.take())
 		}
 		else
 		{
@@ -1534,31 +1416,17 @@ async fn handle_leave(
 
 	for client in players.iter_mut()
 	{
-		client.send(message.clone());
+		client.handle.send(message.clone());
 	}
 	for client in watchers.iter_mut()
 	{
-		client.send(message.clone());
+		client.handle.send(message.clone());
 	}
 
-	if let Some(mut sendbuffer) = sendbuffer
-	{
-		match sendbuffer.try_send(message)
-		{
-			Ok(()) => (),
-			Err(e) =>
-			{
-				error!("Send error while processing leave: {:?}", e);
-				if let Some(mut poison) = poison
-				{
-					let _ = poison.try_send(client::Poison {});
-				}
-			}
-		}
-	}
+	handle.send(message);
 
-	if players.iter().all(|x| x.is_disconnected())
-		&& watchers.iter().all(|x| x.is_disconnected())
+	if players.iter().all(|x| x.handle.is_disconnected())
+		&& watchers.iter().all(|x| x.handle.is_disconnected())
 	{
 		let update = chat::Update::DisbandLobby { lobby_id: lobby_id };
 		general_chat.send(update).await?;

@@ -25,13 +25,11 @@ pub enum Update
 		client_id: Keycode,
 		username: String,
 		unlocks: EnumSet<Unlock>,
-		sendbuffer: mpsc::Sender<Message>,
-		callback: mpsc::Sender<client::Update>,
-		poison: mpsc::Sender<client::Poison>,
+		handle: client::Handle,
 	},
 	Init
 	{
-		sendbuffer: mpsc::Sender<Message>,
+		handle: client::Handle,
 	},
 	StillAlive
 	{
@@ -61,8 +59,7 @@ pub enum Update
 	FindLobby
 	{
 		lobby_id: Keycode,
-		callback: mpsc::Sender<client::Update>,
-		poison: mpsc::Sender<client::Poison>,
+		handle: client::Handle,
 		general_chat: mpsc::Sender<Update>,
 	},
 
@@ -93,8 +90,9 @@ pub async fn run(mut updates: mpsc::Receiver<Update>, canary: mpsc::Sender<()>)
 			&current_challenge,
 		);
 
-		let removed =
-			clients.e_drain_where(|client| client.is_dead()).collect();
+		let removed = clients
+			.e_drain_where(|client| client.handle.is_disconnected())
+			.collect();
 		handle_removed(removed, &mut clients, &mut ghostbusters);
 	}
 
@@ -116,24 +114,20 @@ fn handle_update(
 			client_id,
 			username,
 			unlocks,
-			sendbuffer,
-			callback,
-			poison,
+			handle,
 		} => handle_join(
 			client_id,
 			username,
 			unlocks,
-			sendbuffer,
-			callback,
-			poison,
+			handle,
 			clients,
 			ghostbusters,
 			lobbies,
 			current_challenge,
 		),
-		Update::Init { sendbuffer } =>
+		Update::Init { handle } =>
 		{
-			handle_init(sendbuffer, clients, lobbies, current_challenge)
+			handle_init(handle, clients, lobbies, current_challenge)
 		}
 		Update::StillAlive { client_id } =>
 		{
@@ -173,19 +167,12 @@ fn handle_update(
 
 		Update::FindLobby {
 			lobby_id,
-			callback,
-			poison,
+			handle,
 			general_chat,
 		} =>
 		{
 			verify_lobby(lobby_id, clients, lobbies);
-			handle_find_lobby(
-				lobbies,
-				lobby_id,
-				callback,
-				poison,
-				general_chat,
-			);
+			handle_find_lobby(lobbies, lobby_id, handle, general_chat);
 		}
 
 		Update::InGame {
@@ -201,7 +188,7 @@ fn handle_update(
 		{
 			for client in clients.iter_mut()
 			{
-				client.send(message.clone());
+				client.handle.send(message.clone());
 			}
 		}
 	}
@@ -212,75 +199,15 @@ struct Client
 	id: Keycode,
 	username: String,
 	join_metadata: Option<JoinMetadata>,
-	sendbuffer: mpsc::Sender<Message>,
-	callback: mpsc::Sender<client::Update>,
-	poison: Option<mpsc::Sender<client::Poison>>,
+	handle: client::Handle,
 	hidden: bool,
-}
-
-impl Client
-{
-	fn is_dead(&self) -> bool
-	{
-		// Is the poison pill sent already?
-		self.poison.is_none()
-	}
-
-	fn kill(&mut self)
-	{
-		match self.poison.take()
-		{
-			Some(mut poison) =>
-			{
-				let _ = poison.try_send(client::Poison {});
-			}
-			None =>
-			{}
-		}
-	}
-
-	fn send(&mut self, message: Message)
-	{
-		if self.is_dead()
-		{
-			return;
-		}
-
-		match self.sendbuffer.try_send(message)
-		{
-			Ok(()) => (),
-			Err(error) =>
-			{
-				error!("Error sending to client {}: {:?}", self.id, error);
-				self.kill();
-			}
-		}
-	}
-
-	fn update(&mut self, update: client::Update)
-	{
-		if self.is_dead()
-		{
-			return;
-		}
-
-		match self.callback.try_send(update)
-		{
-			Ok(()) => (),
-			Err(error) =>
-			{
-				error!("Error force-pinging client {}: {:?}", self.id, error);
-				self.kill();
-			}
-		}
-	}
 }
 
 struct Ghostbuster
 {
 	id: Keycode,
 	username: String,
-	sendbuffer: mpsc::Sender<Message>,
+	handle: client::Handle,
 	ghost_id: Keycode,
 }
 
@@ -298,14 +225,7 @@ impl Ghostbuster
 			sender: None,
 			metadata: None,
 		};
-		match self.sendbuffer.try_send(message)
-		{
-			Ok(()) => (),
-			Err(error) =>
-			{
-				error!("Error sending to ghostbuster {}: {:?}", self.id, error);
-			}
-		}
+		self.handle.send(message);
 	}
 
 	fn resolve(mut self)
@@ -318,14 +238,7 @@ impl Ghostbuster
 		let message = Message::LeaveServer {
 			content: Some(self.username),
 		};
-		match self.sendbuffer.try_send(message)
-		{
-			Ok(()) => (),
-			Err(error) =>
-			{
-				error!("Error sending to ghostbuster {}: {:?}", self.id, error);
-			}
-		}
+		self.handle.send(message);
 	}
 }
 
@@ -341,9 +254,7 @@ fn handle_join(
 	id: Keycode,
 	username: String,
 	unlocks: EnumSet<Unlock>,
-	sendbuffer: mpsc::Sender<Message>,
-	callback: mpsc::Sender<client::Update>,
-	poison: mpsc::Sender<client::Poison>,
+	handle: client::Handle,
 	clients: &mut Vec<Client>,
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
 	lobbies: &Vec<Lobby>,
@@ -362,13 +273,13 @@ fn handle_join(
 
 			// Make sure that that client is not a ghost by reducing their ping
 			// tolerance and ensuring a ping is sent.
-			otherclient.update(client::Update::BeingGhostbusted);
+			otherclient.handle.notify(client::Update::BeingGhostbusted);
 
 			// Make the newcomer wait for the result of ghostbusting.
 			let newcomer = Ghostbuster {
 				id,
 				username,
-				sendbuffer,
+				handle,
 				ghost_id: otherclient.id,
 			};
 			let previous = ghostbusters.insert(otherclient.id, newcomer);
@@ -389,9 +300,7 @@ fn handle_join(
 		id: id,
 		username,
 		join_metadata,
-		sendbuffer,
-		callback,
-		poison: Some(poison),
+		handle,
 		hidden: hidden,
 	};
 
@@ -402,14 +311,14 @@ fn handle_join(
 		sender: None,
 		metadata: newcomer.join_metadata,
 	};
-	newcomer.send(message.clone());
+	newcomer.handle.send(message.clone());
 
 	// Tell everyone who the newcomer is.
 	if !newcomer.hidden
 	{
 		for other in clients.iter_mut()
 		{
-			other.send(message.clone());
+			other.handle.send(message.clone());
 		}
 
 		// Tell everyone the rating and stars of the newcomer.
@@ -419,7 +328,7 @@ fn handle_join(
 	// Let the client know which lobbies there are.
 	for lobby in lobbies.iter()
 	{
-		newcomer.send(lobby.description_message.clone());
+		newcomer.handle.send(lobby.description_message.clone());
 	}
 
 	// Let the client know who else is online.
@@ -427,7 +336,7 @@ fn handle_join(
 	{
 		if !other.hidden
 		{
-			newcomer.send(Message::JoinServer {
+			newcomer.handle.send(Message::JoinServer {
 				status: None,
 				content: Some(other.username.clone()),
 				sender: None,
@@ -443,21 +352,21 @@ fn handle_join(
 
 	// Tell the newcomer that they are online.
 	// FUTURE this is weird (#1411)
-	newcomer.send(message);
+	newcomer.handle.send(message);
 
-	newcomer.send(Message::ListChallenge {
+	newcomer.handle.send(Message::ListChallenge {
 		key: current_challenge.key.clone(),
 		metadata: current_challenge.metadata.clone(),
 	});
 
 	// Let the client know we are done initializing.
-	newcomer.send(Message::Init);
+	newcomer.handle.send(Message::Init);
 
 	// Show them a welcome message, if any.
 	welcome_client(&mut newcomer);
 
 	// Let the clienthandler know we have successfully joined.
-	newcomer.update(client::Update::JoinedServer);
+	newcomer.handle.notify(client::Update::JoinedServer);
 
 	clients.push(newcomer);
 }
@@ -490,30 +399,16 @@ fn generate_join_metadata(unlocks: &EnumSet<Unlock>) -> Option<JoinMetadata>
 }
 
 fn handle_init(
-	sendbuffer: mpsc::Sender<Message>,
+	mut handle: client::Handle,
 	clients: &Vec<Client>,
 	lobbies: &Vec<Lobby>,
 	current_challenge: &Challenge,
 )
 {
-	match do_init(sendbuffer, clients, lobbies, current_challenge)
-	{
-		Ok(()) => (),
-		Err(e) => error!("Send error while processing init: {:?}", e),
-	}
-}
-
-fn do_init(
-	mut sendbuffer: mpsc::Sender<Message>,
-	clients: &Vec<Client>,
-	lobbies: &Vec<Lobby>,
-	current_challenge: &Challenge,
-) -> Result<(), mpsc::error::TrySendError<Message>>
-{
 	// Let the client know which lobbies there are.
 	for lobby in lobbies.iter()
 	{
-		sendbuffer.try_send(lobby.description_message.clone())?;
+		handle.send(lobby.description_message.clone());
 	}
 
 	// Let the client know who else is online.
@@ -521,12 +416,12 @@ fn do_init(
 	{
 		if !client.hidden
 		{
-			sendbuffer.try_send(Message::JoinServer {
+			handle.send(Message::JoinServer {
 				status: None,
 				content: Some(client.username.clone()),
 				sender: None,
 				metadata: client.join_metadata,
-			})?;
+			});
 
 			// TODO rating
 			// TODO stars
@@ -535,13 +430,13 @@ fn do_init(
 		}
 	}
 
-	sendbuffer.try_send(Message::ListChallenge {
+	handle.send(Message::ListChallenge {
 		key: current_challenge.key.clone(),
 		metadata: current_challenge.metadata.clone(),
-	})?;
+	});
 
 	// Let the client know we are done initializing.
-	sendbuffer.try_send(Message::Init)
+	handle.send(Message::Init)
 }
 
 fn handle_leave(
@@ -568,9 +463,7 @@ fn handle_removed(
 			id,
 			username,
 			join_metadata: _,
-			mut sendbuffer,
-			callback: _,
-			poison,
+			mut handle,
 			hidden,
 		} = removed_client;
 
@@ -582,22 +475,11 @@ fn handle_removed(
 		{
 			for client in clients.iter_mut()
 			{
-				client.send(message.clone());
+				client.handle.send(message.clone());
 			}
 		}
 
-		if let Some(mut poison) = poison
-		{
-			match sendbuffer.try_send(message)
-			{
-				Ok(()) => (),
-				Err(e) =>
-				{
-					error!("Send error while processing leave: {:?}", e);
-					let _ = poison.try_send(client::Poison {});
-				}
-			}
-		}
+		handle.send(message);
 
 		let ghostbuster = ghostbusters.remove(&id);
 		if let Some(ghostbuster) = ghostbuster
@@ -646,7 +528,7 @@ fn handle_list_lobby(
 
 	for client in clients.iter_mut()
 	{
-		client.send(newlobby.description_message.clone());
+		client.handle.send(newlobby.description_message.clone());
 	}
 
 	lobbies.push(newlobby);
@@ -671,7 +553,7 @@ fn handle_describe_lobby(
 
 	for client in clients.iter_mut()
 	{
-		client.send(description_message.clone());
+		client.handle.send(description_message.clone());
 	}
 
 	lobby.description_message = description_message;
@@ -688,7 +570,7 @@ fn handle_disband_lobby(
 	let message = Message::DisbandLobby { lobby_id };
 	for client in clients.iter_mut()
 	{
-		client.send(message.clone())
+		client.handle.send(message.clone())
 	}
 }
 
@@ -721,8 +603,7 @@ fn verify_lobby(
 fn handle_find_lobby(
 	lobbies: &mut Vec<Lobby>,
 	lobby_id: Keycode,
-	mut client_callback: mpsc::Sender<client::Update>,
-	mut client_poison: mpsc::Sender<client::Poison>,
+	mut handle: client::Handle,
 	general_chat: mpsc::Sender<Update>,
 )
 {
@@ -735,16 +616,7 @@ fn handle_find_lobby(
 		},
 		None => client::Update::LobbyNotFound { lobby_id },
 	};
-
-	match client_callback.try_send(update)
-	{
-		Ok(()) => (),
-		Err(e) =>
-		{
-			error!("Callback error while finding lobby: {:?}", e);
-			let _ = client_poison.try_send(client::Poison {});
-		}
-	}
+	handle.notify(update);
 }
 
 fn handle_in_game(
@@ -770,6 +642,6 @@ fn handle_in_game(
 	};
 	for client in clients.iter_mut()
 	{
-		client.send(message.clone());
+		client.handle.send(message.clone());
 	}
 }

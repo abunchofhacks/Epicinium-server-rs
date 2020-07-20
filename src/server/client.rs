@@ -7,6 +7,10 @@ mod pulse;
 mod receive;
 mod send;
 
+pub mod handle;
+
+pub use handle::Handle;
+
 use crate::common::keycode::Keycode;
 use crate::common::version::*;
 use crate::server::chat;
@@ -46,14 +50,13 @@ struct Client
 	pong_receive_time: Option<oneshot::Sender<()>>,
 	ping_tolerance: watch::Sender<Duration>,
 	login: mpsc::Sender<login::Request>,
+	handle: Handle,
 	general_chat_reserve: Option<mpsc::Sender<chat::Update>>,
 	general_chat: Option<mpsc::Sender<chat::Update>>,
-	general_chat_callbacks: (mpsc::Sender<Update>, mpsc::Sender<Poison>),
 	rating_database: mpsc::Sender<rating::Update>,
 	latest_rating_data: Option<rating::Data>,
 	canary_for_lobbies: mpsc::Sender<()>,
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
-	lobby_callbacks: Option<(mpsc::Sender<Update>, mpsc::Sender<Poison>)>,
 	lobby: Option<mpsc::Sender<lobby::Update>>,
 	has_proper_version: bool,
 	has_proper_version_a: sync::Arc<atomic::AtomicBool>,
@@ -132,12 +135,10 @@ pub fn accept(
 	let (sendbuffer_in, sendbuffer_out) = mpsc::channel::<Message>(1000);
 	let sendbuffer_pulse = sendbuffer_in.clone();
 	let sendbuffer_login = sendbuffer_in.clone();
+	let sendbuffer_handle = sendbuffer_in.clone();
 	let (pingbuffer_in, pingbuffer_out) = mpsc::channel::<ping::Request>(1);
 	let (updatebuffer_in, updatebuffer_out) = mpsc::channel::<Update>(10);
-	let updatebuffer_chat = updatebuffer_in.clone();
-	let updatebuffer_lobby = updatebuffer_in.clone();
-	let (poison_in, poison_out) = mpsc::channel::<Poison>(1);
-	let poison_lobby = poison_in.clone();
+	let (poison_in, poison_out) = mpsc::channel::<handle::Poison>(1);
 	let tolerance = Duration::from_secs(120);
 	let (pingtolerance_in, pingtolerance_out) = watch::channel(tolerance);
 	let (timebuffer_in, timebuffer_out) = watch::channel(());
@@ -146,19 +147,25 @@ pub fn accept(
 	let (reader, writer) = tokio::io::split(socket);
 	let canary_for_lobbies = canary.clone();
 
+	let handle = Handle::Connected {
+		id,
+		sendbuffer: sendbuffer_handle,
+		update_callback: updatebuffer_in,
+		poison_callback: poison_in,
+	};
+
 	let client = Client {
 		sendbuffer: sendbuffer_in,
 		last_receive_time: timebuffer_in,
 		pong_receive_time: None,
 		ping_tolerance: pingtolerance_in,
 		login: login_in,
+		handle,
 		general_chat_reserve: Some(chat_server),
 		general_chat: None,
-		general_chat_callbacks: (updatebuffer_chat, poison_in),
 		rating_database,
 		latest_rating_data: None,
 		lobby_authority: lobby_authority,
-		lobby_callbacks: Some((updatebuffer_lobby, poison_lobby)),
 		canary_for_lobbies,
 		lobby: None,
 		has_proper_version: false,
@@ -230,7 +237,7 @@ async fn start_receive_task(
 	ping_requests: mpsc::Receiver<ping::Request>,
 	login_results: mpsc::Receiver<login::LoginData>,
 	server_updates: mpsc::Receiver<Update>,
-	poison: mpsc::Receiver<Poison>,
+	poison: mpsc::Receiver<handle::Poison>,
 	server_state: watch::Receiver<ServerState>,
 	socket: ReadHalf<TcpStream>,
 ) -> Result<(), Error>
@@ -326,12 +333,9 @@ pub enum Update
 	Msg(Message),
 }
 
-#[derive(Debug)]
-pub struct Poison {}
-
-impl From<Poison> for Update
+impl From<handle::Poison> for Update
 {
-	fn from(_poison: Poison) -> Update
+	fn from(_poison: handle::Poison) -> Update
 	{
 		Update::Poison
 	}
@@ -589,15 +593,11 @@ async fn handle_update(
 			{
 				Some(chat) =>
 				{
-					let callbacks = client.general_chat_callbacks.clone();
-					let (callback, poison) = callbacks;
 					let request = chat::Update::Join {
 						client_id: client.id,
 						username: client.username.clone(),
 						unlocks: client.unlocks.clone(),
-						sendbuffer: client.sendbuffer.clone(),
-						callback,
-						poison,
+						handle: client.handle.clone(),
 					};
 					match chat.try_send(request)
 					{
@@ -664,15 +664,6 @@ async fn handle_update(
 			general_chat,
 		} =>
 		{
-			let (callback, poison) = match &client.lobby_callbacks
-			{
-				Some(callbacks) => callbacks.clone(),
-				None =>
-				{
-					error!("Expected lobby_callbacks");
-					return Err(Error::Unexpected);
-				}
-			};
 			let client_user_id = match client.user_id
 			{
 				Some(user_id) => user_id,
@@ -686,9 +677,7 @@ async fn handle_update(
 				client_id: client.id,
 				client_user_id,
 				client_username: client.username.clone(),
-				client_sendbuffer: client.sendbuffer.clone(),
-				client_callback: callback,
-				client_poison: poison,
+				client_handle: client.handle.clone(),
 				lobby_sendbuffer: lobby_sendbuffer.clone(),
 				general_chat,
 			};
@@ -714,7 +703,6 @@ async fn handle_update(
 		{
 			client.closing = true;
 			client.general_chat_reserve.take();
-			client.lobby_callbacks.take();
 			client.sendbuffer.try_send(Message::Closing)?;
 			Ok(None)
 		}
@@ -722,7 +710,6 @@ async fn handle_update(
 		{
 			client.closing = true;
 			client.general_chat_reserve.take();
-			client.lobby_callbacks.take();
 			client.sendbuffer.try_send(Message::Closed)?;
 			Ok(None)
 		}
@@ -868,20 +855,9 @@ async fn handle_message(
 					return Ok(None);
 				}
 
-				let (callback, poison) = match &client.lobby_callbacks
-				{
-					Some(callbacks) => callbacks.clone(),
-					None =>
-					{
-						error!("Expected lobby_callbacks");
-						return Err(Error::Unexpected);
-					}
-				};
-
 				let update = chat::Update::FindLobby {
 					lobby_id,
-					callback,
-					poison,
+					handle: client.handle.clone(),
 					general_chat: general_chat.clone(),
 				};
 				general_chat.send(update).await?;
@@ -941,15 +917,6 @@ async fn handle_message(
 		{
 			Some(ref general_chat) =>
 			{
-				let (callback, poison) = match &client.lobby_callbacks
-				{
-					Some(callbacks) => callbacks.clone(),
-					None =>
-					{
-						error!("Expected lobby_callbacks");
-						return Err(Error::Unexpected);
-					}
-				};
 				let mut lobby = lobby::create(
 					&mut client.lobby_authority,
 					client.rating_database.clone(),
@@ -969,9 +936,7 @@ async fn handle_message(
 					client_id: client.id,
 					client_user_id,
 					client_username: client.username.clone(),
-					client_sendbuffer: client.sendbuffer.clone(),
-					client_callback: callback,
-					client_poison: poison,
+					client_handle: client.handle.clone(),
 					lobby_sendbuffer: lobby.clone(),
 					general_chat: general_chat.clone(),
 				};
@@ -1477,7 +1442,7 @@ async fn handle_message(
 				}
 
 				let update = chat::Update::Init {
-					sendbuffer: client.sendbuffer.clone(),
+					handle: client.handle.clone(),
 				};
 				general_chat.send(update).await?;
 			}

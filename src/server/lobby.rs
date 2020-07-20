@@ -43,9 +43,7 @@ pub enum Update
 		client_id: Keycode,
 		client_user_id: UserId,
 		client_username: String,
-		client_sendbuffer: mpsc::Sender<Message>,
-		client_callback: mpsc::Sender<client::Update>,
-		client_poison: mpsc::Sender<client::Poison>,
+		client_handle: client::Handle,
 		lobby_sendbuffer: mpsc::Sender<Update>,
 		general_chat: mpsc::Sender<chat::Update>,
 	},
@@ -335,9 +333,7 @@ async fn handle_update(
 			client_id,
 			client_user_id,
 			client_username,
-			client_sendbuffer,
-			client_callback,
-			client_poison,
+			client_handle,
 			lobby_sendbuffer,
 			mut general_chat,
 		} =>
@@ -347,9 +343,7 @@ async fn handle_update(
 				client_id,
 				client_user_id,
 				client_username,
-				client_sendbuffer,
-				client_callback,
-				client_poison,
+				client_handle,
 				lobby_sendbuffer,
 				&mut general_chat,
 				clients,
@@ -374,7 +368,7 @@ async fn handle_update(
 		{
 			for client in clients.iter_mut()
 			{
-				client.send(message.clone());
+				client.handle.send(message.clone());
 			}
 			Ok(None)
 		}
@@ -628,44 +622,7 @@ struct Client
 	id: Keycode,
 	user_id: UserId,
 	username: String,
-	sendbuffer: mpsc::Sender<Message>,
-	poison: Option<mpsc::Sender<client::Poison>>,
-}
-
-impl Client
-{
-	fn is_dead(&self) -> bool
-	{
-		// Is the poison pill sent already?
-		self.poison.is_none()
-	}
-
-	fn kill(&mut self)
-	{
-		match self.poison.take()
-		{
-			Some(mut poison) =>
-			{
-				let _ = poison.try_send(client::Poison {});
-			}
-			None =>
-			{}
-		}
-	}
-
-	fn send(&mut self, message: Message)
-	{
-		if self.is_dead()
-		{
-			return;
-		}
-
-		match self.sendbuffer.try_send(message)
-		{
-			Ok(()) => (),
-			Err(_error) => self.kill(),
-		}
-	}
+	handle: client::Handle,
 }
 
 async fn handle_join(
@@ -673,24 +630,20 @@ async fn handle_join(
 	client_id: Keycode,
 	client_user_id: UserId,
 	client_username: String,
-	client_sendbuffer: mpsc::Sender<Message>,
-	client_callback: mpsc::Sender<client::Update>,
-	client_poison: mpsc::Sender<client::Poison>,
+	client_handle: client::Handle,
 	lobby_sendbuffer: mpsc::Sender<Update>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
 	clients: &mut Vec<Client>,
 ) -> Result<(), Error>
 {
-	let mut sendbuffer_for_listing = client_sendbuffer.clone();
+	let mut handle_for_listing = client_handle.clone();
 
 	match do_join(
 		lobby,
 		client_id,
 		client_user_id,
 		client_username.clone(),
-		client_sendbuffer.clone(),
-		client_callback,
-		client_poison,
+		client_handle,
 		lobby_sendbuffer,
 		clients,
 	)
@@ -718,11 +671,7 @@ async fn handle_join(
 		lobby_name: lobby.name.clone(),
 		metadata: make_description_metadata(lobby),
 	};
-	match sendbuffer_for_listing.try_send(message)
-	{
-		Ok(()) => (),
-		Err(error) => error!("Send error in join: {}", error),
-	}
+	handle_for_listing.send(message);
 
 	if Some(&Role::Player) == lobby.roles.get(&client_id)
 	{
@@ -737,9 +686,7 @@ fn do_join(
 	client_id: Keycode,
 	client_user_id: UserId,
 	client_username: String,
-	client_sendbuffer: mpsc::Sender<Message>,
-	mut client_callback: mpsc::Sender<client::Update>,
-	client_poison: mpsc::Sender<client::Poison>,
+	client_handle: client::Handle,
 	lobby_sendbuffer: mpsc::Sender<Update>,
 	clients: &mut Vec<Client>,
 ) -> Result<(), ()>
@@ -756,14 +703,13 @@ fn do_join(
 		id: client_id,
 		user_id: client_user_id,
 		username: client_username,
-		sendbuffer: client_sendbuffer,
-		poison: Some(client_poison),
+		handle: client_handle,
 	};
 
 	// Tell the newcomer which users are already in the lobby.
 	for other in clients.into_iter()
 	{
-		newcomer.send(Message::JoinLobby {
+		newcomer.handle.send(Message::JoinLobby {
 			lobby_id: Some(lobby.id),
 			username: Some(other.username.clone()),
 			metadata: None,
@@ -771,14 +717,14 @@ fn do_join(
 
 		if let Some(&role) = lobby.roles.get(&other.id)
 		{
-			newcomer.send(Message::ClaimRole {
+			newcomer.handle.send(Message::ClaimRole {
 				username: other.username.clone(),
 				role,
 			});
 		}
 		if let Some(&color) = lobby.player_colors.get(&other.id)
 		{
-			newcomer.send(Message::ClaimColor {
+			newcomer.handle.send(Message::ClaimColor {
 				username_or_slot: UsernameOrSlot::Username(
 					other.username.clone(),
 				),
@@ -787,7 +733,7 @@ fn do_join(
 		}
 		if let Some(&visiontype) = lobby.player_visiontypes.get(&other.id)
 		{
-			newcomer.send(Message::ClaimVisionType {
+			newcomer.handle.send(Message::ClaimVisionType {
 				username_or_slot: UsernameOrSlot::Username(
 					other.username.clone(),
 				),
@@ -801,7 +747,7 @@ fn do_join(
 		// Tell the newcomer the AI pool.
 		for name in &lobby.ai_pool
 		{
-			newcomer.send(Message::ListAi {
+			newcomer.handle.send(Message::ListAi {
 				ai_name: name.clone(),
 			});
 		}
@@ -809,27 +755,27 @@ fn do_join(
 
 	for bot in &lobby.bots
 	{
-		newcomer.send(Message::AddBot {
+		newcomer.handle.send(Message::AddBot {
 			slot: Some(bot.slot),
 		});
-		newcomer.send(Message::ClaimAi {
+		newcomer.handle.send(Message::ClaimAi {
 			slot: Some(bot.slot),
 			ai_name: bot.ai_name.clone(),
 		});
-		newcomer.send(Message::ClaimDifficulty {
+		newcomer.handle.send(Message::ClaimDifficulty {
 			slot: Some(bot.slot),
 			difficulty: bot.difficulty,
 		});
 		if let Some(&color) = lobby.bot_colors.get(&bot.slot)
 		{
-			newcomer.send(Message::ClaimColor {
+			newcomer.handle.send(Message::ClaimColor {
 				username_or_slot: UsernameOrSlot::Slot(bot.slot),
 				color,
 			});
 		}
 		if let Some(&visiontype) = lobby.bot_visiontypes.get(&bot.slot)
 		{
-			newcomer.send(Message::ClaimVisionType {
+			newcomer.handle.send(Message::ClaimVisionType {
 				username_or_slot: UsernameOrSlot::Slot(bot.slot),
 				visiontype,
 			});
@@ -840,23 +786,23 @@ fn do_join(
 	{
 		for (mapname, metadata) in &lobby.map_pool
 		{
-			newcomer.send(Message::ListMap {
+			newcomer.handle.send(Message::ListMap {
 				map_name: mapname.clone(),
 				metadata: metadata.clone(),
 			});
 		}
 
-		newcomer.send(Message::PickMap {
+		newcomer.handle.send(Message::PickMap {
 			map_name: lobby.map_name.clone(),
 		});
-		newcomer.send(Message::PickTimer {
+		newcomer.handle.send(Message::PickTimer {
 			seconds: lobby.timer_in_seconds,
 		});
 
-		newcomer.send(Message::ListRuleset {
+		newcomer.handle.send(Message::ListRuleset {
 			ruleset_name: lobby.ruleset_name.clone(),
 		});
-		newcomer.send(Message::PickRuleset {
+		newcomer.handle.send(Message::PickRuleset {
 			ruleset_name: lobby.ruleset_name.clone(),
 		});
 	}
@@ -873,23 +819,14 @@ fn do_join(
 	};
 	for client in clients.iter_mut()
 	{
-		client.send(message.clone());
+		client.handle.send(message.clone());
 	}
-	newcomer.send(message);
+	newcomer.handle.send(message);
 
 	let update = client::Update::JoinedLobby {
 		lobby: lobby_sendbuffer,
 	};
-	match client_callback.try_send(update)
-	{
-		Ok(()) =>
-		{}
-		Err(e) =>
-		{
-			error!("Callback error in join: {:?}", e);
-			newcomer.kill();
-		}
-	}
+	newcomer.handle.notify(update);
 
 	clients.push(newcomer);
 
@@ -934,8 +871,7 @@ async fn handle_removed(
 			id,
 			user_id: _,
 			username,
-			mut sendbuffer,
-			poison,
+			mut handle,
 		} = removed_client;
 
 		let message = Message::LeaveLobby {
@@ -945,21 +881,10 @@ async fn handle_removed(
 
 		for client in clients.iter_mut()
 		{
-			client.send(message.clone());
+			client.handle.send(message.clone());
 		}
 
-		if let Some(mut poison) = poison
-		{
-			match sendbuffer.try_send(message)
-			{
-				Ok(()) => (),
-				Err(e) =>
-				{
-					error!("Send error while processing leave: {:?}", e);
-					let _ = poison.try_send(client::Poison {});
-				}
-			}
-		}
+		handle.send(message);
 
 		let removed_color = lobby.player_colors.remove(&id);
 		if let Some(color) = removed_color
@@ -1034,7 +959,7 @@ fn change_role(
 					};
 					for client in clients.iter_mut()
 					{
-						client.send(message.clone());
+						client.handle.send(message.clone());
 					}
 				}
 				return Ok(());
@@ -1068,7 +993,7 @@ fn change_role(
 	};
 	for client in clients.iter_mut()
 	{
-		client.send(message.clone());
+		client.handle.send(message.clone());
 	}
 
 	if assigned_role == Role::Player
@@ -1210,7 +1135,7 @@ fn change_color(
 	// Broadcast whatever the result of the claim was.
 	for client in clients.into_iter()
 	{
-		client.send(Message::ClaimColor {
+		client.handle.send(Message::ClaimColor {
 			username_or_slot: username_or_slot.clone(),
 			color: resulting_color,
 		});
@@ -1270,7 +1195,7 @@ fn change_visiontype(
 	// Broadcast the claim.
 	for client in clients.into_iter()
 	{
-		client.send(Message::ClaimVisionType {
+		client.handle.send(Message::ClaimVisionType {
 			username_or_slot: username_or_slot.clone(),
 			visiontype,
 		});
@@ -1315,7 +1240,7 @@ fn change_ai(
 
 		for client in clients.into_iter()
 		{
-			client.send(Message::ListAi {
+			client.handle.send(Message::ListAi {
 				ai_name: ai_name.clone(),
 			});
 		}
@@ -1325,7 +1250,7 @@ fn change_ai(
 
 	for client in clients.into_iter()
 	{
-		client.send(Message::ClaimAi {
+		client.handle.send(Message::ClaimAi {
 			slot: Some(bot.slot),
 			ai_name: bot.ai_name.clone(),
 		});
@@ -1368,7 +1293,7 @@ fn change_difficulty(
 
 	for client in clients.into_iter()
 	{
-		client.send(Message::ClaimDifficulty {
+		client.handle.send(Message::ClaimDifficulty {
 			slot: Some(bot.slot),
 			difficulty,
 		});
@@ -1407,14 +1332,14 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 
 	for client in clients.into_iter()
 	{
-		client.send(Message::AddBot {
+		client.handle.send(Message::AddBot {
 			slot: Some(bot.slot),
 		});
-		client.send(Message::ClaimAi {
+		client.handle.send(Message::ClaimAi {
 			slot: Some(bot.slot),
 			ai_name: bot.ai_name.clone(),
 		});
-		client.send(Message::ClaimDifficulty {
+		client.handle.send(Message::ClaimDifficulty {
 			slot: Some(bot.slot),
 			difficulty: bot.difficulty,
 		});
@@ -1442,7 +1367,7 @@ fn remove_bot(lobby: &mut Lobby, clients: &mut Vec<Client>, slot: Botslot)
 
 		for client in clients.into_iter()
 		{
-			client.send(Message::RemoveBot { slot });
+			client.handle.send(Message::RemoveBot { slot });
 		}
 	}
 }
@@ -1479,7 +1404,7 @@ async fn pick_map(
 		};
 		for client in clients.iter_mut()
 		{
-			client.send(message.clone());
+			client.handle.send(message.clone());
 		}
 
 		lobby.map_pool.push((map_name.clone(), metadata));
@@ -1511,7 +1436,7 @@ async fn pick_map(
 			};
 			for client in clients.iter_mut()
 			{
-				client.send(message.clone());
+				client.handle.send(message.clone());
 			}
 			return Ok(());
 		}
@@ -1524,7 +1449,7 @@ async fn pick_map(
 	};
 	for client in clients.iter_mut()
 	{
-		client.send(message.clone());
+		client.handle.send(message.clone());
 	}
 
 	let playercount = match metadata.playercount()
@@ -1692,7 +1617,7 @@ async fn become_challenge_lobby(
 
 	for client in clients.iter_mut()
 	{
-		client.send(Message::PickChallenge {
+		client.handle.send(Message::PickChallenge {
 			challenge_key: challenge_key.clone(),
 		});
 	}
@@ -1751,7 +1676,7 @@ async fn pick_timer(
 	};
 	for client in clients.iter_mut()
 	{
-		client.send(message.clone());
+		client.handle.send(message.clone());
 	}
 
 	Ok(())
@@ -1795,7 +1720,7 @@ async fn pick_ruleset(
 		};
 		for client in clients.iter_mut()
 		{
-			client.send(message.clone());
+			client.handle.send(message.clone());
 		}
 		return Ok(());
 	}
@@ -1815,8 +1740,8 @@ async fn pick_ruleset(
 	};
 	for client in clients.iter_mut()
 	{
-		client.send(listmessage.clone());
-		client.send(pickmessage.clone());
+		client.handle.send(listmessage.clone());
+		client.handle.send(pickmessage.clone());
 	}
 
 	Ok(())
@@ -1879,7 +1804,9 @@ async fn try_start(
 {
 	// Make sure all the clients are still valid.
 	let client_count = clients.len();
-	let removed = clients.e_drain_where(|client| client.is_dead()).collect();
+	let removed = clients
+		.e_drain_where(|client| client.handle.is_disconnected())
+		.collect();
 	handle_removed(lobby, clients, removed).await?;
 
 	if clients.len() < 1
@@ -1950,8 +1877,7 @@ async fn try_start(
 					id: client.id,
 					user_id: client.user_id,
 					username: client.username.clone(),
-					sendbuffer: Some(client.sendbuffer.clone()),
-					poison: client.poison.clone(),
+					handle: client.handle.clone(),
 					rating_callback: Some(rating_callback),
 
 					color,
@@ -1968,8 +1894,7 @@ async fn try_start(
 					id: client.id,
 					user_id: client.user_id,
 					username: client.username.clone(),
-					sendbuffer: Some(client.sendbuffer.clone()),
-					poison: client.poison.clone(),
+					handle: client.handle.clone(),
 
 					role,
 					vision_level: role.vision_level(),
@@ -2042,7 +1967,7 @@ async fn try_start(
 		};
 		for client in clients.iter_mut()
 		{
-			client.send(message.clone());
+			client.handle.send(message.clone());
 		}
 
 		// Cannot continue until all player have confirmed the ruleset.
