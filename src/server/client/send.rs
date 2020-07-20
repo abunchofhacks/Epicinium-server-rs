@@ -7,6 +7,7 @@ use crate::server::message::*;
 
 use log::*;
 
+use futures::pin_mut;
 use futures::StreamExt;
 
 use tokio::io::WriteHalf;
@@ -18,11 +19,15 @@ use itertools::Itertools;
 
 pub async fn run(
 	client_id: Keycode,
-	mut sendbuffer: mpsc::Receiver<Message>,
+	sendbuffer: mpsc::Receiver<Message>,
 	mut socket: WriteHalf<TcpStream>,
 ) -> Result<(), Error>
 {
-	while let Some(message) = sendbuffer.next().await
+	let last_messages = futures::stream::once(async { Message::Quit });
+	let messages = sendbuffer.chain(last_messages);
+	pin_mut!(messages);
+
+	while let Some(message) = messages.next().await
 	{
 		let buffer = prepare_message(message);
 		send_bytes(&mut socket, buffer).await?;

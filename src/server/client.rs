@@ -754,7 +754,6 @@ async fn handle_message(
 		Message::Quit =>
 		{
 			info!("Client {} is gracefully disconnecting...", client.id);
-			client.sendbuffer.try_send(Message::Quit)?;
 			return Ok(Some(HasQuit));
 		}
 		Message::JoinServer { .. } if client.general_chat.is_some() =>

@@ -86,7 +86,7 @@ async fn run_test(
 		version: fakeversion,
 	};
 
-	let mut has_quit = false;
+	let mut has_quit = QuitStage::None;
 
 	// Wait for count + 1 JoinServer messages because the first JoinServer is
 	// information about us successfully joining.
@@ -98,6 +98,8 @@ async fn run_test(
 
 	while let Some(message) = receive_message(number, &mut reader).await?
 	{
+		assert!(has_quit != QuitStage::Received);
+
 		let responses =
 			handle_message(number, &mut waiting, &mut has_quit, message)
 				.map_err(|()| {
@@ -113,12 +115,20 @@ async fn run_test(
 		}
 	}
 
-	if !has_quit
+	if has_quit != QuitStage::Received
 	{
 		error!("[{}] Stopped receiving unexpectedly", number);
 	}
 
 	Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum QuitStage
+{
+	None,
+	Sent,
+	Received,
 }
 
 async fn receive_message(
@@ -178,7 +188,7 @@ fn parse_message(number: usize, buffer: Vec<u8>) -> io::Result<Message>
 fn handle_message(
 	number: usize,
 	waiting: &mut usize,
-	has_quit: &mut bool,
+	has_quit: &mut QuitStage,
 	message: Message,
 ) -> Result<Vec<Message>, ()>
 {
@@ -204,6 +214,7 @@ fn handle_message(
 		{
 			if number == 0
 			{
+				println!("{}...", waiting);
 				info!("{}...", waiting);
 
 				if *waiting > 1
@@ -212,8 +223,9 @@ fn handle_message(
 				}
 				else if *waiting == 1
 				{
+					println!("{}!", number);
 					info!("{}!", number);
-					*has_quit = true;
+					*has_quit = QuitStage::Sent;
 					return Ok(vec![
 						Message::Chat {
 							content: number.to_string(),
@@ -240,8 +252,9 @@ fn handle_message(
 
 			if x + 1 == number
 			{
+				println!("{}!", number);
 				info!("{}!", number);
-				*has_quit = true;
+				*has_quit = QuitStage::Sent;
 				return Ok(vec![
 					Message::Chat {
 						content: number.to_string(),
@@ -265,11 +278,20 @@ fn handle_message(
 			error!("[{}] Server closed unexpectedly", number);
 			Err(())
 		}
-		Message::Quit =>
+		Message::Quit => match *has_quit
 		{
-			error!("[{}] Server closed unexpectedly", number);
-			Err(())
-		}
+			QuitStage::Sent =>
+			{
+				*has_quit = QuitStage::Received;
+				Ok(Vec::new())
+			}
+			QuitStage::None | QuitStage::Received =>
+			{
+				error!("[{}] Server closed unexpectedly", number);
+				Err(())
+			}
+		},
+		Message::ListChallenge { .. } => Ok(Vec::new()),
 		_ =>
 		{
 			unreachable!();
