@@ -27,6 +27,7 @@ pub enum Update
 		unlocks: EnumSet<Unlock>,
 		sendbuffer: mpsc::Sender<Message>,
 		callback: mpsc::Sender<client::Update>,
+		poison: mpsc::Sender<client::Poison>,
 	},
 	Init
 	{
@@ -61,6 +62,7 @@ pub enum Update
 	{
 		lobby_id: Keycode,
 		callback: mpsc::Sender<client::Update>,
+		poison: mpsc::Sender<client::Poison>,
 		general_chat: mpsc::Sender<Update>,
 	},
 
@@ -91,7 +93,8 @@ pub async fn run(mut updates: mpsc::Receiver<Update>, canary: mpsc::Sender<()>)
 			&current_challenge,
 		);
 
-		let removed = clients.e_drain_where(|client| client.dead).collect();
+		let removed =
+			clients.e_drain_where(|client| client.is_dead()).collect();
 		handle_removed(removed, &mut clients, &mut ghostbusters);
 	}
 
@@ -115,12 +118,14 @@ fn handle_update(
 			unlocks,
 			sendbuffer,
 			callback,
+			poison,
 		} => handle_join(
 			client_id,
 			username,
 			unlocks,
 			sendbuffer,
 			callback,
+			poison,
 			clients,
 			ghostbusters,
 			lobbies,
@@ -169,11 +174,18 @@ fn handle_update(
 		Update::FindLobby {
 			lobby_id,
 			callback,
+			poison,
 			general_chat,
 		} =>
 		{
 			verify_lobby(lobby_id, clients, lobbies);
-			handle_find_lobby(lobbies, lobby_id, callback, general_chat);
+			handle_find_lobby(
+				lobbies,
+				lobby_id,
+				callback,
+				poison,
+				general_chat,
+			);
 		}
 
 		Update::InGame {
@@ -202,34 +214,63 @@ struct Client
 	join_metadata: Option<JoinMetadata>,
 	sendbuffer: mpsc::Sender<Message>,
 	callback: mpsc::Sender<client::Update>,
+	poison: Option<mpsc::Sender<client::Poison>>,
 	hidden: bool,
-	dead: bool,
 }
 
 impl Client
 {
+	fn is_dead(&self) -> bool
+	{
+		// Is the poison pill sent already?
+		self.poison.is_none()
+	}
+
+	fn kill(&mut self)
+	{
+		match self.poison.take()
+		{
+			Some(mut poison) =>
+			{
+				let _ = poison.try_send(client::Poison {});
+			}
+			None =>
+			{}
+		}
+	}
+
 	fn send(&mut self, message: Message)
 	{
+		if self.is_dead()
+		{
+			return;
+		}
+
 		match self.sendbuffer.try_send(message)
 		{
 			Ok(()) => (),
 			Err(error) =>
 			{
 				error!("Error sending to client {}: {:?}", self.id, error);
-				self.dead = true
+				self.kill();
 			}
 		}
 	}
 
 	fn update(&mut self, update: client::Update)
 	{
+		if self.is_dead()
+		{
+			return;
+		}
+
 		match self.callback.try_send(update)
 		{
 			Ok(()) => (),
 			Err(error) =>
 			{
 				error!("Error force-pinging client {}: {:?}", self.id, error);
-				self.dead = true
+				self.kill();
 			}
 		}
 	}
@@ -302,6 +343,7 @@ fn handle_join(
 	unlocks: EnumSet<Unlock>,
 	sendbuffer: mpsc::Sender<Message>,
 	callback: mpsc::Sender<client::Update>,
+	poison: mpsc::Sender<client::Poison>,
 	clients: &mut Vec<Client>,
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
 	lobbies: &Vec<Lobby>,
@@ -349,8 +391,8 @@ fn handle_join(
 		join_metadata,
 		sendbuffer,
 		callback,
+		poison: Some(poison),
 		hidden: hidden,
-		dead: false,
 	};
 
 	// Confirm to the newcomer that they have joined.
@@ -528,8 +570,8 @@ fn handle_removed(
 			join_metadata: _,
 			mut sendbuffer,
 			callback: _,
+			poison,
 			hidden,
-			dead: _,
 		} = removed_client;
 
 		let message = Message::LeaveServer {
@@ -544,10 +586,17 @@ fn handle_removed(
 			}
 		}
 
-		match sendbuffer.try_send(message)
+		if let Some(mut poison) = poison
 		{
-			Ok(()) => (),
-			Err(e) => error!("Send error while processing leave: {:?}", e),
+			match sendbuffer.try_send(message)
+			{
+				Ok(()) => (),
+				Err(e) =>
+				{
+					error!("Send error while processing leave: {:?}", e);
+					let _ = poison.try_send(client::Poison {});
+				}
+			}
 		}
 
 		let ghostbuster = ghostbusters.remove(&id);
@@ -673,32 +722,28 @@ fn handle_find_lobby(
 	lobbies: &mut Vec<Lobby>,
 	lobby_id: Keycode,
 	mut client_callback: mpsc::Sender<client::Update>,
+	mut client_poison: mpsc::Sender<client::Poison>,
 	general_chat: mpsc::Sender<Update>,
 )
 {
-	for lobby in lobbies.iter_mut()
+	let update = match lobbies.iter_mut().find(|x| x.id == lobby_id)
 	{
-		if lobby.id == lobby_id
-		{
-			let update = client::Update::LobbyFound {
-				lobby_id,
-				lobby_sendbuffer: lobby.sendbuffer.clone(),
-				general_chat,
-			};
-			match client_callback.try_send(update)
-			{
-				Ok(()) => (),
-				Err(e) => error!("Send error while finding lobby: {:?}", e),
-			}
-			return;
-		}
-	}
+		Some(lobby) => client::Update::LobbyFound {
+			lobby_id,
+			lobby_sendbuffer: lobby.sendbuffer.clone(),
+			general_chat,
+		},
+		None => client::Update::LobbyNotFound { lobby_id },
+	};
 
-	let update = client::Update::LobbyNotFound { lobby_id };
 	match client_callback.try_send(update)
 	{
 		Ok(()) => (),
-		Err(e) => error!("Send error while finding lobby: {:?}", e),
+		Err(e) =>
+		{
+			error!("Callback error while finding lobby: {:?}", e);
+			let _ = client_poison.try_send(client::Poison {});
+		}
 	}
 }
 

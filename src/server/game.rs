@@ -34,6 +34,7 @@ pub struct PlayerClient
 	pub user_id: UserId,
 	pub username: String,
 	pub sendbuffer: Option<mpsc::Sender<Message>>,
+	pub poison: Option<mpsc::Sender<client::Poison>>,
 	pub rating_callback: Option<mpsc::Sender<rating::Update>>,
 
 	pub color: PlayerColor,
@@ -56,6 +57,19 @@ impl PlayerClient
 		self.rating_callback.is_none()
 	}
 
+	fn kill(&mut self)
+	{
+		match self.poison.take()
+		{
+			Some(mut poison) =>
+			{
+				let _ = poison.try_send(client::Poison {});
+			}
+			None =>
+			{}
+		}
+	}
+
 	fn send(&mut self, message: Message)
 	{
 		let result = match &mut self.sendbuffer
@@ -67,7 +81,11 @@ impl PlayerClient
 		match result
 		{
 			Ok(()) => (),
-			Err(_error) => self.sendbuffer = None,
+			Err(_error) =>
+			{
+				self.sendbuffer = None;
+				self.kill();
+			}
 		}
 	}
 }
@@ -91,6 +109,7 @@ pub struct WatcherClient
 	pub user_id: UserId,
 	pub username: String,
 	pub sendbuffer: Option<mpsc::Sender<Message>>,
+	pub poison: Option<mpsc::Sender<client::Poison>>,
 
 	pub role: Role,
 	pub vision_level: PlayerColor,
@@ -105,6 +124,19 @@ impl WatcherClient
 		self.sendbuffer.is_none()
 	}
 
+	fn kill(&mut self)
+	{
+		match self.poison.take()
+		{
+			Some(mut poison) =>
+			{
+				let _ = poison.try_send(client::Poison {});
+			}
+			None =>
+			{}
+		}
+	}
+
 	fn send(&mut self, message: Message)
 	{
 		let result = match &mut self.sendbuffer
@@ -116,7 +148,11 @@ impl WatcherClient
 		match result
 		{
 			Ok(()) => (),
-			Err(_error) => self.sendbuffer = None,
+			Err(_error) =>
+			{
+				self.sendbuffer = None;
+				self.kill();
+			}
 		}
 	}
 }
@@ -649,6 +685,7 @@ async fn rest(
 				client_username,
 				client_sendbuffer,
 				client_callback,
+				client_poison,
 				lobby_sendbuffer,
 				mut general_chat,
 			} =>
@@ -664,6 +701,7 @@ async fn rest(
 					client_username,
 					client_sendbuffer,
 					client_callback,
+					client_poison,
 					lobby_sendbuffer,
 					&mut general_chat,
 				)
@@ -768,6 +806,7 @@ async fn ensure_live_players(
 				client_username,
 				client_sendbuffer,
 				client_callback,
+				client_poison,
 				lobby_sendbuffer,
 				mut general_chat,
 			} =>
@@ -783,6 +822,7 @@ async fn ensure_live_players(
 					client_username,
 					client_sendbuffer,
 					client_callback,
+					client_poison,
 					lobby_sendbuffer,
 					&mut general_chat,
 				)
@@ -906,6 +946,7 @@ async fn sleep(
 				client_username,
 				client_sendbuffer,
 				client_callback,
+				client_poison,
 				lobby_sendbuffer,
 				mut general_chat,
 			} =>
@@ -926,6 +967,7 @@ async fn sleep(
 					client_username,
 					client_sendbuffer,
 					client_callback,
+					client_poison,
 					lobby_sendbuffer,
 					&mut general_chat,
 				)
@@ -1043,6 +1085,7 @@ async fn stage(
 				client_username,
 				client_sendbuffer,
 				client_callback,
+				client_poison,
 				lobby_sendbuffer,
 				mut general_chat,
 			} =>
@@ -1058,6 +1101,7 @@ async fn stage(
 					client_username,
 					client_sendbuffer,
 					client_callback,
+					client_poison,
 					lobby_sendbuffer,
 					&mut general_chat,
 				)
@@ -1148,6 +1192,7 @@ async fn handle_join(
 	client_username: String,
 	client_sendbuffer: mpsc::Sender<Message>,
 	client_callback: mpsc::Sender<client::Update>,
+	client_poison: mpsc::Sender<client::Poison>,
 	lobby_sendbuffer: mpsc::Sender<Update>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
@@ -1161,8 +1206,9 @@ async fn handle_join(
 		client_id,
 		client_user_id,
 		client_username.clone(),
-		client_sendbuffer.clone(),
+		client_sendbuffer,
 		client_callback,
+		client_poison,
 		lobby_sendbuffer,
 	)
 	{
@@ -1193,6 +1239,7 @@ fn do_join(
 	client_username: String,
 	client_sendbuffer: mpsc::Sender<Message>,
 	mut client_callback: mpsc::Sender<client::Update>,
+	mut client_poison: mpsc::Sender<client::Poison>,
 	lobby_sendbuffer: mpsc::Sender<Update>,
 ) -> Result<RejoinResult, Error>
 {
@@ -1319,11 +1366,18 @@ fn do_join(
 		{}
 	}
 
-	client_callback
-		.try_send(client::Update::JoinedLobby {
-			lobby: lobby_sendbuffer,
-		})
-		.unwrap_or_else(|e| error!("Callback error in join: {:?}", e));
+	let update = client::Update::JoinedLobby {
+		lobby: lobby_sendbuffer,
+	};
+	match client_callback.try_send(update)
+	{
+		Ok(()) => (),
+		Err(e) =>
+		{
+			error!("Callback error in join: {:?}", e);
+			let _ = client_poison.try_send(client::Poison {});
+		}
+	}
 
 	if let Some(player) =
 		players.iter_mut().find(|x| x.user_id == client_user_id)
@@ -1332,6 +1386,7 @@ fn do_join(
 		debug_assert!(player.username == client_username);
 		player.has_synced = false;
 		player.sendbuffer = Some(client_sendbuffer);
+		player.poison = Some(client_poison);
 		for message in newcomer_messages
 		{
 			player.send(message);
@@ -1344,6 +1399,7 @@ fn do_join(
 		debug_assert!(watcher.username == client_username);
 		watcher.has_synced = false;
 		watcher.sendbuffer = Some(client_sendbuffer);
+		watcher.poison = Some(client_poison);
 		for message in newcomer_messages
 		{
 			watcher.send(message);
@@ -1356,6 +1412,7 @@ fn do_join(
 			user_id: client_user_id,
 			username: client_username.clone(),
 			sendbuffer: Some(client_sendbuffer),
+			poison: Some(client_poison),
 
 			role,
 			vision_level: role.vision_level(),
@@ -1446,15 +1503,23 @@ async fn handle_leave(
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
-	let (username, sendbuffer) = {
+	let (username, sendbuffer, poison) = {
 		if let Some(client) = players.iter_mut().find(|x| x.id == client_id)
 		{
-			(client.username.clone(), client.sendbuffer.take())
+			(
+				client.username.clone(),
+				client.sendbuffer.take(),
+				client.poison.take(),
+			)
 		}
 		else if let Some(client) =
 			watchers.iter_mut().find(|x| x.id == client_id)
 		{
-			(client.username.clone(), client.sendbuffer.take())
+			(
+				client.username.clone(),
+				client.sendbuffer.take(),
+				client.poison.take(),
+			)
 		}
 		else
 		{
@@ -1481,7 +1546,14 @@ async fn handle_leave(
 		match sendbuffer.try_send(message)
 		{
 			Ok(()) => (),
-			Err(e) => error!("Send error while processing leave: {:?}", e),
+			Err(e) =>
+			{
+				error!("Send error while processing leave: {:?}", e);
+				if let Some(mut poison) = poison
+				{
+					let _ = poison.try_send(client::Poison {});
+				}
+			}
 		}
 	}
 

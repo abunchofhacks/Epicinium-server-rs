@@ -45,6 +45,7 @@ pub enum Update
 		client_username: String,
 		client_sendbuffer: mpsc::Sender<Message>,
 		client_callback: mpsc::Sender<client::Update>,
+		client_poison: mpsc::Sender<client::Poison>,
 		lobby_sendbuffer: mpsc::Sender<Update>,
 		general_chat: mpsc::Sender<chat::Update>,
 	},
@@ -336,6 +337,7 @@ async fn handle_update(
 			client_username,
 			client_sendbuffer,
 			client_callback,
+			client_poison,
 			lobby_sendbuffer,
 			mut general_chat,
 		} =>
@@ -347,6 +349,7 @@ async fn handle_update(
 				client_username,
 				client_sendbuffer,
 				client_callback,
+				client_poison,
 				lobby_sendbuffer,
 				&mut general_chat,
 				clients,
@@ -626,17 +629,41 @@ struct Client
 	user_id: UserId,
 	username: String,
 	sendbuffer: mpsc::Sender<Message>,
-	is_dead: bool,
+	poison: Option<mpsc::Sender<client::Poison>>,
 }
 
 impl Client
 {
+	fn is_dead(&self) -> bool
+	{
+		// Is the poison pill sent already?
+		self.poison.is_none()
+	}
+
+	fn kill(&mut self)
+	{
+		match self.poison.take()
+		{
+			Some(mut poison) =>
+			{
+				let _ = poison.try_send(client::Poison {});
+			}
+			None =>
+			{}
+		}
+	}
+
 	fn send(&mut self, message: Message)
 	{
+		if self.is_dead()
+		{
+			return;
+		}
+
 		match self.sendbuffer.try_send(message)
 		{
 			Ok(()) => (),
-			Err(_error) => self.is_dead = true,
+			Err(_error) => self.kill(),
 		}
 	}
 }
@@ -648,6 +675,7 @@ async fn handle_join(
 	client_username: String,
 	client_sendbuffer: mpsc::Sender<Message>,
 	client_callback: mpsc::Sender<client::Update>,
+	client_poison: mpsc::Sender<client::Poison>,
 	lobby_sendbuffer: mpsc::Sender<Update>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
 	clients: &mut Vec<Client>,
@@ -662,6 +690,7 @@ async fn handle_join(
 		client_username.clone(),
 		client_sendbuffer.clone(),
 		client_callback,
+		client_poison,
 		lobby_sendbuffer,
 		clients,
 	)
@@ -710,6 +739,7 @@ fn do_join(
 	client_username: String,
 	client_sendbuffer: mpsc::Sender<Message>,
 	mut client_callback: mpsc::Sender<client::Update>,
+	client_poison: mpsc::Sender<client::Poison>,
 	lobby_sendbuffer: mpsc::Sender<Update>,
 	clients: &mut Vec<Client>,
 ) -> Result<(), ()>
@@ -727,7 +757,7 @@ fn do_join(
 		user_id: client_user_id,
 		username: client_username,
 		sendbuffer: client_sendbuffer,
-		is_dead: false,
+		poison: Some(client_poison),
 	};
 
 	// Tell the newcomer which users are already in the lobby.
@@ -847,11 +877,19 @@ fn do_join(
 	}
 	newcomer.send(message);
 
-	client_callback
-		.try_send(client::Update::JoinedLobby {
-			lobby: lobby_sendbuffer,
-		})
-		.unwrap_or_else(|e| error!("Callback error in join: {:?}", e));
+	let update = client::Update::JoinedLobby {
+		lobby: lobby_sendbuffer,
+	};
+	match client_callback.try_send(update)
+	{
+		Ok(()) =>
+		{}
+		Err(e) =>
+		{
+			error!("Callback error in join: {:?}", e);
+			newcomer.kill();
+		}
+	}
 
 	clients.push(newcomer);
 
@@ -897,7 +935,7 @@ async fn handle_removed(
 			user_id: _,
 			username,
 			mut sendbuffer,
-			is_dead,
+			poison,
 		} = removed_client;
 
 		let message = Message::LeaveLobby {
@@ -910,12 +948,16 @@ async fn handle_removed(
 			client.send(message.clone());
 		}
 
-		if !is_dead
+		if let Some(mut poison) = poison
 		{
 			match sendbuffer.try_send(message)
 			{
 				Ok(()) => (),
-				Err(e) => error!("Send error while processing leave: {:?}", e),
+				Err(e) =>
+				{
+					error!("Send error while processing leave: {:?}", e);
+					let _ = poison.try_send(client::Poison {});
+				}
 			}
 		}
 
@@ -1837,7 +1879,7 @@ async fn try_start(
 {
 	// Make sure all the clients are still valid.
 	let client_count = clients.len();
-	let removed = clients.e_drain_where(|client| client.is_dead).collect();
+	let removed = clients.e_drain_where(|client| client.is_dead()).collect();
 	handle_removed(lobby, clients, removed).await?;
 
 	if clients.len() < 1
@@ -1909,6 +1951,7 @@ async fn try_start(
 					user_id: client.user_id,
 					username: client.username.clone(),
 					sendbuffer: Some(client.sendbuffer.clone()),
+					poison: client.poison.clone(),
 					rating_callback: Some(rating_callback),
 
 					color,
@@ -1926,6 +1969,7 @@ async fn try_start(
 					user_id: client.user_id,
 					username: client.username.clone(),
 					sendbuffer: Some(client.sendbuffer.clone()),
+					poison: client.poison.clone(),
 
 					role,
 					vision_level: role.vision_level(),
