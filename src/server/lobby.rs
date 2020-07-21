@@ -19,6 +19,7 @@ use crate::server::botslot;
 use crate::server::botslot::Botslot;
 use crate::server::chat;
 use crate::server::client;
+use crate::server::discord_api;
 use crate::server::game;
 use crate::server::login::UserId;
 use crate::server::message::*;
@@ -162,6 +163,7 @@ pub enum Sub
 pub fn create(
 	ticker: &mut sync::Arc<atomic::AtomicU64>,
 	ratings: mpsc::Sender<rating::Update>,
+	discord_api: mpsc::Sender<discord_api::Post>,
 	canary: mpsc::Sender<()>,
 ) -> mpsc::Sender<Update>
 {
@@ -171,7 +173,7 @@ pub fn create(
 
 	let (updates_in, updates_out) = mpsc::channel::<Update>(1000);
 
-	let task = run(lobby_id, ratings, canary, updates_out);
+	let task = run(lobby_id, ratings, discord_api, canary, updates_out);
 	tokio::spawn(task);
 
 	updates_in
@@ -223,6 +225,7 @@ struct Lobby
 async fn run(
 	lobby_id: Keycode,
 	ratings: mpsc::Sender<rating::Update>,
+	discord_api: mpsc::Sender<discord_api::Post>,
 	canary: mpsc::Sender<()>,
 	mut updates: mpsc::Receiver<Update>,
 )
@@ -251,7 +254,7 @@ async fn run(
 	{
 		debug!("Game started in lobby {}.", lobby_id);
 
-		match game::run(game, updates).await
+		match game::run(game, discord_api, updates).await
 		{
 			Ok(()) =>
 			{}

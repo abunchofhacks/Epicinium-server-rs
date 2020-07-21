@@ -11,10 +11,53 @@ use tokio::time::Duration;
 
 use reqwest as http;
 
-#[derive(Debug)]
-pub struct Post
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Post
 {
-	pub message: String,
+	GameStarted
+	{
+		#[serde(rename = "rated")]
+		is_rated: bool,
+
+		#[serde(rename = "player1")]
+		first_player_username: String,
+
+		#[serde(rename = "player2")]
+		second_player_username: String,
+
+		#[serde(rename = "map")]
+		map_name: String,
+
+		#[serde(rename = "ruleset")]
+		ruleset_name: String,
+
+		#[serde(rename = "time")]
+		planning_time_in_seconds_or_zero: u32,
+	},
+	GameEnded
+	{
+		#[serde(rename = "rated")]
+		is_rated: bool,
+
+		#[serde(rename = "player1")]
+		first_player_username: String,
+
+		#[serde(rename = "player1_defeated")]
+		is_first_player_defeated: bool,
+
+		#[serde(rename = "player1_score")]
+		first_player_score: i32,
+
+		#[serde(rename = "player2")]
+		second_player_username: String,
+
+		#[serde(rename = "player2_defeated")]
+		is_second_player_defeated: bool,
+
+		#[serde(rename = "player2_score")]
+		second_player_score: i32,
+	},
 }
 
 pub async fn run(
@@ -36,7 +79,17 @@ pub async fn run(
 	{
 		while let Some(post) = posts.recv().await
 		{
-			debug!("{}", post.message);
+			let message = match serde_json::to_string(&post)
+			{
+				Ok(message) => message,
+				Err(error) =>
+				{
+					error!("Error while jsonifying: {:?}", error);
+					debug!("Original post: {:?}", post);
+					continue;
+				}
+			};
+			debug!("{}", message);
 		}
 	}
 	Ok(())
@@ -75,10 +128,21 @@ impl Connection
 
 	async fn send(&self, post: Post)
 	{
-		trace!("Sending: {}", post.message);
+		let message = match serde_json::to_string(&post)
+		{
+			Ok(message) => message,
+			Err(error) =>
+			{
+				error!("Error while jsonifying: {:?}", error);
+				error!("Original post: {:?}", post);
+				return;
+			}
+		};
+
+		trace!("Sending: {}", message);
 
 		let payload = json!({
-			"content": post.message,
+			"content": message,
 		});
 
 		loop

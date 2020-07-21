@@ -14,6 +14,7 @@ use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
 use crate::server::chat;
 use crate::server::client;
+use crate::server::discord_api;
 use crate::server::lobby;
 use crate::server::lobby::Update;
 use crate::server::login::UserId;
@@ -113,6 +114,7 @@ pub struct Setup
 
 pub async fn run(
 	setup: Setup,
+	mut discord_api: mpsc::Sender<discord_api::Post>,
 	mut updates: mpsc::Receiver<Update>,
 ) -> Result<(), Error>
 {
@@ -284,7 +286,7 @@ pub async fn run(
 	let shuffleplayers = challenge.is_none()
 		&& !map_name.contains("demo")
 		&& !map_name.contains("tutorial");
-	automaton.load(map_name, shuffleplayers)?;
+	automaton.load(map_name.clone(), shuffleplayers)?;
 	automaton.start_recording(metadata, lobby_id.to_string())?;
 
 	// Is this game rated?
@@ -319,7 +321,16 @@ pub async fn run(
 	let should_mention_on_discord = players.len() == 2 && bots.len() == 0;
 	if should_mention_on_discord
 	{
-		// TODO mention on discord
+		let post = discord_api::Post::GameStarted {
+			is_rated,
+			first_player_username: players[0].username.clone(),
+			second_player_username: players[1].username.clone(),
+			map_name: map_name.clone(),
+			ruleset_name: ruleset_name.clone(),
+			planning_time_in_seconds_or_zero: planning_time_in_seconds
+				.unwrap_or(0),
+		};
+		discord_api.send(post).await?;
 	}
 
 	let lobby_info = LobbyInfo {
@@ -359,7 +370,16 @@ pub async fn run(
 	// Did we send a gameStarted post?
 	if should_mention_on_discord
 	{
-		// TODO mention on discord
+		let post = discord_api::Post::GameEnded {
+			is_rated,
+			first_player_username: players[0].username.clone(),
+			is_first_player_defeated: automaton.is_defeated(players[0].color),
+			first_player_score: automaton.score(players[0].color),
+			second_player_username: players[1].username.clone(),
+			is_second_player_defeated: automaton.is_defeated(players[1].color),
+			second_player_score: automaton.score(players[1].color),
+		};
+		discord_api.send(post).await?;
 	}
 
 	// If there are non-bot non-observer participants, adjust their ratings.
@@ -1474,6 +1494,10 @@ pub enum Error
 	{
 		error: mpsc::error::SendError<rating::Update>,
 	},
+	DiscordApiPostDropped
+	{
+		error: mpsc::error::SendError<discord_api::Post>,
+	},
 	GeneralChat
 	{
 		error: mpsc::error::SendError<chat::Update>,
@@ -1486,6 +1510,14 @@ impl From<mpsc::error::SendError<rating::Update>> for Error
 	fn from(error: mpsc::error::SendError<rating::Update>) -> Self
 	{
 		Error::ResultDropped { error }
+	}
+}
+
+impl From<mpsc::error::SendError<discord_api::Post>> for Error
+{
+	fn from(error: mpsc::error::SendError<discord_api::Post>) -> Self
+	{
+		Error::DiscordApiPostDropped { error }
 	}
 }
 
@@ -1514,6 +1546,7 @@ impl fmt::Display for Error
 			Error::Abandoned => write!(f, "{:#?}", &self),
 			Error::ClientGone { .. } => write!(f, "{:#?}", &self),
 			Error::ResultDropped { .. } => write!(f, "{:#?}", &self),
+			Error::DiscordApiPostDropped { .. } => write!(f, "{:#?}", &self),
 			Error::GeneralChat { .. } => write!(f, "{:#?}", &self),
 			Error::Interface(error) => error.fmt(f),
 		}

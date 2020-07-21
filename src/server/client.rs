@@ -995,6 +995,7 @@ async fn handle_message(
 				let mut lobby = lobby::create(
 					&mut client.lobby_authority,
 					client.rating_database.clone(),
+					client.discord_api.clone(),
 					client.canary_for_lobbies.clone(),
 				);
 
