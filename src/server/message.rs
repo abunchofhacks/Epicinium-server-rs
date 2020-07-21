@@ -10,6 +10,7 @@ use crate::logic::map;
 use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
+use crate::server::lobby;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
@@ -187,7 +188,8 @@ pub enum Message
 	},
 	Secrets
 	{
-		metadata: SecretsMetadata,
+		#[serde(rename = "metadata")]
+		secrets: lobby::Secrets,
 	},
 	Skins
 	{
@@ -357,16 +359,6 @@ pub struct LobbyMetadata
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub is_public: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct SecretsMetadata
-{
-	#[serde(default, skip_serializing_if = "is_zero")]
-	pub join_secret: String,
-
-	#[serde(default, skip_serializing_if = "is_zero")]
-	pub spectate_secret: String,
 }
 
 #[derive(

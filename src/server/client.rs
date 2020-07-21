@@ -152,6 +152,7 @@ pub fn accept(
 		sendbuffer: sendbuffer_handle,
 		update_callback: updatebuffer_in,
 		poison_callback: poison_in,
+		salts: None,
 	};
 
 	let client = Client {

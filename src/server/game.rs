@@ -1133,7 +1133,7 @@ async fn handle_join(
 
 	let message = Message::JoinLobby {
 		lobby_id: Some(lobby.id),
-		username: Some(client_username.clone()),
+		username: Some(client_username),
 		metadata: None,
 	};
 	let update = chat::Update::Msg(message);
@@ -1284,6 +1284,10 @@ fn do_join(
 	};
 	client_handle.notify(update);
 
+	// Send secrets for Discord invites and Ask-to-Join.
+	client_handle.generate_and_send_secrets(lobby.id);
+
+	// Reconnect the player or observer, or add them as a new observer.
 	if let Some(player) =
 		players.iter_mut().find(|x| x.user_id == client_user_id)
 	{

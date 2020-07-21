@@ -1,10 +1,12 @@
 /* Server::Lobby */
 
 mod name;
+mod secrets;
 
-use crate::common::base32;
+pub use secrets::Salts;
+pub use secrets::Secrets;
+
 use crate::common::keycode::*;
-use crate::common::version::Version;
 use crate::logic::ai;
 use crate::logic::challenge;
 use crate::logic::difficulty::*;
@@ -625,8 +627,6 @@ struct Client
 	user_id: UserId,
 	username: String,
 	handle: client::Handle,
-	join_secret_salt: String,
-	spectate_secret_salt: String,
 }
 
 async fn handle_join(
@@ -707,19 +707,11 @@ fn do_join(
 		return Err(());
 	}
 
-	let mut rng = rand::thread_rng();
-	let joinbytes: [u8; 20] = rng.gen();
-	let join_secret_salt = base32::encode(&joinbytes);
-	let specbytes: [u8; 20] = rng.gen();
-	let spectate_secret_salt = base32::encode(&specbytes);
-
 	let mut newcomer = Client {
 		id: client_id,
 		user_id: client_user_id,
 		username: client_username,
 		handle: client_handle,
-		join_secret_salt,
-		spectate_secret_salt,
 	};
 
 	// Tell the newcomer which users are already in the lobby.
@@ -859,28 +851,7 @@ fn send_secrets(
 		.iter_mut()
 		.find(|x| x.id == client_id)
 		.ok_or(Error::ClientMissing)?;
-
-	let metadata = SecretsMetadata {
-		join_secret: format_args!(
-			"{}-{}-{}",
-			lobby_id, client_id, client.join_secret_salt
-		)
-		.to_string(),
-		spectate_secret: format_args!(
-			"{}-{}-{}",
-			lobby_id, client_id, client.spectate_secret_salt
-		)
-		.to_string(),
-	};
-	if Version::current().is_release()
-	{
-		client.handle.send(Message::Secrets { metadata });
-	}
-	else
-	{
-		debug!("Not sending secrets: {:?}", metadata);
-	}
-
+	client.handle.generate_and_send_secrets(lobby_id);
 	Ok(())
 }
 
@@ -923,8 +894,6 @@ async fn handle_removed(
 			user_id: _,
 			username,
 			mut handle,
-			join_secret_salt: _,
-			spectate_secret_salt: _,
 		} = removed_client;
 
 		let message = Message::LeaveLobby {
