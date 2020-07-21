@@ -5,10 +5,12 @@ use crate::common::keycode::*;
 use crate::logic::ruleset;
 use crate::server::chat;
 use crate::server::client;
+use crate::server::discord_api;
 use crate::server::login;
 use crate::server::portal;
 use crate::server::rating;
 use crate::server::settings::*;
+use crate::server::slack_api;
 
 use std::error;
 use std::net::SocketAddr;
@@ -43,11 +45,17 @@ pub async fn run_server(
 
 	ruleset::initialize_collection()?;
 
+	let (slack_in, slack_out) = mpsc::channel::<slack_api::Post>(10000);
+	let slack_task = slack_api::run(settings, slack_out);
+
 	let login_server = login::connect(settings)?;
 	let login = sync::Arc::new(login_server);
 
 	let (rating_in, rating_out) = mpsc::channel::<rating::Update>(10000);
 	let rating_task = rating::run(settings, rating_out);
+
+	let (discord_in, discord_out) = mpsc::channel::<discord_api::Post>(10000);
+	let discord_task = discord_api::run(settings, discord_out);
 
 	let (state_in, state_out) = watch::channel(State::Open);
 	let (client_canary_in, client_canary_out) = mpsc::channel::<()>(1);
@@ -63,13 +71,19 @@ pub async fn run_server(
 		login,
 		general_in,
 		rating_in,
+		slack_in,
+		discord_in,
 		state_out,
 		client_canary_in,
 	);
 
-	let server_task =
-		future::try_join4(acceptance_task, chat_task, rating_task, close_task)
-			.map_ok(|((), (), (), ())| ());
+	let server_task = future::try_join4(
+		acceptance_task,
+		chat_task,
+		future::try_join3(slack_task, rating_task, discord_task),
+		close_task,
+	)
+	.map_ok(|((), (), ((), (), ()), ())| ());
 
 	server_task.await
 }
@@ -79,6 +93,8 @@ async fn accept_clients(
 	login: sync::Arc<login::Server>,
 	general_chat: mpsc::Sender<chat::Update>,
 	ratings: mpsc::Sender<rating::Update>,
+	slack_api: mpsc::Sender<slack_api::Post>,
+	discord_api: mpsc::Sender<discord_api::Post>,
 	server_state: watch::Receiver<State>,
 	client_canary: mpsc::Sender<()>,
 ) -> Result<(), Box<dyn error::Error>>
@@ -98,6 +114,8 @@ async fn accept_clients(
 		login,
 		general_chat,
 		ratings,
+		slack_api,
+		discord_api,
 		server_state,
 		client_canary,
 	)
@@ -113,6 +131,8 @@ async fn listen(
 	login: sync::Arc<login::Server>,
 	general_chat: mpsc::Sender<chat::Update>,
 	ratings: mpsc::Sender<rating::Update>,
+	slack_api: mpsc::Sender<slack_api::Post>,
+	discord_api: mpsc::Sender<discord_api::Post>,
 	server_state: watch::Receiver<State>,
 	client_canary: mpsc::Sender<()>,
 )

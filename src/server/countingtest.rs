@@ -115,7 +115,7 @@ async fn run_test_impl(
 	send_message(number, &mut writer, initialmessage).await?;
 
 	let debugmessage = Message::Debug {
-		content: format_args!("I am number {}", number).to_string(),
+		content: format!("I am number {}", number).to_string(),
 	};
 	send_message(number, &mut writer, debugmessage).await?;
 

@@ -1,13 +1,13 @@
 /* Server::Rating */
 
-use crate::common::platform::*;
-use crate::common::version::*;
+use crate::common::platform::Platform;
+use crate::common::version::Version;
 use crate::logic::challenge;
 use crate::server::game;
 use crate::server::game::MatchType;
 use crate::server::login::UserId;
 use crate::server::message::ResponseStatus;
-use crate::server::settings::*;
+use crate::server::settings::Settings;
 
 use std::collections::HashMap;
 use std::error;
@@ -42,7 +42,7 @@ pub async fn run(
 	mut updates: mpsc::Receiver<Update>,
 ) -> Result<(), Box<dyn error::Error>>
 {
-	let mut database = initialize(settings).await?;
+	let mut database = initialize(settings)?;
 
 	while let Some(update) = updates.recv().await
 	{
@@ -176,15 +176,13 @@ fn adjust(rating: f64, score: i32, match_type: MatchType) -> Option<f64>
 	Some(0.1 * (ratingtenths as f64))
 }
 
-async fn initialize(
-	settings: &Settings,
-) -> Result<Database, Box<dyn error::Error>>
+fn initialize(settings: &Settings) -> Result<Database, Box<dyn error::Error>>
 {
 	if settings.login_server().is_some()
 		|| (!cfg!(feature = "version-is-dev")
 			&& (!cfg!(debug_assertions) || cfg!(feature = "candidate")))
 	{
-		let connection = Connection::connect(settings).await?;
+		let connection = Connection::connect(settings)?;
 		Ok(Database {
 			connection: Some(connection),
 			cache: HashMap::new(),
@@ -209,9 +207,8 @@ struct Connection
 
 impl Connection
 {
-	async fn connect(
-		settings: &Settings,
-	) -> Result<Connection, Box<dyn error::Error>>
+	fn connect(settings: &Settings)
+		-> Result<Connection, Box<dyn error::Error>>
 	{
 		let url = settings.get_login_server()?;
 		let base_url = http::Url::parse(url)?;

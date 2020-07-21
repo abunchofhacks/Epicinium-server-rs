@@ -37,6 +37,11 @@ pub fn start(logname: &str, level: Level) -> Result<(), fern::InitError>
 			))
 		})
 		.level(levelfilter)
+		.filter(|metadata| {
+			// Smaller is more severe.
+			metadata.level() <= log::LevelFilter::Info
+				|| !matches_blacklist(metadata.target())
+		})
 		.chain(fern::log_reopen(&tracelogfilename, sighup)?)
 		.chain(
 			fern::Dispatch::new()
@@ -50,6 +55,13 @@ pub fn start(logname: &str, level: Level) -> Result<(), fern::InitError>
 		)
 		.apply()?;
 	Ok(())
+}
+
+fn matches_blacklist(target: &str) -> bool
+{
+	target.starts_with("hyper")
+		|| target.starts_with("want")
+		|| target.starts_with("mio")
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
