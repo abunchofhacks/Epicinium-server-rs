@@ -10,6 +10,27 @@ use serde::Serializer;
 
 use rand::Rng;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+// serde externally tagged
+pub enum Invite
+{
+	JoinSecret(Secret),
+	SpectateSecret(Secret),
+}
+
+impl Invite
+{
+	pub fn secret(&self) -> &Secret
+	{
+		match self
+		{
+			Invite::JoinSecret(secret) => secret,
+			Invite::SpectateSecret(secret) => secret,
+		}
+	}
+}
+
 #[derive(Debug, Clone)]
 pub struct Secret
 {

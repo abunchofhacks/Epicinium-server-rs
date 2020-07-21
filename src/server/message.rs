@@ -51,8 +51,9 @@ pub enum Message
 		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
 		username: Option<String>,
 
-		#[serde(default, skip_serializing_if = "is_zero")]
-		metadata: Option<JoinMetadata>,
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		#[serde(rename = "metadata")]
+		invite: Option<lobby::Invite>,
 	},
 	LeaveLobby
 	{

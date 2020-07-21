@@ -111,6 +111,32 @@ impl Handle
 		}
 	}
 
+	pub fn verify_invite(&self, invite: &lobby::Invite) -> bool
+	{
+		match self
+		{
+			Handle::Connected {
+				id,
+				salts: Some(salts),
+				..
+			} => match invite
+			{
+				lobby::Invite::JoinSecret(secret) =>
+				{
+					secret.client_id == *id
+						&& secret.salt == salts.join_secret_salt
+				}
+				lobby::Invite::SpectateSecret(secret) =>
+				{
+					secret.client_id == *id
+						&& secret.salt == salts.spectate_secret_salt
+				}
+			},
+			Handle::Connected { salts: None, .. } => false,
+			Handle::Disconnected { .. } => false,
+		}
+	}
+
 	pub fn take(&mut self) -> Handle
 	{
 		let id: Keycode = match self

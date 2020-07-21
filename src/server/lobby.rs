@@ -3,6 +3,7 @@
 mod name;
 mod secrets;
 
+pub use secrets::Invite;
 pub use secrets::Salts;
 pub use secrets::Secrets;
 
@@ -50,6 +51,7 @@ pub enum Update
 		client_handle: client::Handle,
 		lobby_sendbuffer: mpsc::Sender<Update>,
 		general_chat: mpsc::Sender<chat::Update>,
+		invite: Option<Invite>,
 	},
 	Leave
 	{
@@ -340,6 +342,7 @@ async fn handle_update(
 			client_handle,
 			lobby_sendbuffer,
 			mut general_chat,
+			invite,
 		} =>
 		{
 			handle_join(
@@ -350,6 +353,7 @@ async fn handle_update(
 				client_handle,
 				lobby_sendbuffer,
 				&mut general_chat,
+				invite,
 				clients,
 			)
 			.await?;
@@ -637,9 +641,16 @@ async fn handle_join(
 	client_handle: client::Handle,
 	lobby_sendbuffer: mpsc::Sender<Update>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
+	invite: Option<Invite>,
 	clients: &mut Vec<Client>,
 ) -> Result<(), Error>
 {
+	let forced_role = match &invite
+	{
+		Some(Invite::JoinSecret(_)) => None,
+		Some(Invite::SpectateSecret(_)) => Some(Role::Observer),
+		None => None,
+	};
 	let mut handle_for_listing = client_handle.clone();
 
 	match do_join(
@@ -649,6 +660,7 @@ async fn handle_join(
 		client_username.clone(),
 		client_handle,
 		lobby_sendbuffer,
+		invite,
 		clients,
 	)
 	{
@@ -659,14 +671,12 @@ async fn handle_join(
 	let message = Message::JoinLobby {
 		lobby_id: Some(lobby.id),
 		username: Some(client_username.clone()),
-		metadata: None,
+		invite: None,
 	};
 	let update = chat::Update::Msg(message);
 	general_chat.send(update).await?;
 
 	// If the newcomer was invited, their role might be forced to be observer.
-	// TODO forced role if joining through spectate secret
-	let forced_role = None;
 	change_role(lobby, clients, client_id, forced_role)?;
 
 	// Describe the lobby to the client so that Discord presence is updated.
@@ -696,11 +706,22 @@ fn do_join(
 	client_username: String,
 	client_handle: client::Handle,
 	lobby_sendbuffer: mpsc::Sender<Update>,
+	invite: Option<Invite>,
 	clients: &mut Vec<Client>,
 ) -> Result<(), ()>
 {
-	// TODO check invitation
-	let is_invited = false;
+	let is_invited = if let Some(invite) = invite
+	{
+		if invite.secret().lobby_id != lobby.id
+		{
+			return Err(());
+		}
+		clients.iter().any(|x| x.handle.verify_invite(&invite))
+	}
+	else
+	{
+		false
+	};
 
 	if !lobby.is_public && !is_invited
 	{
@@ -720,7 +741,7 @@ fn do_join(
 		newcomer.handle.send(Message::JoinLobby {
 			lobby_id: Some(lobby.id),
 			username: Some(other.username.clone()),
-			metadata: None,
+			invite: None,
 		});
 
 		if let Some(&role) = lobby.roles.get(&other.id)
@@ -823,7 +844,7 @@ fn do_join(
 	let message = Message::JoinLobby {
 		lobby_id: Some(lobby.id),
 		username: Some(newcomer.username.clone()),
-		metadata: None,
+		invite: None,
 	};
 	for client in clients.iter_mut()
 	{

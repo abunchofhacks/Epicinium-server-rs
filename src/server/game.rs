@@ -14,6 +14,7 @@ use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
 use crate::server::chat;
 use crate::server::client;
+use crate::server::lobby;
 use crate::server::lobby::Update;
 use crate::server::login::UserId;
 use crate::server::message::*;
@@ -620,6 +621,7 @@ async fn rest(
 				client_handle,
 				lobby_sendbuffer,
 				mut general_chat,
+				invite,
 			} =>
 			{
 				handle_join(
@@ -634,6 +636,7 @@ async fn rest(
 					client_handle,
 					lobby_sendbuffer,
 					&mut general_chat,
+					invite,
 				)
 				.await?;
 			}
@@ -737,6 +740,7 @@ async fn ensure_live_players(
 				client_handle,
 				lobby_sendbuffer,
 				mut general_chat,
+				invite,
 			} =>
 			{
 				handle_join(
@@ -751,6 +755,7 @@ async fn ensure_live_players(
 					client_handle,
 					lobby_sendbuffer,
 					&mut general_chat,
+					invite,
 				)
 				.await?;
 			}
@@ -873,6 +878,7 @@ async fn sleep(
 				client_handle,
 				lobby_sendbuffer,
 				mut general_chat,
+				invite,
 			} =>
 			{
 				let time_remaining_in_seconds = lobby
@@ -892,6 +898,7 @@ async fn sleep(
 					client_handle,
 					lobby_sendbuffer,
 					&mut general_chat,
+					invite,
 				)
 				.await?;
 			}
@@ -1008,6 +1015,7 @@ async fn stage(
 				client_handle,
 				lobby_sendbuffer,
 				mut general_chat,
+				invite,
 			} =>
 			{
 				handle_join(
@@ -1022,6 +1030,7 @@ async fn stage(
 					client_handle,
 					lobby_sendbuffer,
 					&mut general_chat,
+					invite,
 				)
 				.await?;
 			}
@@ -1111,6 +1120,7 @@ async fn handle_join(
 	client_handle: client::Handle,
 	lobby_sendbuffer: mpsc::Sender<Update>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
+	invite: Option<lobby::Invite>,
 ) -> Result<(), Error>
 {
 	match do_join(
@@ -1124,6 +1134,7 @@ async fn handle_join(
 		client_username.clone(),
 		client_handle,
 		lobby_sendbuffer,
+		invite,
 	)
 	{
 		Ok(RejoinResult::Joined) => (),
@@ -1134,7 +1145,7 @@ async fn handle_join(
 	let message = Message::JoinLobby {
 		lobby_id: Some(lobby.id),
 		username: Some(client_username),
-		metadata: None,
+		invite: None,
 	};
 	let update = chat::Update::Msg(message);
 	general_chat.send(update).await?;
@@ -1153,6 +1164,7 @@ fn do_join(
 	client_username: String,
 	mut client_handle: client::Handle,
 	lobby_sendbuffer: mpsc::Sender<Update>,
+	invite: Option<lobby::Invite>,
 ) -> Result<RejoinResult, Error>
 {
 	let (disconnected_role, disconnected_player_color) = {
@@ -1172,8 +1184,19 @@ fn do_join(
 		}
 	};
 
-	// TODO check invitation
-	let is_invited = false;
+	let is_invited = if let Some(invite) = invite
+	{
+		if invite.secret().lobby_id != lobby.id
+		{
+			return Ok(RejoinResult::AccessDenied);
+		}
+		players.iter().any(|x| x.handle.verify_invite(&invite))
+			|| watchers.iter().any(|x| x.handle.verify_invite(&invite))
+	}
+	else
+	{
+		false
+	};
 
 	if disconnected_role.is_none() && !lobby.is_public && !is_invited
 	{
@@ -1187,7 +1210,7 @@ fn do_join(
 		client_handle.send(Message::JoinLobby {
 			lobby_id: Some(lobby.id),
 			username: Some(other.username.clone()),
-			metadata: None,
+			invite: None,
 		});
 	}
 	for other in watchers.iter().filter(|x| x.is_connected())
@@ -1195,7 +1218,7 @@ fn do_join(
 		client_handle.send(Message::JoinLobby {
 			lobby_id: Some(lobby.id),
 			username: Some(other.username.clone()),
-			metadata: None,
+			invite: None,
 		});
 	}
 
@@ -1203,7 +1226,7 @@ fn do_join(
 	let message = Message::JoinLobby {
 		lobby_id: Some(lobby.id),
 		username: Some(client_username.clone()),
-		metadata: None,
+		invite: None,
 	};
 	for other in players.iter_mut()
 	{

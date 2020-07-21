@@ -61,6 +61,7 @@ pub enum Update
 		lobby_id: Keycode,
 		handle: client::Handle,
 		general_chat: mpsc::Sender<Update>,
+		invite: Option<lobby::Invite>,
 	},
 
 	InGame
@@ -169,10 +170,11 @@ fn handle_update(
 			lobby_id,
 			handle,
 			general_chat,
+			invite,
 		} =>
 		{
 			verify_lobby(lobby_id, clients, lobbies);
-			handle_find_lobby(lobbies, lobby_id, handle, general_chat);
+			handle_find_lobby(lobbies, lobby_id, handle, general_chat, invite);
 		}
 
 		Update::InGame {
@@ -605,6 +607,7 @@ fn handle_find_lobby(
 	lobby_id: Keycode,
 	mut handle: client::Handle,
 	general_chat: mpsc::Sender<Update>,
+	invite: Option<lobby::Invite>,
 )
 {
 	let update = match lobbies.iter_mut().find(|x| x.id == lobby_id)
@@ -613,6 +616,7 @@ fn handle_find_lobby(
 			lobby_id,
 			lobby_sendbuffer: lobby.sendbuffer.clone(),
 			general_chat,
+			invite,
 		},
 		None => client::Update::LobbyNotFound { lobby_id },
 	};

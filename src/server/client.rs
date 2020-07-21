@@ -319,6 +319,7 @@ pub enum Update
 		lobby_id: Keycode,
 		lobby_sendbuffer: mpsc::Sender<lobby::Update>,
 		general_chat: mpsc::Sender<chat::Update>,
+		invite: Option<lobby::Invite>,
 	},
 	LobbyNotFound
 	{
@@ -661,6 +662,7 @@ async fn handle_update(
 
 		Update::LobbyFound {
 			lobby_id: _,
+			invite,
 			mut lobby_sendbuffer,
 			general_chat,
 		} =>
@@ -681,6 +683,7 @@ async fn handle_update(
 				client_handle: client.handle.clone(),
 				lobby_sendbuffer: lobby_sendbuffer.clone(),
 				general_chat,
+				invite,
 			};
 			lobby_sendbuffer.send(update).await?;
 			Ok(None)
@@ -690,7 +693,7 @@ async fn handle_update(
 			client.sendbuffer.try_send(Message::JoinLobby {
 				lobby_id: None,
 				username: None,
-				metadata: None,
+				invite: None,
 			})?;
 			Ok(None)
 		}
@@ -845,7 +848,7 @@ async fn handle_message(
 		Message::JoinLobby {
 			lobby_id: Some(lobby_id),
 			username: None,
-			metadata: _,
+			invite,
 		} =>
 		{
 			if let Some(ref mut general_chat) = client.general_chat
@@ -860,6 +863,7 @@ async fn handle_message(
 					lobby_id,
 					handle: client.handle.clone(),
 					general_chat: general_chat.clone(),
+					invite,
 				};
 				general_chat.send(update).await?;
 			}
@@ -940,6 +944,7 @@ async fn handle_message(
 					client_handle: client.handle.clone(),
 					lobby_sendbuffer: lobby.clone(),
 					general_chat: general_chat.clone(),
+					invite: None,
 				};
 				lobby.send(update).await?;
 				client.lobby = Some(lobby);
