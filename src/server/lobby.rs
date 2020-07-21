@@ -2,7 +2,9 @@
 
 mod name;
 
+use crate::common::base32;
 use crate::common::keycode::*;
+use crate::common::version::Version;
 use crate::logic::ai;
 use crate::logic::challenge;
 use crate::logic::difficulty::*;
@@ -623,6 +625,8 @@ struct Client
 	user_id: UserId,
 	username: String,
 	handle: client::Handle,
+	join_secret_salt: String,
+	spectate_secret_salt: String,
 }
 
 async fn handle_join(
@@ -673,10 +677,14 @@ async fn handle_join(
 	};
 	handle_for_listing.send(message);
 
+	// Describe the lobby to the chat if the number of players changed.
 	if Some(&Role::Player) == lobby.roles.get(&client_id)
 	{
 		describe_lobby(lobby, general_chat).await?;
 	}
+
+	// Send secrets for Discord invites and Ask-to-Join.
+	send_secrets(lobby.id, client_id, clients)?;
 
 	Ok(())
 }
@@ -699,11 +707,19 @@ fn do_join(
 		return Err(());
 	}
 
+	let mut rng = rand::thread_rng();
+	let joinbytes: [u8; 20] = rng.gen();
+	let join_secret_salt = base32::encode(&joinbytes);
+	let specbytes: [u8; 20] = rng.gen();
+	let spectate_secret_salt = base32::encode(&specbytes);
+
 	let mut newcomer = Client {
 		id: client_id,
 		user_id: client_user_id,
 		username: client_username,
 		handle: client_handle,
+		join_secret_salt,
+		spectate_secret_salt,
 	};
 
 	// Tell the newcomer which users are already in the lobby.
@@ -833,6 +849,41 @@ fn do_join(
 	Ok(())
 }
 
+fn send_secrets(
+	lobby_id: Keycode,
+	client_id: Keycode,
+	clients: &mut Vec<Client>,
+) -> Result<(), Error>
+{
+	let client = clients
+		.iter_mut()
+		.find(|x| x.id == client_id)
+		.ok_or(Error::ClientMissing)?;
+
+	let metadata = SecretsMetadata {
+		join_secret: format_args!(
+			"{}-{}-{}",
+			lobby_id, client_id, client.join_secret_salt
+		)
+		.to_string(),
+		spectate_secret: format_args!(
+			"{}-{}-{}",
+			lobby_id, client_id, client.spectate_secret_salt
+		)
+		.to_string(),
+	};
+	if Version::current().is_release()
+	{
+		client.handle.send(Message::Secrets { metadata });
+	}
+	else
+	{
+		debug!("Not sending secrets: {:?}", metadata);
+	}
+
+	Ok(())
+}
+
 async fn handle_leave(
 	lobby: &mut Lobby,
 	client_id: Keycode,
@@ -872,6 +923,8 @@ async fn handle_removed(
 			user_id: _,
 			username,
 			mut handle,
+			join_secret_salt: _,
+			spectate_secret_salt: _,
 		} = removed_client;
 
 		let message = Message::LeaveLobby {

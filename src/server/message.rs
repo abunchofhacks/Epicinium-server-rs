@@ -185,6 +185,10 @@ pub enum Message
 		#[serde(rename = "player")]
 		color: PlayerColor,
 	},
+	Secrets
+	{
+		metadata: SecretsMetadata,
+	},
 	Skins
 	{
 		metadata: map::Metadata,
@@ -353,6 +357,16 @@ pub struct LobbyMetadata
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub is_public: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct SecretsMetadata
+{
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub join_secret: String,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub spectate_secret: String,
 }
 
 #[derive(

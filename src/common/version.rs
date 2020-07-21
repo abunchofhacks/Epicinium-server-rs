@@ -44,9 +44,9 @@ impl Version
 	{
 		Version {
 			major: 0,
-			minor: 1,
+			minor: 35,
 			patch: 0,
-			release: 0,
+			release: 1,
 		}
 	}
 
@@ -56,7 +56,7 @@ impl Version
 			major: 255,
 			minor: 255,
 			patch: 255,
-			release: 254,
+			release: 1,
 		}
 	}
 
@@ -88,6 +88,11 @@ impl Version
 			patch,
 			release,
 		}
+	}
+
+	pub fn is_release(&self) -> bool
+	{
+		self.release == 0
 	}
 }
 

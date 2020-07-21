@@ -1525,6 +1525,7 @@ async fn handle_message(
 		| Message::ListMap { .. }
 		| Message::PickChallenge { .. }
 		| Message::AssignColor { .. }
+		| Message::Secrets { .. }
 		| Message::Skins { .. }
 		| Message::InGame { .. }
 		| Message::Briefing { .. }
