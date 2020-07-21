@@ -52,7 +52,7 @@ impl Connection
 	) -> Result<Connection, Box<dyn std::error::Error>>
 	{
 		let servername = settings.get_slackname()?;
-		let name = format!("{}-{}", servername, Version::current().to_string());
+		let name = format!("{}-{}", servername, Version::current());
 
 		let url = settings.get_slackurl()?;
 		let url = http::Url::parse(url)?;
@@ -61,7 +61,7 @@ impl Connection
 		let platformstring = serde_plain::to_string(&platform)?;
 		let user_agent = format!(
 			"epicinium-server/{} ({}; rust)",
-			Version::current().to_string(),
+			Version::current(),
 			platformstring,
 		);
 

@@ -168,6 +168,8 @@ async fn listen(
 			login.clone(),
 			general_chat.clone(),
 			ratings.clone(),
+			slack_api.clone(),
+			discord_api.clone(),
 			server_state.clone(),
 			client_canary.clone(),
 			lobbyticker.clone(),

@@ -85,7 +85,6 @@ async fn wait_for_pong(
 		else
 		{
 			warn!("Disconnecting inactive client {}...", client_id);
-			// TODO slack
 			return Err(Error::Timeout);
 		}
 	}

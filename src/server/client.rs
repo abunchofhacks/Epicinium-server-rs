@@ -14,12 +14,14 @@ pub use handle::Handle;
 use crate::common::keycode::Keycode;
 use crate::common::version::*;
 use crate::server::chat;
+use crate::server::discord_api;
 use crate::server::game;
 use crate::server::lobby;
 use crate::server::login::Unlock;
 use crate::server::login::UserId;
 use crate::server::message::*;
 use crate::server::rating;
+use crate::server::slack_api;
 use crate::server::tokio::State as ServerState;
 
 use std::fmt;
@@ -50,6 +52,8 @@ struct Client
 	pong_receive_time: Option<oneshot::Sender<()>>,
 	ping_tolerance: watch::Sender<Duration>,
 	login: mpsc::Sender<login::Request>,
+	slack_api: mpsc::Sender<slack_api::Post>,
+	discord_api: mpsc::Sender<discord_api::Post>,
 	handle: Handle,
 	general_chat_reserve: Option<mpsc::Sender<chat::Update>>,
 	general_chat: Option<mpsc::Sender<chat::Update>>,
@@ -60,6 +64,8 @@ struct Client
 	lobby: Option<mpsc::Sender<lobby::Update>>,
 	has_proper_version: bool,
 	has_proper_version_a: sync::Arc<atomic::AtomicBool>,
+	appears_active_according_to_notifications: bool,
+	has_gracefully_disconnected: bool,
 
 	pub id: Keycode,
 	pub user_id: Option<UserId>,
@@ -118,6 +124,29 @@ impl Drop for Client
 			None =>
 			{}
 		}
+
+		if self.appears_active_according_to_notifications
+		{
+			let message = if self.has_gracefully_disconnected
+			{
+				format!("Someone was peeking. (v{})", self.version).to_string()
+			}
+			else if !self.username.is_empty()
+			{
+				format!("User '{}' crashed. (v{})", self.username, self.version)
+					.to_string()
+			}
+			else
+			{
+				format!("Someone crashed. (v{})", self.version).to_string()
+			};
+			let post = slack_api::Post { message };
+			match self.slack_api.try_send(post)
+			{
+				Ok(()) => (),
+				Err(e) => error!("Error while dropping client: {:?}", e),
+			}
+		}
 	}
 }
 
@@ -127,6 +156,8 @@ pub fn accept(
 	login_server: sync::Arc<login::Server>,
 	chat_server: mpsc::Sender<chat::Update>,
 	rating_database: mpsc::Sender<rating::Update>,
+	slack_api: mpsc::Sender<slack_api::Post>,
+	discord_api: mpsc::Sender<discord_api::Post>,
 	server_state: watch::Receiver<ServerState>,
 	canary: mpsc::Sender<()>,
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
@@ -161,6 +192,8 @@ pub fn accept(
 		pong_receive_time: None,
 		ping_tolerance: pingtolerance_in,
 		login: login_in,
+		slack_api,
+		discord_api,
 		handle,
 		general_chat_reserve: Some(chat_server),
 		general_chat: None,
@@ -171,6 +204,8 @@ pub fn accept(
 		lobby: None,
 		has_proper_version: false,
 		has_proper_version_a: sync::Arc::new(atomic::AtomicBool::new(false)),
+		appears_active_according_to_notifications: false,
+		has_gracefully_disconnected: false,
 
 		id: id,
 		user_id: None,
@@ -373,6 +408,10 @@ enum Error
 	{
 		error: mpsc::error::TrySendError<login::Request>,
 	},
+	SlackApi
+	{
+		error: mpsc::error::SendError<slack_api::Post>,
+	},
 	Rating
 	{
 		error: mpsc::error::SendError<rating::Update>,
@@ -445,6 +484,14 @@ impl From<mpsc::error::TrySendError<login::Request>> for Error
 	fn from(error: mpsc::error::TrySendError<login::Request>) -> Self
 	{
 		Error::Login { error }
+	}
+}
+
+impl From<mpsc::error::SendError<slack_api::Post>> for Error
+{
+	fn from(error: mpsc::error::SendError<slack_api::Post>) -> Self
+	{
+		Error::SlackApi { error }
 	}
 }
 
@@ -543,6 +590,7 @@ impl fmt::Display for Error
 			Error::Chat { error } => error.fmt(f),
 			Error::Lobby { error } => error.fmt(f),
 			Error::Login { error } => error.fmt(f),
+			Error::SlackApi { error } => error.fmt(f),
 			Error::Rating { error } => error.fmt(f),
 			Error::Tolerance { error } => error.fmt(f),
 			Error::Watch { error } => error.fmt(f),
@@ -649,6 +697,15 @@ async fn handle_update(
 					let update = rating::Update::Fresh { user_id, data };
 					client.rating_database.send(update).await?;
 				}
+
+				let message = format!(
+					"User '{}' joined. (v{})",
+					client.username, client.version,
+				)
+				.to_string();
+				let post = slack_api::Post { message };
+				client.slack_api.send(post).await?;
+				client.appears_active_according_to_notifications = true;
 
 				client.general_chat = Some(chat);
 				Ok(None)
@@ -760,10 +817,14 @@ async fn handle_message(
 		Message::Version { version } =>
 		{
 			greet_client(client, version)?;
+
+			// We want to know if someone is peeking.
+			client.appears_active_according_to_notifications = true;
 		}
 		Message::Quit =>
 		{
 			info!("Client {} is gracefully disconnecting...", client.id);
+			client.has_gracefully_disconnected = true;
 			return Ok(Some(HasQuit));
 		}
 		Message::JoinServer { .. } if client.general_chat.is_some() =>
@@ -829,6 +890,15 @@ async fn handle_message(
 					client_id: client.id,
 				};
 				general_chat.send(update).await?;
+
+				let message = format!(
+					"User '{}' left. (v{})",
+					client.username, client.version,
+				)
+				.to_string();
+				let post = slack_api::Post { message };
+				client.slack_api.send(post).await?;
+				client.appears_active_according_to_notifications = false;
 
 				if !client.closing
 				{
@@ -1552,7 +1622,7 @@ async fn handle_message(
 fn greet_client(client: &mut Client, version: Version) -> Result<(), Error>
 {
 	client.version = version;
-	info!("Client {} has version {}.", client.id, version.to_string());
+	info!("Client {} has version {}.", client.id, version);
 
 	let myversion = Version::current();
 	let response = Message::Version { version: myversion };

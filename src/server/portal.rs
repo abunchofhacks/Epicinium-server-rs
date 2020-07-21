@@ -88,7 +88,7 @@ impl Connection
 		let platformstring = serde_plain::to_string(&platform)?;
 		let user_agent = format!(
 			"epicinium-server/{} ({}; rust)",
-			Version::current().to_string(),
+			Version::current(),
 			platformstring,
 		);
 
