@@ -126,6 +126,10 @@ pub enum Sub
 		general_chat: mpsc::Sender<chat::Update>,
 		slot: Botslot,
 	},
+	EnableCustomMaps
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+	},
 	PickMap
 	{
 		general_chat: mpsc::Sender<chat::Update>,
@@ -158,6 +162,26 @@ pub enum Sub
 	{
 		general_chat: mpsc::Sender<chat::Update>,
 	},
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LobbyType
+{
+	Generic,
+	OneVsOne,
+	Custom,
+	Tutorial,
+	Challenge,
+	Replay,
+}
+
+impl Default for LobbyType
+{
+	fn default() -> LobbyType
+	{
+		LobbyType::Generic
+	}
 }
 
 pub fn create(
@@ -193,8 +217,8 @@ struct Lobby
 	name: String,
 	num_players: i32,
 	max_players: i32,
+	lobby_type: LobbyType,
 	is_public: bool,
-	is_replay: bool,
 
 	has_been_listed: bool,
 	last_description_metadata: Option<LobbyMetadata>,
@@ -215,8 +239,6 @@ struct Lobby
 	ruleset_confirmations: HashSet<Keycode>,
 	timer_in_seconds: u32,
 	challenge_id: Option<challenge::ChallengeId>,
-	is_tutorial: bool,
-	is_rated: bool,
 
 	stage: Stage,
 	rating_database_for_games: mpsc::Sender<rating::Update>,
@@ -286,8 +308,8 @@ async fn initialize(
 		name: name::generate(),
 		num_players: 0,
 		max_players: 2,
+		lobby_type: LobbyType::Generic,
 		is_public: true,
-		is_replay: false,
 		has_been_listed: false,
 		last_description_metadata: None,
 		bots: Vec::new(),
@@ -305,8 +327,6 @@ async fn initialize(
 		ruleset_confirmations: HashSet::new(),
 		timer_in_seconds: 60,
 		challenge_id: None,
-		is_tutorial: false,
-		is_rated: true,
 		stage: Stage::Setup,
 		rating_database_for_games,
 	})
@@ -484,6 +504,13 @@ async fn handle_sub(
 			Ok(None)
 		}
 
+		Sub::EnableCustomMaps { mut general_chat } =>
+		{
+			become_custom_lobby(lobby, clients).await?;
+			describe_lobby(lobby, &mut general_chat).await?;
+			Ok(None)
+		}
+
 		Sub::PickMap {
 			mut general_chat,
 			map_name,
@@ -607,7 +634,26 @@ fn make_description_metadata(lobby: &Lobby) -> LobbyMetadata
 	debug_assert!(lobby.bots.len() <= 0xFF);
 	let num_bot_players = lobby.bots.len() as i32;
 
-	debug_assert!(lobby.is_replay == (lobby.max_players == 0));
+	match lobby.lobby_type
+	{
+		LobbyType::Generic | LobbyType::Custom =>
+		{
+			debug_assert!(lobby.max_players > 0);
+		}
+		LobbyType::OneVsOne =>
+		{
+			debug_assert!(lobby.max_players == 2);
+		}
+		LobbyType::Challenge | LobbyType::Tutorial =>
+		{
+			debug_assert!(lobby.max_players == 2);
+			debug_assert!(num_bot_players == 1);
+		}
+		LobbyType::Replay =>
+		{
+			debug_assert!(lobby.max_players == 0);
+		}
+	}
 	debug_assert!(lobby.num_players <= lobby.max_players);
 	debug_assert!(num_bot_players <= lobby.num_players);
 
@@ -615,6 +661,7 @@ fn make_description_metadata(lobby: &Lobby) -> LobbyMetadata
 		max_players: lobby.max_players,
 		num_players: lobby.num_players,
 		num_bot_players,
+		lobby_type: lobby.lobby_type,
 		is_public: lobby.is_public,
 	}
 }
@@ -774,7 +821,7 @@ fn do_join(
 		}
 	}
 
-	if !lobby.is_replay
+	if lobby.lobby_type != LobbyType::Replay
 	{
 		// Tell the newcomer the AI pool.
 		for name in &lobby.ai_pool
@@ -814,7 +861,7 @@ fn do_join(
 		}
 	}
 
-	if !lobby.is_replay
+	if lobby.lobby_type != LobbyType::Replay
 	{
 		for (mapname, metadata) in &lobby.map_pool
 		{
@@ -1427,7 +1474,7 @@ async fn pick_map(
 	// FUTURE check if client is host
 
 	// Is this a game lobby?
-	if lobby.is_replay
+	if lobby.lobby_type == LobbyType::Replay
 	{
 		warn!("Cannot pick map for replay lobby {}.", lobby.id);
 		return Ok(());
@@ -1574,21 +1621,30 @@ async fn become_tutorial_lobby(
 	// FUTURE check if client is host
 
 	// Is this a game lobby?
-	if lobby.is_replay
+	if lobby.lobby_type == LobbyType::Generic
 	{
-		warn!("Cannot turn replay lobby {} into tutorial.", lobby.id);
+		// Prevent lobbies from being turned to tutorial lobbies if there are
+		// multiple human players present.
+		if clients.len() > 1
+		{
+			warn!(
+				"Cannot turn lobby {} with {} clients into tutorial.",
+				lobby.id,
+				clients.len()
+			);
+			return Ok(());
+		}
+
+		lobby.lobby_type = LobbyType::Tutorial;
+	}
+	else if lobby.lobby_type == LobbyType::Tutorial
+	{
+		debug!("Cannot turn tutorial lobby {} into tutorial.", lobby.id);
 		return Ok(());
 	}
-
-	// Prevent lobbies from being turned to tutorial lobbies if there are
-	// multiple human players present.
-	if clients.len() > 1
+	else
 	{
-		warn!(
-			"Cannot turn lobby {} with {} clients into tutorial.",
-			lobby.id,
-			clients.len()
-		);
+		warn!("Cannot turn non-generic lobby {} into tutorial.", lobby.id);
 		return Ok(());
 	}
 
@@ -1622,8 +1678,6 @@ async fn become_tutorial_lobby(
 		change_difficulty(lobby, clients, None, difficulty);
 	}
 
-	lobby.is_tutorial = true;
-
 	Ok(())
 }
 
@@ -1635,26 +1689,31 @@ async fn become_challenge_lobby(
 	// FUTURE check if client is host
 
 	// Is this a game lobby?
-	if lobby.is_replay
+	if lobby.lobby_type == LobbyType::Generic
 	{
-		warn!("Cannot turn replay lobby {} into challenge.", lobby.id);
+		// Prevent lobbies from being turned to challenge lobbies if there are
+		// multiple human players present.
+		if clients.len() > 1
+		{
+			warn!(
+				"Cannot turn lobby {} with {} clients into challenge.",
+				lobby.id,
+				clients.len()
+			);
+			return Ok(());
+		}
+
+		lobby.lobby_type = LobbyType::Challenge;
+	}
+	else if lobby.lobby_type == LobbyType::Challenge
+	{
 		return Ok(());
 	}
-
-	// Prevent lobbies from being turned to challenge lobbies if there are
-	// multiple human players present.
-	if clients.len() > 1
+	else
 	{
-		warn!(
-			"Cannot turn lobby {} with {} clients into challenge.",
-			lobby.id,
-			clients.len()
-		);
+		warn!("Cannot turn non-generic lobby {} into challenge.", lobby.id);
 		return Ok(());
 	}
-
-	// Challenges are unrated because you cannot get 100 points.
-	lobby.is_rated = false;
 
 	let id = challenge::current_id();
 	let challenge_key = challenge::get_current_key();
@@ -1693,6 +1752,47 @@ async fn become_challenge_lobby(
 	Ok(())
 }
 
+async fn become_custom_lobby(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+) -> Result<(), Error>
+{
+	// FUTURE check if client is host
+
+	// Is this a game lobby?
+	if lobby.lobby_type == LobbyType::Generic
+	{
+		lobby.lobby_type = LobbyType::Custom;
+	}
+	else if lobby.lobby_type == LobbyType::Custom
+	{
+		debug!("Cannot turn custom lobby {} into custom.", lobby.id);
+		return Ok(());
+	}
+	else
+	{
+		warn!("Cannot turn non-generic lobby {} into custom.", lobby.id);
+		return Ok(());
+	}
+
+	let loaded_pool = map::load_custom_and_user_pool_with_metadata().await?;
+	for (name, metadata) in loaded_pool
+	{
+		let message = Message::ListMap {
+			map_name: name.clone(),
+			metadata: metadata.clone(),
+		};
+		for client in clients.iter_mut()
+		{
+			client.handle.send(message.clone());
+		}
+
+		lobby.map_pool.push((name, metadata));
+	}
+
+	Ok(())
+}
+
 async fn pick_timer(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
@@ -1702,7 +1802,7 @@ async fn pick_timer(
 	// FUTURE check if client is host
 
 	// Is this a game lobby?
-	if lobby.is_replay
+	if lobby.lobby_type == LobbyType::Replay
 	{
 		return Ok(());
 	}
@@ -1738,7 +1838,7 @@ async fn pick_ruleset(
 	// FUTURE check if ruleset in pool or client is developer or replay
 
 	// Is this a game lobby?
-	if lobby.is_replay
+	if lobby.lobby_type == LobbyType::Replay
 	{
 		warn!("Cannot pick ruleset in replay lobby {}.", lobby.id);
 		return Ok(());
@@ -2044,9 +2144,8 @@ async fn try_start(
 		map_metadata,
 		ruleset_name: lobby.ruleset_name.clone(),
 		planning_time_in_seconds: planning_timer,
+		lobby_type: lobby.lobby_type,
 		challenge: lobby.challenge_id,
-		is_tutorial: lobby.is_tutorial,
-		is_rated: lobby.is_rated,
 		is_public: lobby.is_public,
 	};
 

@@ -279,6 +279,32 @@ pub fn map_pool() -> Vec<String>
 	pool
 }
 
+pub fn map_custom_pool() -> Vec<String>
+{
+	let len = unsafe { epicinium_map_custom_pool_size() };
+	let mut pool = Vec::with_capacity(len);
+	for i in 0..len
+	{
+		let s: &CStr =
+			unsafe { CStr::from_ptr(epicinium_map_custom_pool_get(i)) };
+		pool.push(s.to_string_lossy().to_string());
+	}
+	pool
+}
+
+pub fn map_user_pool() -> Vec<String>
+{
+	let len = unsafe { epicinium_map_user_pool_size() };
+	let mut pool = Vec::with_capacity(len);
+	for i in 0..len
+	{
+		let s: &CStr =
+			unsafe { CStr::from_ptr(epicinium_map_user_pool_get(i)) };
+		pool.push(s.to_string_lossy().to_string());
+	}
+	pool
+}
+
 pub fn initialize_ruleset_collection() -> Result<(), InitializationError>
 {
 	let success = unsafe { epicinium_ruleset_initialize_collection() };
@@ -768,6 +794,10 @@ extern "C" {
 
 	fn epicinium_map_pool_size() -> usize;
 	fn epicinium_map_pool_get(i: usize) -> *const c_char;
+	fn epicinium_map_custom_pool_size() -> usize;
+	fn epicinium_map_custom_pool_get(i: usize) -> *const c_char;
+	fn epicinium_map_user_pool_size() -> usize;
+	fn epicinium_map_user_pool_get(i: usize) -> *const c_char;
 
 	fn epicinium_ruleset_initialize_collection() -> bool;
 	fn epicinium_ruleset_current_name() -> *const c_char;

@@ -1353,6 +1353,31 @@ async fn handle_message(
 				debug!("Ignoring RemoveBot from unlobbied client");
 			}
 		},
+		Message::EnableCustomMaps => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						error!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::EnableCustomMaps {
+						general_chat,
+					});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring EnableCustomMaps from unlobbied client");
+			}
+		},
 		Message::Game {
 			role: None,
 			player: None,

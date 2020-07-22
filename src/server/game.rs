@@ -16,6 +16,7 @@ use crate::server::chat;
 use crate::server::client;
 use crate::server::discord_api;
 use crate::server::lobby;
+use crate::server::lobby::LobbyType;
 use crate::server::lobby::Update;
 use crate::server::login::UserId;
 use crate::server::message::*;
@@ -106,9 +107,8 @@ pub struct Setup
 	pub map_metadata: map::Metadata,
 	pub ruleset_name: String,
 	pub planning_time_in_seconds: Option<u32>,
+	pub lobby_type: LobbyType,
 	pub challenge: Option<ChallengeId>,
-	pub is_tutorial: bool,
-	pub is_rated: bool,
 	pub is_public: bool,
 }
 
@@ -129,9 +129,8 @@ pub async fn run(
 		map_metadata,
 		ruleset_name,
 		planning_time_in_seconds,
+		lobby_type,
 		challenge,
-		is_tutorial,
-		is_rated,
 		is_public,
 	} = setup;
 
@@ -168,7 +167,7 @@ pub async fn run(
 	// Tell everyone that the game is starting.
 	for client in &mut players
 	{
-		if is_tutorial
+		if let LobbyType::Tutorial = lobby_type
 		{
 			client.handle.send(Message::Tutorial {
 				role: Some(Role::Player),
@@ -222,8 +221,13 @@ pub async fn run(
 	});
 
 	// A challenge might be set.
-	if let Some(challenge_id) = challenge
+	if lobby_type == LobbyType::Challenge
 	{
+		let challenge_id = match challenge
+		{
+			Some(challenge_id) => challenge_id,
+			None => return Err(Error::MissingChallengeId),
+		};
 		automaton.set_challenge(challenge_id)?;
 
 		initial_messages.push(Message::Briefing {
@@ -283,11 +287,29 @@ pub async fn run(
 	};
 
 	// Load the map.
-	let shuffleplayers = challenge.is_none()
-		&& !map_name.contains("demo")
-		&& !map_name.contains("tutorial");
+	let shuffleplayers = match lobby_type
+	{
+		LobbyType::Generic => true,
+		LobbyType::OneVsOne => true,
+		LobbyType::Custom => true,
+		LobbyType::Tutorial => false,
+		LobbyType::Challenge => false,
+		LobbyType::Replay => false,
+	};
 	automaton.load(map_name.clone(), shuffleplayers)?;
 	automaton.start_recording(metadata, lobby_id.to_string())?;
+
+	// Games on custom maps are unrated because the map might not be balanced.
+	// Challenges are unrated because you cannot get 100 points.
+	let is_rated = match lobby_type
+	{
+		LobbyType::Generic => true,
+		LobbyType::OneVsOne => true,
+		LobbyType::Custom => false,
+		LobbyType::Tutorial => true,
+		LobbyType::Challenge => false,
+		LobbyType::Replay => false,
+	};
 
 	// Is this game rated?
 	let match_type = if !is_rated
@@ -1486,6 +1508,7 @@ async fn handle_leave(
 pub enum Error
 {
 	Abandoned,
+	MissingChallengeId,
 	ClientGone
 	{
 		client_id: Keycode,
@@ -1544,6 +1567,7 @@ impl fmt::Display for Error
 		match self
 		{
 			Error::Abandoned => write!(f, "{:#?}", &self),
+			Error::MissingChallengeId => write!(f, "{:#?}", &self),
 			Error::ClientGone { .. } => write!(f, "{:#?}", &self),
 			Error::ResultDropped { .. } => write!(f, "{:#?}", &self),
 			Error::DiscordApiPostDropped { .. } => write!(f, "{:#?}", &self),

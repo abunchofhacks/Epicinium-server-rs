@@ -11,6 +11,7 @@ use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 use crate::server::botslot::Botslot;
 use crate::server::lobby;
+use crate::server::lobby::LobbyType;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
@@ -179,6 +180,7 @@ pub enum Message
 		#[serde(rename = "content")]
 		ruleset_name: String,
 	},
+	EnableCustomMaps,
 	AssignColor
 	{
 		#[serde(rename = "sender")]
@@ -357,6 +359,9 @@ pub struct LobbyMetadata
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub num_bot_players: i32,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub lobby_type: LobbyType,
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub is_public: bool,

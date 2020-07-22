@@ -31,6 +31,20 @@ pub async fn load_pool_with_metadata(
 	Ok(pool)
 }
 
+pub async fn load_custom_and_user_pool_with_metadata(
+) -> Result<Vec<(String, Metadata)>, io::Error>
+{
+	let names =
+		[epicinium::map_custom_pool(), epicinium::map_user_pool()].concat();
+	let mut pool = Vec::with_capacity(names.len());
+	for name in names
+	{
+		let metadata = load_metadata(&name).await?;
+		pool.push((name, metadata));
+	}
+	Ok(pool)
+}
+
 fn filename(mapname: &str) -> String
 {
 	format!("maps/{}.map", mapname)
