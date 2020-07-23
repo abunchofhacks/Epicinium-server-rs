@@ -13,6 +13,7 @@ pub use handle::Handle;
 
 use crate::common::keycode::Keycode;
 use crate::common::version::*;
+use crate::logic::ruleset;
 use crate::server::chat;
 use crate::server::discord_api;
 use crate::server::game;
@@ -384,6 +385,7 @@ enum Error
 	Invalid,
 	Unexpected,
 	Poisoned,
+	Io(std::io::Error),
 	Send
 	{
 		error: mpsc::error::SendError<Message>,
@@ -437,6 +439,14 @@ enum Error
 	PingTask(ping::Error),
 	PulseTask(pulse::Error),
 	LoginTask(login::Error),
+}
+
+impl From<std::io::Error> for Error
+{
+	fn from(error: std::io::Error) -> Self
+	{
+		Error::Io(error)
+	}
 }
 
 impl From<mpsc::error::SendError<Message>> for Error
@@ -584,6 +594,7 @@ impl fmt::Display for Error
 			Error::Invalid => write!(f, "Invalid message received"),
 			Error::Unexpected => write!(f, "Something unexpected happened"),
 			Error::Poisoned => write!(f, "Poisoned by chat or lobby"),
+			Error::Io(error) => error.fmt(f),
 			Error::Send { error } => error.fmt(f),
 			Error::TrySend { error } => error.fmt(f),
 			Error::Update { error } => error.fmt(f),
@@ -1378,6 +1389,10 @@ async fn handle_message(
 				debug!("Ignoring EnableCustomMaps from unlobbied client");
 			}
 		},
+		Message::RulesetRequest { ruleset_name } =>
+		{
+			handle_ruleset_request(client, ruleset_name).await?;
+		}
 		Message::Game {
 			role: None,
 			player: None,
@@ -1627,6 +1642,8 @@ async fn handle_message(
 		| Message::ListMap { .. }
 		| Message::PickChallenge { .. }
 		| Message::AssignColor { .. }
+		| Message::RulesetData { .. }
+		| Message::RulesetUnknown { .. }
 		| Message::Secrets { .. }
 		| Message::Skins { .. }
 		| Message::InGame { .. }
@@ -1720,4 +1737,22 @@ fn joining_server(
 		}
 		Err(error) => Err(error.into()),
 	}
+}
+
+async fn handle_ruleset_request(
+	client: &mut Client,
+	ruleset_name: String,
+) -> Result<(), Error>
+{
+	if !ruleset::exists(&ruleset_name)
+	{
+		let message = Message::RulesetUnknown { ruleset_name };
+		client.sendbuffer.send(message).await?;
+		return Ok(());
+	}
+
+	let data = ruleset::load_data(&ruleset_name).await?;
+	let message = Message::RulesetData { ruleset_name, data };
+	client.sendbuffer.send(message).await?;
+	Ok(())
 }

@@ -9,6 +9,7 @@ use crate::logic::difficulty::Difficulty;
 use crate::logic::map;
 use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
+use crate::logic::ruleset;
 use crate::server::botslot::Botslot;
 use crate::server::lobby;
 use crate::server::lobby::LobbyType;
@@ -188,6 +189,23 @@ pub enum Message
 
 		#[serde(rename = "player")]
 		color: PlayerColor,
+	},
+	RulesetRequest
+	{
+		#[serde(rename = "content")]
+		ruleset_name: String,
+	},
+	RulesetData
+	{
+		#[serde(rename = "content")]
+		ruleset_name: String,
+
+		data: ruleset::Data,
+	},
+	RulesetUnknown
+	{
+		#[serde(rename = "content")]
+		ruleset_name: String,
 	},
 	Secrets
 	{
