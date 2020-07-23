@@ -751,6 +751,7 @@ async fn handle_update(
 				client_handle: client.handle.clone(),
 				lobby_sendbuffer: lobby_sendbuffer.clone(),
 				general_chat,
+				desired_metadata: None,
 				invite,
 			};
 			lobby_sendbuffer.send(update).await?;
@@ -991,15 +992,15 @@ async fn handle_message(
 			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
-		Message::MakeLobby {} if client.closing =>
+		Message::MakeLobby { .. } if client.closing =>
 		{
 			client.sendbuffer.try_send(Message::Closing)?;
 		}
-		Message::MakeLobby {} if client.lobby.is_some() =>
+		Message::MakeLobby { .. } if client.lobby.is_some() =>
 		{
 			debug!("Ignoring message from lobbied client: {:?}", message);
 		}
-		Message::MakeLobby {} => match client.general_chat
+		Message::MakeLobby { metadata } => match client.general_chat
 		{
 			Some(ref general_chat) =>
 			{
@@ -1026,6 +1027,7 @@ async fn handle_message(
 					client_handle: client.handle.clone(),
 					lobby_sendbuffer: lobby.clone(),
 					general_chat: general_chat.clone(),
+					desired_metadata: metadata,
 					invite: None,
 				};
 				lobby.send(update).await?;
@@ -1393,12 +1395,7 @@ async fn handle_message(
 		{
 			handle_ruleset_request(client, ruleset_name).await?;
 		}
-		Message::Game {
-			role: None,
-			player: None,
-			ruleset_name: None,
-			timer_in_seconds: None,
-		} => match client.lobby
+		Message::Start => match client.lobby
 		{
 			Some(ref mut lobby) =>
 			{
@@ -1418,80 +1415,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				debug!("Ignoring Game from unlobbied client");
-			}
-		},
-		Message::Game { .. } =>
-		{
-			warn!("Invalid message from client: {:?}", message);
-			return Err(Error::Invalid);
-		}
-		Message::Tutorial {
-			role: None,
-			player: None,
-			ruleset_name: None,
-			timer_in_seconds: None,
-		} => match client.lobby
-		{
-			Some(ref mut lobby) =>
-			{
-				let general_chat = match &client.general_chat
-				{
-					Some(general_chat) => general_chat.clone(),
-					None =>
-					{
-						error!("Expected general_chat");
-						return Err(Error::Unexpected);
-					}
-				};
-
-				let update =
-					lobby::Update::ForSetup(lobby::Sub::PickTutorial {
-						general_chat: general_chat.clone(),
-					});
-				lobby.send(update).await?;
-
-				let update =
-					lobby::Update::ForSetup(lobby::Sub::Start { general_chat });
-				lobby.send(update).await?;
-			}
-			None =>
-			{
-				debug!("Ignoring Tutorial from unlobbied client");
-			}
-		},
-		Message::Tutorial { .. } =>
-		{
-			warn!("Invalid message from client: {:?}", message);
-			return Err(Error::Invalid);
-		}
-		Message::Challenge => match client.lobby
-		{
-			Some(ref mut lobby) =>
-			{
-				let general_chat = match &client.general_chat
-				{
-					Some(general_chat) => general_chat.clone(),
-					None =>
-					{
-						error!("Expected general_chat");
-						return Err(Error::Unexpected);
-					}
-				};
-
-				let update =
-					lobby::Update::ForSetup(lobby::Sub::PickChallenge {
-						general_chat: general_chat.clone(),
-					});
-				lobby.send(update).await?;
-
-				let update =
-					lobby::Update::ForSetup(lobby::Sub::Start { general_chat });
-				lobby.send(update).await?;
-			}
-			None =>
-			{
-				debug!("Ignoring Challenge from unlobbied client");
+				debug!("Ignoring Start from unlobbied client");
 			}
 		},
 		Message::Resign { username: None } => match client.lobby
@@ -1647,6 +1571,9 @@ async fn handle_message(
 		| Message::Secrets { .. }
 		| Message::Skins { .. }
 		| Message::InGame { .. }
+		| Message::Game { .. }
+		| Message::Tutorial { .. }
+		| Message::Challenge { .. }
 		| Message::Briefing { .. }
 		| Message::ReplayWithAnimations { .. }
 		| Message::Changes { .. }

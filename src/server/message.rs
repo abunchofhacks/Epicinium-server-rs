@@ -65,15 +65,19 @@ pub enum Message
 		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
 		username: Option<String>,
 	},
-	MakeLobby {},
-	SaveLobby {},
+	MakeLobby
+	{
+		#[serde(default, skip_serializing_if = "is_zero")]
+		metadata: Option<LobbyMetadata>,
+	},
+	SaveLobby,
 	DisbandLobby
 	{
 		#[serde(rename = "content")]
 		lobby_id: Keycode,
 	},
-	LockLobby {},
-	UnlockLobby {},
+	LockLobby,
+	UnlockLobby,
 	NameLobby
 	{
 		#[serde(rename = "content")]
@@ -226,6 +230,7 @@ pub enum Message
 
 		role: Role,
 	},
+	Start,
 	Game
 	{
 		#[serde(default, skip_serializing_if = "is_zero")]

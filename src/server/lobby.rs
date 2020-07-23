@@ -52,6 +52,7 @@ pub enum Update
 		client_handle: client::Handle,
 		lobby_sendbuffer: mpsc::Sender<Update>,
 		general_chat: mpsc::Sender<chat::Update>,
+		desired_metadata: Option<LobbyMetadata>,
 		invite: Option<Invite>,
 	},
 	Leave
@@ -134,14 +135,6 @@ pub enum Sub
 	{
 		general_chat: mpsc::Sender<chat::Update>,
 		map_name: String,
-	},
-	PickTutorial
-	{
-		general_chat: mpsc::Sender<chat::Update>,
-	},
-	PickChallenge
-	{
-		general_chat: mpsc::Sender<chat::Update>,
 	},
 	PickTimer
 	{
@@ -365,6 +358,7 @@ async fn handle_update(
 			client_handle,
 			lobby_sendbuffer,
 			mut general_chat,
+			desired_metadata,
 			invite,
 		} =>
 		{
@@ -376,6 +370,7 @@ async fn handle_update(
 				client_handle,
 				lobby_sendbuffer,
 				&mut general_chat,
+				desired_metadata,
 				invite,
 				clients,
 			)
@@ -517,18 +512,6 @@ async fn handle_sub(
 		} =>
 		{
 			pick_map(lobby, clients, map_name).await?;
-			describe_lobby(lobby, &mut general_chat).await?;
-			Ok(None)
-		}
-		Sub::PickTutorial { mut general_chat } =>
-		{
-			become_tutorial_lobby(lobby, clients).await?;
-			describe_lobby(lobby, &mut general_chat).await?;
-			Ok(None)
-		}
-		Sub::PickChallenge { mut general_chat } =>
-		{
-			become_challenge_lobby(lobby, clients).await?;
 			describe_lobby(lobby, &mut general_chat).await?;
 			Ok(None)
 		}
@@ -691,6 +674,7 @@ async fn handle_join(
 	client_handle: client::Handle,
 	lobby_sendbuffer: mpsc::Sender<Update>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
+	desired_metadata: Option<LobbyMetadata>,
 	invite: Option<Invite>,
 	clients: &mut Vec<Client>,
 ) -> Result<(), Error>
@@ -729,13 +713,28 @@ async fn handle_join(
 	// If the newcomer was invited, their role might be forced to be observer.
 	change_role(lobby, clients, client_id, forced_role)?;
 
+	if let Some(metadata) = desired_metadata
+	{
+		if lobby.has_been_listed
+		{
+			debug!("Ignoring desired metadata; lobby {} is listed", lobby.id);
+		}
+		else
+		{
+			become_desired_lobby(lobby, clients, metadata).await?;
+		}
+	}
+
 	// Describe the lobby to the client so that Discord presence is updated.
-	let message = Message::ListLobby {
-		lobby_id: lobby.id,
-		lobby_name: lobby.name.clone(),
-		metadata: make_description_metadata(lobby),
-	};
-	handle_for_listing.send(message);
+	if lobby.has_been_listed
+	{
+		let message = Message::ListLobby {
+			lobby_id: lobby.id,
+			lobby_name: lobby.name.clone(),
+			metadata: make_description_metadata(lobby),
+		};
+		handle_for_listing.send(message);
+	}
 
 	// Describe the lobby to the chat if the number of players changed.
 	if Some(&Role::Player) == lobby.roles.get(&client_id)
@@ -1608,6 +1607,148 @@ async fn pick_map(
 		{
 			add_bot(lobby, clients);
 		}
+	}
+
+	Ok(())
+}
+
+async fn become_desired_lobby(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	desired_metadata: LobbyMetadata,
+) -> Result<(), Error>
+{
+	if lobby.lobby_type != LobbyType::Generic
+	{
+		warn!(
+			"Cannot turn non-generic lobby {} into desired lobby.",
+			lobby.id
+		);
+		return Ok(());
+	}
+
+	// Prevent lobbies from being drastically changed if there are
+	// multiple human players present.
+	if clients.len() > 1
+	{
+		warn!(
+			"Cannot turn lobby {} with {} clients into desired lobby.",
+			lobby.id,
+			clients.len()
+		);
+		return Ok(());
+	}
+
+	match desired_metadata
+	{
+		LobbyMetadata {
+			lobby_type: LobbyType::Generic,
+			max_players,
+			num_bot_players,
+			..
+		} if num_bot_players >= 0 && num_bot_players <= max_players =>
+		{
+			let max_players = max_players as usize;
+			let num_bot_players = num_bot_players as usize;
+			set_max_players_as_desired(lobby, clients, max_players).await?;
+			add_or_remove_bots_as_desired(lobby, clients, num_bot_players)?;
+		}
+		LobbyMetadata {
+			lobby_type: LobbyType::OneVsOne,
+			max_players: 2,
+			num_bot_players: 0,
+			..
+		} =>
+		{
+			lobby.lobby_type = LobbyType::OneVsOne;
+		}
+		LobbyMetadata {
+			lobby_type: LobbyType::Custom,
+			max_players,
+			num_bot_players,
+			..
+		} if num_bot_players >= 0 && num_bot_players <= max_players =>
+		{
+			let max_players = max_players as usize;
+			let num_bot_players = num_bot_players as usize;
+			become_custom_lobby(lobby, clients).await?;
+			set_max_players_as_desired(lobby, clients, max_players).await?;
+			add_or_remove_bots_as_desired(lobby, clients, num_bot_players)?;
+		}
+		LobbyMetadata {
+			lobby_type: LobbyType::Tutorial,
+			..
+		} =>
+		{
+			become_tutorial_lobby(lobby, clients).await?;
+		}
+		LobbyMetadata {
+			lobby_type: LobbyType::Challenge,
+			..
+		} =>
+		{
+			become_challenge_lobby(lobby, clients).await?;
+		}
+		// TODO LobbyType::Replay
+		_ =>
+		{
+			warn!("Cannot turn lobby {} into desired lobby.", lobby.id);
+			return Ok(());
+		}
+	}
+
+	lobby.is_public = desired_metadata.is_public;
+
+	Ok(())
+}
+
+async fn set_max_players_as_desired(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	desired_max_players: usize,
+) -> Result<(), Error>
+{
+	let suffix = match desired_max_players
+	{
+		2 => "1v1",
+		3 => "3ffa",
+		4 => "4ffa",
+		5 => "5ffa",
+		6 => "6ffa",
+		7 => "7ffa",
+		8 => "8ffa",
+		_ =>
+		{
+			warn!(
+				"Cannot turn lobby {} into a lobby for {} players.",
+				lobby.id, desired_max_players
+			);
+			return Ok(());
+		}
+	};
+	pick_map(lobby, clients, suffix.to_string()).await
+}
+
+fn add_or_remove_bots_as_desired(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	desired_num_bot_players: usize,
+) -> Result<(), Error>
+{
+	let from = lobby.bots.len();
+	for _ in from..desired_num_bot_players
+	{
+		add_bot(lobby, clients);
+	}
+
+	let to_be_removed: Vec<Botslot> = lobby.bots[desired_num_bot_players..]
+		.iter()
+		.map(|x| x.slot)
+		.rev()
+		.collect();
+	for slot in to_be_removed
+	{
+		remove_bot(lobby, clients, slot);
 	}
 
 	Ok(())

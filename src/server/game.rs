@@ -663,6 +663,7 @@ async fn rest(
 				client_handle,
 				lobby_sendbuffer,
 				mut general_chat,
+				desired_metadata: _,
 				invite,
 			} =>
 			{
@@ -782,6 +783,7 @@ async fn ensure_live_players(
 				client_handle,
 				lobby_sendbuffer,
 				mut general_chat,
+				desired_metadata: _,
 				invite,
 			} =>
 			{
@@ -920,6 +922,7 @@ async fn sleep(
 				client_handle,
 				lobby_sendbuffer,
 				mut general_chat,
+				desired_metadata: _,
 				invite,
 			} =>
 			{
@@ -1057,6 +1060,7 @@ async fn stage(
 				client_handle,
 				lobby_sendbuffer,
 				mut general_chat,
+				desired_metadata: _,
 				invite,
 			} =>
 			{
