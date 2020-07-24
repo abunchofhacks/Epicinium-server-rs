@@ -123,6 +123,7 @@ fn adjust(rating: f64, score: i32, match_type: MatchType) -> Option<f64>
 	let (mut gain_percentage, loss_percentage) = match match_type
 	{
 		MatchType::Competitive => (10, 10),
+		MatchType::FriendlyOneVsOne => (5, 5),
 		MatchType::FreeForAll {
 			num_non_bot_players: num,
 		} => (num as i32, 1),

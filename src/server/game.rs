@@ -317,9 +317,14 @@ pub async fn run(
 		MatchType::Unrated
 	}
 	// Is this a competitive 1v1 match with two humans?
-	else if players.len() == 2 && bots.len() == 0
+	else if lobby_type == LobbyType::OneVsOne
 	{
 		MatchType::Competitive
+	}
+	// Is this a friendly 1v1 match with two humans?
+	else if players.len() == 2 && bots.len() == 0
+	{
+		MatchType::FriendlyOneVsOne
 	}
 	// Is this a free for all match with at least two humans?
 	else if players.len() >= 2
@@ -1600,6 +1605,7 @@ pub struct PlayerResult
 pub enum MatchType
 {
 	Competitive,
+	FriendlyOneVsOne,
 	FreeForAll
 	{
 		num_non_bot_players: usize,
