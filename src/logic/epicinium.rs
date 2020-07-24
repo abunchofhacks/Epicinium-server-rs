@@ -654,7 +654,7 @@ enum Automaton {}
 #[derive(Debug)]
 pub struct AllocatedAi
 {
-	ptr: *mut AICommander,
+	ptr: *mut AILibrary,
 	buffer: *mut Buffer,
 }
 
@@ -669,7 +669,7 @@ impl Drop for AllocatedAi
 	}
 }
 
-enum AICommander {}
+enum AILibrary {}
 
 enum Buffer {}
 
@@ -813,21 +813,21 @@ extern "C" {
 		difficulty: u8,
 		ruleset_name: *const c_char,
 		character: c_char,
-	) -> *mut AICommander;
-	fn epicinium_ai_deallocate(ai: *mut AICommander);
+	) -> *mut AILibrary;
+	fn epicinium_ai_deallocate(ai: *mut AILibrary);
 
-	fn epicinium_ai_receive(ai: *mut AICommander, changes: *const c_char);
-	fn epicinium_ai_prepare_orders(ai: *mut AICommander);
+	fn epicinium_ai_receive(ai: *mut AILibrary, changes: *const c_char);
+	fn epicinium_ai_prepare_orders(ai: *mut AILibrary);
 	fn epicinium_ai_retrieve_orders(
-		ai: *mut AICommander,
+		ai: *mut AILibrary,
 		buffer: *mut Buffer,
 	) -> *const c_char;
 	fn epicinium_ai_descriptive_name(
-		ai: *mut AICommander,
+		ai: *mut AILibrary,
 		buffer: *mut Buffer,
 	) -> *const c_char;
 	fn epicinium_ai_descriptive_metadata(
-		ai: *mut AICommander,
+		ai: *mut AILibrary,
 		buffer: *mut Buffer,
 	) -> *const c_char;
 
