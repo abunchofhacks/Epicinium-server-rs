@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 
 use reqwest as http;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Data
 {
 	pub rating: f64,

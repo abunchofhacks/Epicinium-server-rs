@@ -297,6 +297,22 @@ pub enum Message
 		time_remaining_in_seconds: Option<u32>,
 	},
 	Init,
+	RatingAndStars
+	{
+		#[serde(rename = "content")]
+		username: String,
+
+		#[serde(default, skip_serializing_if = "is_zero")]
+		rating: f64,
+
+		#[serde(default, skip_serializing_if = "is_zero", rename = "time")]
+		stars: i32,
+	},
+	RecentStars
+	{
+		#[serde(default, skip_serializing_if = "is_zero", rename = "time")]
+		stars: i32,
+	},
 	Closing,
 	Closed,
 	Quit,

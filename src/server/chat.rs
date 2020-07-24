@@ -7,6 +7,7 @@ use crate::server::client;
 use crate::server::lobby;
 use crate::server::login::Unlock;
 use crate::server::message::*;
+use crate::server::rating;
 
 use std::collections::HashMap;
 
@@ -25,6 +26,7 @@ pub enum Update
 		client_id: Keycode,
 		username: String,
 		unlocks: EnumSet<Unlock>,
+		rating_data: rating::Data,
 		handle: client::Handle,
 	},
 	Init
@@ -115,20 +117,22 @@ fn handle_update(
 			client_id,
 			username,
 			unlocks,
+			rating_data,
 			handle,
 		} => handle_join(
 			client_id,
 			username,
 			unlocks,
+			rating_data,
 			handle,
 			clients,
 			ghostbusters,
 			lobbies,
 			current_challenge,
 		),
-		Update::Init { handle } =>
+		Update::Init { mut handle } =>
 		{
-			handle_init(handle, clients, lobbies, current_challenge)
+			handle_init(&mut handle, clients, lobbies, current_challenge)
 		}
 		Update::StillAlive { client_id } =>
 		{
@@ -256,6 +260,7 @@ fn handle_join(
 	id: Keycode,
 	username: String,
 	unlocks: EnumSet<Unlock>,
+	rating_data: rating::Data,
 	handle: client::Handle,
 	clients: &mut Vec<Client>,
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
@@ -322,47 +327,32 @@ fn handle_join(
 		{
 			other.handle.send(message.clone());
 		}
-
-		// Tell everyone the rating and stars of the newcomer.
-		// TODO rating and stars
-	}
-
-	// Let the client know which lobbies there are.
-	for lobby in lobbies.iter()
-	{
-		newcomer.handle.send(lobby.description_message.clone());
-	}
-
-	// Let the client know who else is online.
-	for other in clients.iter()
-	{
-		if !other.hidden
-		{
-			newcomer.handle.send(Message::JoinServer {
-				status: None,
-				content: Some(other.username.clone()),
-				sender: None,
-				metadata: other.join_metadata,
-			});
-
-			// TODO rating
-			// TODO stars
-			// TODO join_lobby
-			// TODO in_game
-		}
 	}
 
 	// Tell the newcomer that they are online.
 	// FUTURE this is weird (#1411)
 	newcomer.handle.send(message);
 
-	newcomer.handle.send(Message::ListChallenge {
-		key: current_challenge.key.clone(),
-		metadata: current_challenge.metadata.clone(),
-	});
+	// Tell everyone the rating and stars of the newcomer.
+	if !newcomer.hidden
+	{
+		let message = Message::RatingAndStars {
+			username: newcomer.username.clone(),
+			rating: rating_data.rating,
+			stars: rating_data.stars,
+		};
+		for other in clients.iter_mut()
+		{
+			other.handle.send(message.clone());
+		}
+		newcomer.handle.send(message);
+	}
 
-	// Let the client know we are done initializing.
-	newcomer.handle.send(Message::Init);
+	handle_init(&mut newcomer.handle, clients, lobbies, current_challenge);
+
+	// If the user was a player in a game that is still in progress,
+	// automatically have them rejoin the lobby.
+	// TODO automatically rejoin
 
 	// Show them a welcome message, if any.
 	welcome_client(&mut newcomer);
@@ -401,7 +391,7 @@ fn generate_join_metadata(unlocks: &EnumSet<Unlock>) -> Option<JoinMetadata>
 }
 
 fn handle_init(
-	mut handle: client::Handle,
+	handle: &mut client::Handle,
 	clients: &Vec<Client>,
 	lobbies: &Vec<Lobby>,
 	current_challenge: &Challenge,
@@ -432,10 +422,13 @@ fn handle_init(
 		}
 	}
 
+	// Let the client know what the current challenge is called.
 	handle.send(Message::ListChallenge {
 		key: current_challenge.key.clone(),
 		metadata: current_challenge.metadata.clone(),
 	});
+	// Let the client know how many stars they have for the current challenge.
+	// TODO recent stars
 
 	// Let the client know we are done initializing.
 	handle.send(Message::Init)

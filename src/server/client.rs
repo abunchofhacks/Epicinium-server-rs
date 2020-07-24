@@ -658,6 +658,7 @@ async fn handle_update(
 						client_id: client.id,
 						username: client.username.clone(),
 						unlocks: client.unlocks.clone(),
+						rating_data,
 						handle: client.handle.clone(),
 					};
 					match chat.try_send(request)
@@ -694,7 +695,7 @@ async fn handle_update(
 		{
 			Some(chat) =>
 			{
-				if let Some(data) = client.latest_rating_data.take()
+				if let Some(data) = client.latest_rating_data
 				{
 					let user_id = match client.user_id
 					{
@@ -1578,6 +1579,8 @@ async fn handle_message(
 		| Message::ReplayWithAnimations { .. }
 		| Message::Changes { .. }
 		| Message::OrdersOld { .. }
+		| Message::RatingAndStars { .. }
+		| Message::RecentStars { .. }
 		| Message::Closing
 		| Message::Closed =>
 		{
