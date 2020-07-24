@@ -1241,6 +1241,13 @@ fn change_visiontype(
 	visiontype: VisionType,
 )
 {
+	if lobby.lobby_type == LobbyType::OneVsOne
+	{
+		warn!("Cannot change visiontype in onevsone lobby {}.", lobby.id);
+		// FUTURE let the sender know somehow?
+		return;
+	}
+
 	match &username_or_slot
 	{
 		UsernameOrSlot::Username(ref username) =>
@@ -1394,6 +1401,13 @@ fn change_difficulty(
 
 fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 {
+	if lobby.lobby_type == LobbyType::OneVsOne
+	{
+		warn!("Cannot add bot in onevsone lobby {}.", lobby.id);
+		// FUTURE let the sender know somehow?
+		return;
+	}
+
 	if lobby.num_players >= lobby.max_players
 	{
 		warn!("Cannot add bot to lobby {}: lobby full", lobby.id);
@@ -1484,6 +1498,11 @@ async fn pick_map(
 	let found = if found.is_some()
 	{
 		found
+	}
+	else if lobby.lobby_type == LobbyType::OneVsOne
+	{
+		warn!("Cannot pick unlisted map in onevsone lobby {}.", lobby.id);
+		None
 	}
 	// FUTURE check if map in hidden pool or client is developer
 	else if map::exists(&map_name)
@@ -1661,6 +1680,7 @@ async fn become_desired_lobby(
 		} =>
 		{
 			lobby.lobby_type = LobbyType::OneVsOne;
+			restrict_map_pool_for_one_vs_one(lobby).await?;
 		}
 		LobbyMetadata {
 			lobby_type: LobbyType::Custom,
@@ -1699,6 +1719,28 @@ async fn become_desired_lobby(
 
 	lobby.is_public = desired_metadata.is_public;
 
+	Ok(())
+}
+
+async fn restrict_map_pool_for_one_vs_one(
+	lobby: &mut Lobby,
+) -> Result<(), Error>
+{
+	let filtered: Vec<(String, map::Metadata)> = lobby
+		.map_pool
+		.iter()
+		.filter(|(name, _metadata)| name.contains("1v1"))
+		.cloned()
+		.collect();
+	if filtered.is_empty()
+	{
+		error!(
+			"Cannot turn lobby {} into a 1v1 lobby without 1v1 maps.",
+			lobby.id
+		);
+		return Err(Error::EmptyMapPool);
+	}
+	lobby.map_pool = filtered;
 	Ok(())
 }
 
@@ -1945,18 +1987,26 @@ async fn pick_timer(
 	// Is this a game lobby?
 	if lobby.lobby_type == LobbyType::Replay
 	{
+		warn!("Cannot pick map for replay lobby {}.", lobby.id);
+		// FUTURE let the sender know somehow?
+		return Ok(());
+	}
+	else if lobby.lobby_type == LobbyType::OneVsOne
+	{
+		warn!("Refusing a change in lobby {} because OneVsOne.", lobby.id);
+		// FUTURE let the sender know somehow?
 		return Ok(());
 	}
 
 	// Not much need for extreme validation. Current hard cap 5 minutes.
 	if timer_in_seconds > 300
 	{
-		// Do not change lobby timer.
+		warn!("Refusing excessive timer value in lobby {}.", lobby.id);
+		// FUTURE let the sender know somehow?
+		return Ok(());
 	}
-	else
-	{
-		lobby.timer_in_seconds = timer_in_seconds;
-	}
+
+	lobby.timer_in_seconds = timer_in_seconds;
 
 	let message = Message::PickTimer {
 		seconds: timer_in_seconds,
@@ -1982,6 +2032,12 @@ async fn pick_ruleset(
 	if lobby.lobby_type == LobbyType::Replay
 	{
 		warn!("Cannot pick ruleset in replay lobby {}.", lobby.id);
+		return Ok(());
+	}
+	else if lobby.lobby_type == LobbyType::OneVsOne
+	{
+		warn!("Cannot pick ruleset in onevsone lobby {}.", lobby.id);
+		// FUTURE let the sender know somehow?
 		return Ok(());
 	}
 
