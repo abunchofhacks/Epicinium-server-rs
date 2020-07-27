@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use log::*;
 
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 
 use enumset::*;
 use vec_drain_where::VecDrainWhereExt;
@@ -45,13 +46,13 @@ pub enum Update
 	ListLobby
 	{
 		lobby_id: Keycode,
-		description_message: Message,
+		name: watch::Receiver<String>,
+		metadata: watch::Receiver<LobbyMetadata>,
 		sendbuffer: mpsc::Sender<lobby::Update>,
 	},
 	DescribeLobby
 	{
 		lobby_id: Keycode,
-		description_message: Message,
 	},
 	DisbandLobby
 	{
@@ -145,26 +146,23 @@ fn handle_update(
 
 		Update::ListLobby {
 			lobby_id,
-			description_message,
+			name,
+			metadata,
 			sendbuffer,
 		} =>
 		{
 			let lobby = Lobby {
 				id: lobby_id,
-				description_message,
+				name,
+				metadata,
 				sendbuffer,
 			};
 			handle_list_lobby(lobby, clients, lobbies)
 		}
-		Update::DescribeLobby {
-			lobby_id,
-			description_message,
-		} => handle_describe_lobby(
-			lobby_id,
-			description_message,
-			clients,
-			lobbies,
-		),
+		Update::DescribeLobby { lobby_id } =>
+		{
+			handle_describe_lobby(lobby_id, clients, lobbies)
+		}
 		Update::DisbandLobby { lobby_id } =>
 		{
 			handle_disband_lobby(lobby_id, clients, lobbies)
@@ -252,7 +250,8 @@ impl Ghostbuster
 struct Lobby
 {
 	id: Keycode,
-	description_message: Message,
+	name: watch::Receiver<String>,
+	metadata: watch::Receiver<LobbyMetadata>,
 	sendbuffer: mpsc::Sender<lobby::Update>,
 }
 
@@ -400,7 +399,12 @@ fn handle_init(
 	// Let the client know which lobbies there are.
 	for lobby in lobbies.iter()
 	{
-		handle.send(lobby.description_message.clone());
+		let message = Message::ListLobby {
+			lobby_id: lobby.id,
+			lobby_name: lobby.name.borrow().clone(),
+			metadata: lobby.metadata.borrow().clone(),
+		};
+		handle.send(message);
 	}
 
 	// Let the client know who else is online.
@@ -520,18 +524,12 @@ fn handle_list_lobby(
 )
 {
 	lobbies.retain(|lobby| lobby.id != newlobby.id);
-
-	for client in clients.iter_mut()
-	{
-		client.handle.send(newlobby.description_message.clone());
-	}
-
+	describe_lobby(&newlobby, clients);
 	lobbies.push(newlobby);
 }
 
 fn handle_describe_lobby(
 	lobby_id: Keycode,
-	description_message: Message,
 	clients: &mut Vec<Client>,
 	lobbies: &mut Vec<Lobby>,
 )
@@ -546,12 +544,20 @@ fn handle_describe_lobby(
 		}
 	};
 
+	describe_lobby(&lobby, clients);
+}
+
+fn describe_lobby(lobby: &Lobby, clients: &mut Vec<Client>)
+{
+	let message = Message::ListLobby {
+		lobby_id: lobby.id,
+		lobby_name: lobby.name.borrow().clone(),
+		metadata: lobby.metadata.borrow().clone(),
+	};
 	for client in clients.iter_mut()
 	{
-		client.handle.send(description_message.clone());
+		client.handle.send(message.clone());
 	}
-
-	lobby.description_message = description_message;
 }
 
 fn handle_disband_lobby(

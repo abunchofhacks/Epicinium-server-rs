@@ -36,6 +36,7 @@ use log::*;
 use rand::Rng;
 
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 
 use vec_drain_where::VecDrainWhereExt;
 
@@ -203,7 +204,15 @@ enum Stage
 	WaitingForConfirmation,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+struct Listing
+{
+	name: watch::Sender<String>,
+	metadata: watch::Sender<LobbyMetadata>,
+	last_sent_metadata: LobbyMetadata,
+}
+
+#[derive(Debug)]
 struct Lobby
 {
 	id: Keycode,
@@ -213,8 +222,7 @@ struct Lobby
 	lobby_type: LobbyType,
 	is_public: bool,
 
-	has_been_listed: bool,
-	last_description_metadata: Option<LobbyMetadata>,
+	listing: Option<Listing>,
 
 	bots: Vec<Bot>,
 	open_botslots: Vec<Botslot>,
@@ -303,8 +311,7 @@ async fn initialize(
 		max_players: 2,
 		lobby_type: LobbyType::Generic,
 		is_public: true,
-		has_been_listed: false,
-		last_description_metadata: None,
+		listing: None,
 		bots: Vec::new(),
 		open_botslots: botslot::pool(),
 		roles: HashMap::new(),
@@ -439,10 +446,7 @@ async fn handle_sub(
 			mut general_chat,
 		} =>
 		{
-			lobby.name = lobby_name;
-			// Unset the description metadata to force a lobby description.
-			lobby.last_description_metadata = None;
-			describe_lobby(lobby, &mut general_chat).await?;
+			rename_lobby(lobby, lobby_name, &mut general_chat).await?;
 			Ok(None)
 		}
 
@@ -555,27 +559,46 @@ async fn list_lobby(
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
-	if lobby.has_been_listed
+	if lobby.listing.is_some()
 	{
 		trace!("Refusing to re-list lobby {}.", lobby.id);
 		return Ok(());
 	}
 
 	let metadata = make_description_metadata(lobby);
-	lobby.has_been_listed = true;
-	lobby.last_description_metadata = Some(metadata);
-
-	let description_message = Message::ListLobby {
-		lobby_id: lobby.id,
-		lobby_name: lobby.name.clone(),
-		metadata,
+	let (dm_in, dm_out) = watch::channel(metadata);
+	let (name_in, name_out) = watch::channel(lobby.name.clone());
+	let listing = Listing {
+		name: name_in,
+		metadata: dm_in,
+		last_sent_metadata: metadata,
 	};
+	lobby.listing = Some(listing);
+
 	let update = chat::Update::ListLobby {
 		lobby_id: lobby.id,
-		description_message,
+		name: name_out,
+		metadata: dm_out,
 		sendbuffer: lobby_sendbuffer,
 	};
 	general_chat.send(update).await?;
+	Ok(())
+}
+
+async fn rename_lobby(
+	lobby: &mut Lobby,
+	new_name: String,
+	general_chat: &mut mpsc::Sender<chat::Update>,
+) -> Result<(), Error>
+{
+	lobby.name = new_name;
+
+	if let Some(Listing { name, .. }) = &mut lobby.listing
+	{
+		name.broadcast(lobby.name.clone())?;
+		let update = chat::Update::DescribeLobby { lobby_id: lobby.id };
+		general_chat.send(update).await?;
+	}
 	Ok(())
 }
 
@@ -584,31 +607,17 @@ async fn describe_lobby(
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
-	if !lobby.has_been_listed
-	{
-		return Ok(());
-	}
-
 	let metadata = make_description_metadata(lobby);
-	if lobby.last_description_metadata == Some(metadata)
+	if let Some(listing) = &mut lobby.listing
 	{
-		return Ok(());
+		if metadata != listing.last_sent_metadata
+		{
+			listing.metadata.broadcast(metadata)?;
+			listing.last_sent_metadata = metadata;
+			let update = chat::Update::DescribeLobby { lobby_id: lobby.id };
+			general_chat.send(update).await?;
+		}
 	}
-	else
-	{
-		lobby.last_description_metadata = Some(metadata);
-	}
-
-	let description_message = Message::ListLobby {
-		lobby_id: lobby.id,
-		lobby_name: lobby.name.clone(),
-		metadata,
-	};
-	let update = chat::Update::DescribeLobby {
-		lobby_id: lobby.id,
-		description_message,
-	};
-	general_chat.send(update).await?;
 	Ok(())
 }
 
@@ -715,7 +724,7 @@ async fn handle_join(
 
 	if let Some(metadata) = desired_metadata
 	{
-		if lobby.has_been_listed
+		if lobby.listing.is_some()
 		{
 			debug!("Ignoring desired metadata; lobby {} is listed", lobby.id);
 		}
@@ -726,7 +735,7 @@ async fn handle_join(
 	}
 
 	// Describe the lobby to the client so that Discord presence is updated.
-	if lobby.has_been_listed
+	if lobby.listing.is_some()
 	{
 		let message = Message::ListLobby {
 			lobby_id: lobby.id,
@@ -2384,6 +2393,14 @@ enum Error
 	{
 		error: mpsc::error::SendError<chat::Update>,
 	},
+	NameSend
+	{
+		error: watch::error::SendError<String>,
+	},
+	MetadataSend
+	{
+		error: watch::error::SendError<LobbyMetadata>,
+	},
 	AiAllocationError
 	{
 		error: ai::InterfaceError,
@@ -2406,6 +2423,22 @@ impl From<mpsc::error::SendError<chat::Update>> for Error
 	}
 }
 
+impl From<watch::error::SendError<String>> for Error
+{
+	fn from(error: watch::error::SendError<String>) -> Self
+	{
+		Error::NameSend { error }
+	}
+}
+
+impl From<watch::error::SendError<LobbyMetadata>> for Error
+{
+	fn from(error: watch::error::SendError<LobbyMetadata>) -> Self
+	{
+		Error::MetadataSend { error }
+	}
+}
+
 impl fmt::Display for Error
 {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
@@ -2418,6 +2451,8 @@ impl fmt::Display for Error
 			Error::StartGameNotEnoughColors => write!(f, "{:#?}", self),
 			Error::Io { error } => error.fmt(f),
 			Error::GeneralChat { error } => error.fmt(f),
+			Error::NameSend { error } => error.fmt(f),
+			Error::MetadataSend { error } => error.fmt(f),
 			Error::AiAllocationError { error } =>
 			{
 				write!(f, "Error while allocating AI: {}", error)
