@@ -308,6 +308,12 @@ pub enum Message
 		#[serde(default, skip_serializing_if = "is_zero", rename = "time")]
 		stars: i32,
 	},
+	#[serde(rename = "rating")]
+	UpdatedRating
+	{
+		#[serde(default, skip_serializing_if = "is_zero")]
+		rating: f64,
+	},
 	RecentStars
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "time")]

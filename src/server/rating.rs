@@ -3,9 +3,11 @@
 use crate::common::platform::Platform;
 use crate::common::version::Version;
 use crate::logic::challenge;
+use crate::server::client;
 use crate::server::game;
 use crate::server::game::MatchType;
 use crate::server::login::UserId;
+use crate::server::message::Message;
 use crate::server::message::ResponseStatus;
 use crate::server::settings::Settings;
 
@@ -33,10 +35,15 @@ pub enum Update
 	Fresh
 	{
 		user_id: UserId,
+		handle: client::Handle,
 		data: Data,
 		sender: watch::Sender<Data>,
 	},
 	GameResult(game::PlayerResult),
+	Left
+	{
+		user_id: UserId,
+	},
 }
 
 pub async fn run(
@@ -52,16 +59,28 @@ pub async fn run(
 		{
 			Update::Fresh {
 				user_id,
+				handle,
 				data,
 				sender,
 			} =>
 			{
-				let entry = Entry { data, sender };
+				let entry = Entry {
+					data,
+					sender,
+					handle,
+				};
 				database.cache.insert(user_id, entry);
 			}
 			Update::GameResult(result) =>
 			{
 				database.handle_result(result).await?
+			}
+			Update::Left { user_id } =>
+			{
+				if let Some(entry) = database.cache.get_mut(&user_id)
+				{
+					entry.handle.take();
+				}
 			}
 		}
 	}
@@ -74,6 +93,7 @@ struct Entry
 {
 	data: Data,
 	sender: watch::Sender<Data>,
+	handle: client::Handle,
 }
 
 struct Database
@@ -109,10 +129,14 @@ impl Database
 			if let Some(new_rating) = result
 			{
 				data.rating = new_rating;
+
 				if let Some(connection) = &mut self.connection
 				{
 					connection.update_rating(user_id, data.rating).await?;
 				}
+
+				let message = Message::UpdatedRating { rating: new_rating };
+				entry.handle.send(message);
 			}
 		}
 
@@ -127,6 +151,11 @@ impl Database
 			{
 				connection.award_stars(user_id, data.recent_stars).await?;
 			}
+
+			let message = Message::RecentStars {
+				stars: result.awarded_stars,
+			};
+			entry.handle.send(message);
 		}
 
 		if data != entry.data

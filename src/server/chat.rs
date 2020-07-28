@@ -348,6 +348,11 @@ fn handle_join(
 			other.handle.send(message.clone());
 		}
 		newcomer.handle.send(message);
+
+		let message = Message::RecentStars {
+			stars: rating_data.recent_stars,
+		};
+		newcomer.handle.send(message);
 	}
 
 	handle_init(&mut newcomer.handle, clients, lobbies, current_challenge);

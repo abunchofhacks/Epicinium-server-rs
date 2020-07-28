@@ -81,6 +81,16 @@ impl Drop for Client
 {
 	fn drop(&mut self)
 	{
+		if let Some(user_id) = self.user_id
+		{
+			let update = rating::Update::Left { user_id };
+			match self.rating_database.try_send(update)
+			{
+				Ok(()) => (),
+				Err(e) => error!("Error while dropping client: {:?}", e),
+			}
+		}
+
 		let mut general_chat = self.general_chat.take();
 
 		match general_chat
@@ -710,6 +720,7 @@ async fn handle_update(
 					};
 					let update = rating::Update::Fresh {
 						user_id,
+						handle: client.handle.clone(),
 						data,
 						sender,
 					};
@@ -903,6 +914,12 @@ async fn handle_message(
 					}
 					None =>
 					{}
+				}
+
+				if let Some(user_id) = client.user_id
+				{
+					let update = rating::Update::Left { user_id };
+					client.rating_database.send(update).await?;
 				}
 
 				let update = chat::Update::Leave {
@@ -1586,6 +1603,7 @@ async fn handle_message(
 		| Message::Changes { .. }
 		| Message::OrdersOld { .. }
 		| Message::RatingAndStars { .. }
+		| Message::UpdatedRating { .. }
 		| Message::RecentStars { .. }
 		| Message::Closing
 		| Message::Closed =>
