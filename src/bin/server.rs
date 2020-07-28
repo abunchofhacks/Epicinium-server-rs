@@ -31,16 +31,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>>
 		.unwrap_or(epicinium::log::Level::Verbose);
 	epicinium::log::start(&logname, loglevel)?;
 	epicinium::logic::log_initialize(loglevel);
+	let log_setup = epicinium::logrotate::setup(&logname)?;
 
 	println!("[ Epicinium Server ] ({} v{})", logname, currentversion);
 	println!("");
 
 	info!("Server started.");
 
-	{
-		let _scoped_logrotate = epicinium::logrotate::setup(&logname)?;
-		run_server(&settings)?;
-	}
+	run_server(&settings, log_setup)?;
 
 	info!("Server stopped.");
 

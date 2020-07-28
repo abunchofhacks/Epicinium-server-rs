@@ -7,6 +7,7 @@ mod discord_api;
 mod game;
 mod lobby;
 mod login;
+mod logrotate;
 mod message;
 mod portal;
 mod rating;

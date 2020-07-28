@@ -7,6 +7,7 @@ use crate::server::chat;
 use crate::server::client;
 use crate::server::discord_api;
 use crate::server::login;
+use crate::server::logrotate;
 use crate::server::portal;
 use crate::server::rating;
 use crate::server::settings::*;
@@ -38,6 +39,7 @@ pub enum State
 #[tokio::main]
 pub async fn run_server(
 	settings: &Settings,
+	log_setup: logrotate::Setup,
 ) -> Result<(), Box<dyn error::Error>>
 {
 	enable_coredumps()?;
@@ -66,6 +68,10 @@ pub async fn run_server(
 	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
 	let chat_task = chat::run(general_out, general_canary_in).map(|()| Ok(()));
 
+	let logrotate_task =
+		logrotate::run(log_setup, state_out.clone(), slack_in.clone())
+			.map(|()| Ok(()));
+
 	let acceptance_task = accept_clients(
 		settings,
 		login,
@@ -79,11 +85,11 @@ pub async fn run_server(
 
 	let server_task = future::try_join4(
 		acceptance_task,
-		chat_task,
-		future::try_join3(slack_task, rating_task, discord_task),
+		future::try_join(chat_task, rating_task),
+		future::try_join3(slack_task, discord_task, logrotate_task),
 		close_task,
 	)
-	.map_ok(|((), (), ((), (), ()), ())| ());
+	.map_ok(|((), ((), ()), ((), (), ()), ())| ());
 
 	server_task.await
 }

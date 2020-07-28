@@ -8,15 +8,15 @@ use unindent::Unindent;
 
 pub struct Setup
 {
-	conffilename: String,
-	statusfilename: String,
+	pub conffilename: String,
+	pub statusfilename: String,
 }
 
 impl Drop for Setup
 {
 	fn drop(&mut self)
 	{
-		match std::fs::remove_file(self.conffilename.clone())
+		match std::fs::remove_file(&self.conffilename)
 		{
 			Ok(()) =>
 			{}
@@ -37,7 +37,7 @@ pub fn setup(logname: &str) -> Result<Setup, std::io::Error>
 	let mut file = std::fs::OpenOptions::new()
 		.write(true)
 		.create_new(true)
-		.open(conffilename.clone())?;
+		.open(&conffilename)?;
 
 	let conf = format!(
 		"
