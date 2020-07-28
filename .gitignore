@@ -9,6 +9,7 @@
 # output files
 *.out
 *.log
+*.log.gz
 
 # local settings
 /settings.json
@@ -28,3 +29,7 @@
 # local recordings
 *.rec
 /recordings/history.list
+
+# local logrotate output
+logs/.*.logrotate.status
+logs/.*.logrotate.conf

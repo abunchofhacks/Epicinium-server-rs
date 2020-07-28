@@ -30,6 +30,7 @@ fern = { version = "^0.6", features = ["reopen-03"] }
 chrono = "*"
 thread-id = "*"
 itertools = "*"
+unindent = "*"
 
 [features]
 defaults = []

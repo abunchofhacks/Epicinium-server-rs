@@ -1,18 +1,25 @@
 /* Log */
 
+pub fn trace_filename(logname: &str) -> String
+{
+	format!("logs/{}.trace.log", logname).to_string()
+}
+
+pub fn info_filename(logname: &str) -> String
+{
+	format!("logs/{}.info.log", logname).to_string()
+}
+
+pub fn error_filename(logname: &str) -> String
+{
+	format!("logs/{}.error.log", logname).to_string()
+}
+
 pub fn start(logname: &str, level: Level) -> Result<(), fern::InitError>
 {
-	let tracelogfilename: std::path::PathBuf =
-		format_args!("logs/{}.trace.log", logname)
-			.to_string()
-			.into();
-	let infologfilename: std::path::PathBuf =
-		format_args!("logs/{}.info.log", logname).to_string().into();
-	let errorlogfilename: std::path::PathBuf =
-		format_args!("logs/{}.error.log", logname)
-			.to_string()
-			.into();
-
+	let tracelogfilename: std::path::PathBuf = trace_filename(logname).into();
+	let infologfilename: std::path::PathBuf = info_filename(logname).into();
+	let errorlogfilename: std::path::PathBuf = error_filename(logname).into();
 	let sighup = Some(libc::SIGHUP);
 
 	let levelfilter = match level
@@ -25,6 +32,12 @@ pub fn start(logname: &str, level: Level) -> Result<(), fern::InitError>
 	};
 
 	fern::Dispatch::new()
+		.level(levelfilter)
+		.filter(|metadata| {
+			// Smaller is more severe.
+			metadata.level() <= log::LevelFilter::Info
+				|| !matches_blacklist(metadata.target())
+		})
 		.format(|out, message, record| {
 			out.finish(format_args!(
 				"{time} {lvl:5} [{tid:x}] [{target}.rs:{ln}] {msg}",
@@ -35,12 +48,6 @@ pub fn start(logname: &str, level: Level) -> Result<(), fern::InitError>
 				ln = record.line().unwrap_or(0),
 				msg = message
 			))
-		})
-		.level(levelfilter)
-		.filter(|metadata| {
-			// Smaller is more severe.
-			metadata.level() <= log::LevelFilter::Info
-				|| !matches_blacklist(metadata.target())
 		})
 		.chain(fern::log_reopen(&tracelogfilename, sighup)?)
 		.chain(

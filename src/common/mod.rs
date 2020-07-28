@@ -6,6 +6,7 @@ pub mod base32;
 pub mod coredump;
 pub mod keycode;
 pub mod log;
+pub mod logrotate;
 pub mod platform;
 pub mod version;
 

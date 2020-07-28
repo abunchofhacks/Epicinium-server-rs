@@ -37,7 +37,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>>
 
 	info!("Server started.");
 
-	run_server(&settings)?;
+	{
+		let _scoped_logrotate = epicinium::logrotate::setup(&logname)?;
+		run_server(&settings)?;
+	}
 
 	info!("Server stopped.");
 
