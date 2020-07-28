@@ -12,6 +12,7 @@ use crate::server::portal;
 use crate::server::rating;
 use crate::server::settings::*;
 use crate::server::slack_api;
+use crate::server::terminate;
 
 use std::error;
 use std::net::SocketAddr;
@@ -44,6 +45,8 @@ pub async fn run_server(
 {
 	enable_coredumps()?;
 	increase_sockets()?;
+
+	let _scoped_terminate = terminate::setup()?;
 
 	ruleset::initialize_collection()?;
 

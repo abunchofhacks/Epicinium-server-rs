@@ -12,6 +12,7 @@ mod message;
 mod portal;
 mod rating;
 mod slack_api;
+mod terminate;
 
 pub mod countingtest;
 pub mod settings;
