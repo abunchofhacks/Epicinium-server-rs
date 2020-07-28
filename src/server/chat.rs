@@ -27,7 +27,7 @@ pub enum Update
 		client_id: Keycode,
 		username: String,
 		unlocks: EnumSet<Unlock>,
-		rating_data: rating::Data,
+		rating_data: watch::Receiver<rating::Data>,
 		handle: client::Handle,
 	},
 	Init
@@ -204,6 +204,7 @@ struct Client
 	username: String,
 	join_metadata: Option<JoinMetadata>,
 	handle: client::Handle,
+	rating_data: watch::Receiver<rating::Data>,
 	hidden: bool,
 }
 
@@ -259,7 +260,7 @@ fn handle_join(
 	id: Keycode,
 	username: String,
 	unlocks: EnumSet<Unlock>,
-	rating_data: rating::Data,
+	rating_data: watch::Receiver<rating::Data>,
 	handle: client::Handle,
 	clients: &mut Vec<Client>,
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
@@ -307,6 +308,7 @@ fn handle_join(
 		username,
 		join_metadata,
 		handle,
+		rating_data,
 		hidden: hidden,
 	};
 
@@ -335,6 +337,7 @@ fn handle_join(
 	// Tell everyone the rating and stars of the newcomer.
 	if !newcomer.hidden
 	{
+		let rating_data: rating::Data = *newcomer.rating_data.borrow();
 		let message = Message::RatingAndStars {
 			username: newcomer.username.clone(),
 			rating: rating_data.rating,
@@ -419,8 +422,14 @@ fn handle_init(
 				metadata: client.join_metadata,
 			});
 
-			// TODO rating
-			// TODO stars
+			let rating_data: rating::Data = *client.rating_data.borrow();
+			let message = Message::RatingAndStars {
+				username: client.username.clone(),
+				rating: rating_data.rating,
+				stars: rating_data.stars,
+			};
+			handle.send(message);
+
 			// TODO join_lobby
 			// TODO in_game
 		}
@@ -463,6 +472,7 @@ fn handle_removed(
 			username,
 			join_metadata: _,
 			mut handle,
+			rating_data: _,
 			hidden,
 		} = removed_client;
 

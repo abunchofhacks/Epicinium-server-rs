@@ -59,7 +59,7 @@ struct Client
 	general_chat_reserve: Option<mpsc::Sender<chat::Update>>,
 	general_chat: Option<mpsc::Sender<chat::Update>>,
 	rating_database: mpsc::Sender<rating::Update>,
-	latest_rating_data: Option<rating::Data>,
+	data_for_rating: Option<(rating::Data, watch::Sender<rating::Data>)>,
 	canary_for_lobbies: mpsc::Sender<()>,
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
 	lobby: Option<mpsc::Sender<lobby::Update>>,
@@ -199,7 +199,7 @@ pub fn accept(
 		general_chat_reserve: Some(chat_server),
 		general_chat: None,
 		rating_database,
-		latest_rating_data: None,
+		data_for_rating: None,
 		lobby_authority: lobby_authority,
 		canary_for_lobbies,
 		lobby: None,
@@ -648,7 +648,9 @@ async fn handle_update(
 			client.user_id = Some(user_id);
 			client.username = username;
 			client.unlocks = unlocks;
-			client.latest_rating_data = Some(rating_data);
+
+			let (rating_in, rating_out) = watch::channel(rating_data);
+			client.data_for_rating = Some((rating_data, rating_in));
 
 			match &mut client.general_chat_reserve
 			{
@@ -658,7 +660,7 @@ async fn handle_update(
 						client_id: client.id,
 						username: client.username.clone(),
 						unlocks: client.unlocks.clone(),
-						rating_data,
+						rating_data: rating_out,
 						handle: client.handle.clone(),
 					};
 					match chat.try_send(request)
@@ -695,7 +697,7 @@ async fn handle_update(
 		{
 			Some(chat) =>
 			{
-				if let Some(data) = client.latest_rating_data
+				if let Some((data, sender)) = client.data_for_rating.take()
 				{
 					let user_id = match client.user_id
 					{
@@ -706,7 +708,11 @@ async fn handle_update(
 							return Err(Error::Unexpected);
 						}
 					};
-					let update = rating::Update::Fresh { user_id, data };
+					let update = rating::Update::Fresh {
+						user_id,
+						data,
+						sender,
+					};
 					client.rating_database.send(update).await?;
 				}
 

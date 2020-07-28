@@ -15,10 +15,11 @@ use std::error;
 use log::*;
 
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 
 use reqwest as http;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct Data
 {
 	pub rating: f64,
@@ -33,6 +34,7 @@ pub enum Update
 	{
 		user_id: UserId,
 		data: Data,
+		sender: watch::Sender<Data>,
 	},
 	GameResult(game::PlayerResult),
 }
@@ -48,9 +50,14 @@ pub async fn run(
 	{
 		match update
 		{
-			Update::Fresh { user_id, data } =>
+			Update::Fresh {
+				user_id,
+				data,
+				sender,
+			} =>
 			{
-				database.cache.insert(user_id, data);
+				let entry = Entry { data, sender };
+				database.cache.insert(user_id, entry);
 			}
 			Update::GameResult(result) =>
 			{
@@ -63,10 +70,16 @@ pub async fn run(
 	Ok(())
 }
 
+struct Entry
+{
+	data: Data,
+	sender: watch::Sender<Data>,
+}
+
 struct Database
 {
 	connection: Option<Connection>,
-	cache: HashMap<UserId, Data>,
+	cache: HashMap<UserId, Entry>,
 }
 
 impl Database
@@ -88,32 +101,40 @@ impl Database
 				return Ok(());
 			}
 		};
+		let mut data = entry.data;
 
 		if result.is_rated
 		{
-			let result = adjust(entry.rating, result.score, result.match_type);
+			let result = adjust(data.rating, result.score, result.match_type);
 			if let Some(new_rating) = result
 			{
-				entry.rating = new_rating;
+				data.rating = new_rating;
 				if let Some(connection) = &mut self.connection
 				{
-					connection.update_rating(user_id, entry.rating).await?;
+					connection.update_rating(user_id, data.rating).await?;
 				}
 			}
 		}
 
 		if result.challenge == Some(challenge::current_id())
-			&& result.awarded_stars > entry.recent_stars
+			&& result.awarded_stars > data.recent_stars
 		{
-			let diff = result.awarded_stars - entry.recent_stars;
-			entry.stars += diff;
-			entry.recent_stars = result.awarded_stars;
+			let diff = result.awarded_stars - data.recent_stars;
+			data.stars += diff;
+			data.recent_stars = result.awarded_stars;
 
 			if let Some(connection) = &mut self.connection
 			{
-				connection.award_stars(user_id, entry.recent_stars).await?;
+				connection.award_stars(user_id, data.recent_stars).await?;
 			}
 		}
+
+		if data != entry.data
+		{
+			entry.data = data;
+			entry.sender.broadcast(data)?;
+		}
+
 		Ok(())
 	}
 }
