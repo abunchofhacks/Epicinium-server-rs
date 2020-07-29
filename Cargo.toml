@@ -13,17 +13,13 @@ serde_json = "*"
 serde_urlencoded = "*"
 serde_repr = "*"
 serde_plain = "*"
-enum-map = "*"
-enum-map-derive = "*"
 enumset = { version = "1.0", features = ["serde"] }
 vec-drain-where = "*"
 rand = "0.7.0"
-openssl = "*"
 reqwest = { version = "*", features = ["json"] }
 futures = "^0.3.5"
 tokio = { version = "0.2", features = ["rt-threaded", "macros", "time", "sync", "tcp", "signal", "fs", "io-util", "process"] }
 backtrace = "*"
-owning_ref = "*"
 libc = "*"
 log = "*"
 fern = { version = "^0.6", features = ["reopen-03"] }

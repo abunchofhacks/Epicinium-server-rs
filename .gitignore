@@ -6,6 +6,10 @@
 /bin
 /tools
 
+# copied epicinium input
+/maps
+/rulesets
+
 # output files
 *.out
 *.log
@@ -33,3 +37,6 @@
 # local logrotate output
 logs/.*.logrotate.status
 logs/.*.logrotate.conf
+
+# local terminate output
+/terminate.sh

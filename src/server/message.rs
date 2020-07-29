@@ -345,7 +345,7 @@ pub enum ChatTarget
 	Lobby,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Enum)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Role
 {
@@ -365,7 +365,7 @@ impl Role
 	}
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Enum)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum VisionType
 {
