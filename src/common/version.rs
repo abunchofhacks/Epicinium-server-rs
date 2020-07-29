@@ -23,16 +23,13 @@ impl Version
 		{
 			Version::dev()
 		}
+		else if cfg!(feature = "candidate")
+		{
+			Version::latest()
+		}
 		else if cfg!(debug_assertions)
 		{
-			if cfg!(feature = "candidate")
-			{
-				Version::latest()
-			}
-			else
-			{
-				Version::dev()
-			}
+			Version::dev()
 		}
 		else
 		{
