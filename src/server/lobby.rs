@@ -1516,6 +1516,15 @@ async fn pick_map(
 
 	let found = lobby.map_pool.iter().find(|&(x, _)| *x == map_name);
 
+	// The two player maps in the official map pool are compatible with
+	// NeuralNewt (see below); note that unofficial maps can be added to
+	// map_pool in the code below, but then a block occurred when that happened.
+	let is_neural_newt_compatible = match found
+	{
+		Some((_, metadata)) => metadata.playercount == 2,
+		None => map_name == "1v1",
+	};
+
 	let found = if found.is_some()
 	{
 		found
@@ -1664,6 +1673,14 @@ async fn pick_map(
 
 	// We have a new playercount.
 	lobby.max_players = playercount;
+
+	// The current version of NeuralNewt can only run on maps that are at most
+	// 20 cols by 13 rows; other maps will probably cause the NN to crash.
+	if !is_neural_newt_compatible
+	{
+		let blocker = "neuralnewt".to_string();
+		block_ai(lobby, clients, blocker);
+	}
 
 	// If the lobby used to be an AI lobby, we keep it that way.
 	// A lobby is an AI lobby in this sense if there is at most 1 human
@@ -2147,27 +2164,34 @@ async fn pick_ruleset(
 	{
 		// Lowercase because we also want to block aihungryhippo.so.
 		let blocker = "hungryhippo".to_string();
-		if !lobby.ai_name_blockers.contains(&blocker)
-		{
-			lobby
-				.ai_pool
-				.retain(|ainame| ainame.to_lowercase().contains(&blocker));
-			let to_be_changed: Vec<Botslot> = lobby
-				.bots
-				.iter()
-				.filter(|bot| bot.ai_name.to_lowercase().contains(&blocker))
-				.map(|bot| bot.slot)
-				.collect();
-			for slot in to_be_changed
-			{
-				let replacement = "RampantRhino".to_string();
-				change_ai(lobby, clients, Some(slot), replacement);
-			}
-			lobby.ai_name_blockers.push(blocker);
-		}
+		block_ai(lobby, clients, blocker);
 	}
 
 	Ok(())
+}
+
+fn block_ai(lobby: &mut Lobby, clients: &mut Vec<Client>, blocker: String)
+{
+	if !lobby.ai_name_blockers.contains(&blocker)
+	{
+		lobby
+			.ai_pool
+			.retain(|ainame| !ainame.to_lowercase().contains(&blocker));
+
+		let to_be_changed: Vec<Botslot> = lobby
+			.bots
+			.iter()
+			.filter(|bot| bot.ai_name.to_lowercase().contains(&blocker))
+			.map(|bot| bot.slot)
+			.collect();
+		for slot in to_be_changed
+		{
+			let replacement = "RampantRhino".to_string();
+			change_ai(lobby, clients, Some(slot), replacement);
+		}
+
+		lobby.ai_name_blockers.push(blocker);
+	}
 }
 
 async fn handle_ruleset_confirmation(
