@@ -14,6 +14,7 @@ use crate::logic::difficulty::*;
 use crate::logic::map;
 use crate::logic::player;
 use crate::logic::player::PlayerColor;
+use crate::logic::player::PLAYER_MAX;
 use crate::logic::ruleset;
 use crate::server::botslot;
 use crate::server::botslot::Botslot;
@@ -234,6 +235,7 @@ struct Lobby
 	bot_visiontypes: HashMap<Botslot, VisionType>,
 
 	ai_pool: Vec<String>,
+	ai_name_blockers: Vec<String>,
 	map_pool: Vec<(String, map::Metadata)>,
 	map_name: String,
 	ruleset_name: String,
@@ -321,6 +323,7 @@ async fn initialize(
 		player_visiontypes: HashMap::new(),
 		bot_visiontypes: HashMap::new(),
 		ai_pool: ai::load_pool(),
+		ai_name_blockers: Vec::new(),
 		map_pool,
 		map_name,
 		ruleset_name: ruleset::current(),
@@ -1341,6 +1344,15 @@ fn change_ai(
 		// FUTURE let the sender know somehow?
 		return;
 	}
+	else if lobby
+		.ai_name_blockers
+		.iter()
+		.any(|blocker| ai_name.to_lowercase().contains(blocker))
+	{
+		warn!("Cannot set AI to blocked '{}'.", ai_name);
+		// FUTURE let the sender know somehow?
+		return;
+	}
 
 	if lobby.ai_pool.iter().find(|&x| x == &ai_name).is_none()
 	{
@@ -1572,10 +1584,37 @@ async fn pick_map(
 		client.handle.send(message.clone());
 	}
 
-	let playercount = match metadata.playercount()
+	// If this is a custom lobby, change rulesets based on the map.
+	let custom_ruleset = if lobby.lobby_type == LobbyType::Custom
 	{
-		Some(count) => count as i32,
-		None => return Err(Error::NoPlayerCount),
+		if metadata.pool_type == map::PoolType::Custom
+		{
+			metadata.ruleset_name.clone()
+		}
+		else
+		{
+			None
+		}
+	}
+	else
+	{
+		None
+	};
+
+	// We might have a new playercount.
+	let playercount = if metadata.playercount < 2
+	{
+		warn!("Map playercount cannot be less than 2.");
+		2
+	}
+	else if metadata.playercount as usize > PLAYER_MAX
+	{
+		warn!("Map playercount cannot be more than PLAYER_MAX.");
+		PLAYER_MAX as i32
+	}
+	else
+	{
+		metadata.playercount
 	};
 
 	// We may need to demote players to observers.
@@ -1635,6 +1674,12 @@ async fn pick_map(
 		{
 			add_bot(lobby, clients);
 		}
+	}
+
+	// If this is a custom lobby, change rulesets based on the map.
+	if let Some(ruleset_name) = custom_ruleset
+	{
+		pick_ruleset(lobby, clients, ruleset_name).await?;
 	}
 
 	Ok(())
@@ -2096,6 +2141,32 @@ async fn pick_ruleset(
 		client.handle.send(pickmessage.clone());
 	}
 
+	// AIHungryHippo uses hardcoded unit and tile types, so it cannot handle
+	// non-default rulesets.
+	if lobby.ruleset_name != ruleset::current()
+	{
+		// Lowercase because we also want to block aihungryhippo.so.
+		let blocker = "hungryhippo".to_string();
+		if !lobby.ai_name_blockers.contains(&blocker)
+		{
+			lobby
+				.ai_pool
+				.retain(|ainame| ainame.to_lowercase().contains(&blocker));
+			let to_be_changed: Vec<Botslot> = lobby
+				.bots
+				.iter()
+				.filter(|bot| bot.ai_name.to_lowercase().contains(&blocker))
+				.map(|bot| bot.slot)
+				.collect();
+			for slot in to_be_changed
+			{
+				let replacement = "RampantRhino".to_string();
+				change_ai(lobby, clients, Some(slot), replacement);
+			}
+			lobby.ai_name_blockers.push(blocker);
+		}
+	}
+
 	Ok(())
 }
 
@@ -2382,7 +2453,6 @@ async fn try_start(
 enum Error
 {
 	EmptyMapPool,
-	NoPlayerCount,
 	ClientMissing,
 	StartGameNotEnoughColors,
 	Io
@@ -2446,7 +2516,6 @@ impl fmt::Display for Error
 		match self
 		{
 			Error::EmptyMapPool => write!(f, "{:#?}", self),
-			Error::NoPlayerCount => write!(f, "{:#?}", self),
 			Error::ClientMissing => write!(f, "{:#?}", self),
 			Error::StartGameNotEnoughColors => write!(f, "{:#?}", self),
 			Error::Io { error } => error.fmt(f),

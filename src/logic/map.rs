@@ -1,7 +1,6 @@
 /* Map */
 
 use crate::logic::epicinium;
-use crate::logic::player::PLAYER_MAX;
 
 use std::io;
 use std::path::Path;
@@ -51,27 +50,18 @@ fn filename(mapname: &str) -> String
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Metadata(serde_json::Value);
-
-impl Metadata
+pub struct Metadata
 {
-	pub fn playercount(&self) -> Option<usize>
-	{
-		let count = self.0.get("playercount")?.as_i64()?;
-		let count = if count < 2
-		{
-			2
-		}
-		else if count as usize > PLAYER_MAX
-		{
-			PLAYER_MAX
-		}
-		else
-		{
-			count as usize
-		};
-		Some(count)
-	}
+	pub playercount: i32,
+
+	#[serde(rename = "pool")]
+	pub pool_type: PoolType,
+
+	#[serde(rename = "ruleset", default)]
+	pub ruleset_name: Option<String>,
+
+	#[serde(flatten)]
+	other: std::collections::HashMap<String, serde_json::Value>,
 }
 
 pub async fn load_metadata(mapname: &str) -> Result<Metadata, io::Error>
@@ -83,4 +73,13 @@ pub async fn load_metadata(mapname: &str) -> Result<Metadata, io::Error>
 	reader.read_line(&mut buffer).await?;
 	let metadata: Metadata = serde_json::from_str(&buffer)?;
 	Ok(metadata)
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolType
+{
+	None,
+	Multiplayer,
+	Custom,
 }
