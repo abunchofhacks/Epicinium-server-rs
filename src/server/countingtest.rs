@@ -290,7 +290,18 @@ fn handle_message(
 
 			Ok(Vec::new())
 		}
-		Message::LeaveServer { .. } => Ok(Vec::new()),
+		Message::LeaveServer { content } =>
+		{
+			if content.is_none()
+			{
+				error!("[{}] Server refusing access", number);
+				Err(())
+			}
+			else
+			{
+				Ok(Vec::new())
+			}
+		}
 		Message::Closing =>
 		{
 			error!("[{}] Server closing unexpectedly", number);
@@ -315,6 +326,8 @@ fn handle_message(
 			}
 		},
 		Message::ListChallenge { .. } => Ok(Vec::new()),
+		Message::RatingAndStars { .. } => Ok(Vec::new()),
+		Message::RecentStars { .. } => Ok(Vec::new()),
 		_ =>
 		{
 			unreachable!();
