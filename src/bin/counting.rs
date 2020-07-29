@@ -1,8 +1,8 @@
 /* Counting Stress Test */
 
-extern crate epicinium;
-
-use epicinium::*;
+use epicinium::server;
+use epicinium::Settings;
+use epicinium::Version;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>>
 {
@@ -26,7 +26,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>>
 	let loglevel = settings
 		.loglevel()
 		.unwrap_or(epicinium::log::Level::Verbose);
-	log::start(&logname, loglevel)?;
+	epicinium::log::start(&logname, loglevel)?;
 
 	println!(
 		"[ Epicinium Counting Stress Test ] ({} v{})",

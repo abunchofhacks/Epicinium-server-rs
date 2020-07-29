@@ -1,17 +1,5 @@
 /* Epicinium Rust Lib */
 
-extern crate backtrace;
-extern crate enumset;
-extern crate futures;
-extern crate rand;
-extern crate reqwest;
-extern crate rlimit;
-extern crate serde;
-extern crate serde_plain;
-extern crate serde_urlencoded;
-extern crate tokio;
-extern crate vec_drain_where;
-
 #[macro_use]
 extern crate serde_json;
 

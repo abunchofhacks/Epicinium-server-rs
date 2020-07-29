@@ -1,9 +1,8 @@
 /* Server */
 
-extern crate epicinium;
-extern crate log;
-
-use epicinium::*;
+use epicinium::run_server;
+use epicinium::Settings;
+use epicinium::Version;
 
 use log::info;
 
