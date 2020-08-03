@@ -6,6 +6,7 @@ edition = "2018"
 publish = false
 
 [dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
 rlimit = "*"
 serde = "*"
 serde_derive = "*"
