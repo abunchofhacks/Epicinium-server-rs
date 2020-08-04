@@ -30,8 +30,8 @@ itertools = "*"
 unindent = "*"
 
 [features]
-defaults = ["increase-sockets"]
+defaults = []
 
 candidate = []
 version-is-dev = []
-increase-sockets = []
+no-increase-sockets = []

@@ -245,14 +245,14 @@ async fn wait_for_canary(mut canary: mpsc::Receiver<()>)
 
 fn increase_sockets() -> std::io::Result<()>
 {
-	if cfg!(feature = "increase-sockets")
+	if !cfg!(feature = "no-increase-sockets")
 	{
 		const MAX_SOCKETS: rlimit::rlim = 16384;
 		rlimit::Resource::NOFILE.set(MAX_SOCKETS, MAX_SOCKETS)
 	}
 	else
 	{
-		info!("Limited sockets available.");
+		warn!("Limited sockets available.");
 		Ok(())
 	}
 }
