@@ -714,12 +714,10 @@ async fn handle_join(
 		Err(()) => return Ok(()),
 	}
 
-	let message = Message::JoinLobby {
-		lobby_id: Some(lobby.id),
-		username: Some(client_username.clone()),
-		invite: None,
+	let update = chat::Update::JoinedLobby {
+		client_id,
+		lobby_id: lobby.id,
 	};
-	let update = chat::Update::Msg(message);
 	general_chat.send(update).await?;
 
 	// If the newcomer was invited, their role might be forced to be observer.
@@ -949,6 +947,12 @@ async fn handle_leave(
 		.collect();
 
 	handle_removed(lobby, clients, removed).await?;
+
+	let update = chat::Update::LeftLobby {
+		lobby_id: lobby.id,
+		client_id,
+	};
+	general_chat.send(update).await?;
 
 	if clients.is_empty()
 	{

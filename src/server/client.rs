@@ -795,7 +795,7 @@ async fn handle_update(
 		{
 			if let Some(chat) = &mut client.general_chat
 			{
-				let update = chat::Update::Rejoin {
+				let update = chat::Update::RatingAndStars {
 					client_id: client.id,
 				};
 				chat.send(update).await?

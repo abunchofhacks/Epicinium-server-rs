@@ -1503,6 +1503,12 @@ async fn handle_leave(
 
 	handle.send(message);
 
+	let update = chat::Update::LeftLobby {
+		lobby_id,
+		client_id,
+	};
+	general_chat.send(update).await?;
+
 	if players.iter().all(|x| x.handle.is_disconnected())
 		&& watchers.iter().all(|x| x.handle.is_disconnected())
 	{

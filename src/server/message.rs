@@ -223,7 +223,7 @@ pub enum Message
 	InGame
 	{
 		#[serde(rename = "content")]
-		lobby_id: String,
+		lobby_id: Keycode,
 
 		#[serde(rename = "sender")]
 		username: String,

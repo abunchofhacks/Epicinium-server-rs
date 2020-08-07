@@ -30,7 +30,7 @@ pub enum Update
 		rating_data: watch::Receiver<rating::Data>,
 		handle: client::Handle,
 	},
-	Rejoin
+	RatingAndStars
 	{
 		client_id: Keycode,
 	},
@@ -67,6 +67,16 @@ pub enum Update
 		invite: Option<lobby::Invite>,
 	},
 
+	JoinedLobby
+	{
+		lobby_id: Keycode,
+		client_id: Keycode,
+	},
+	LeftLobby
+	{
+		lobby_id: Keycode,
+		client_id: Keycode,
+	},
 	InGame
 	{
 		lobby_id: Keycode,
@@ -131,7 +141,10 @@ fn handle_update(
 			lobbies,
 			current_challenge,
 		),
-		Update::Rejoin { client_id } => handle_rejoin(client_id, clients),
+		Update::RatingAndStars { client_id } =>
+		{
+			handle_rating_and_stars(client_id, clients)
+		}
 		Update::StillAlive { client_id } =>
 		{
 			handle_still_alive(client_id, clients, ghostbusters)
@@ -176,6 +189,20 @@ fn handle_update(
 			handle_find_lobby(lobbies, lobby_id, handle, general_chat, invite);
 		}
 
+		Update::JoinedLobby {
+			lobby_id,
+			client_id,
+		} =>
+		{
+			handle_joined_lobby(clients, lobby_id, client_id);
+		}
+		Update::LeftLobby {
+			lobby_id,
+			client_id,
+		} =>
+		{
+			handle_left_lobby(clients, lobby_id, client_id);
+		}
 		Update::InGame {
 			lobby_id,
 			client_id,
@@ -202,7 +229,23 @@ struct Client
 	join_metadata: Option<JoinMetadata>,
 	handle: client::Handle,
 	rating_data: watch::Receiver<rating::Data>,
+	availability_status: AvailabilityStatus,
 	hidden: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum AvailabilityStatus
+{
+	Available,
+	InLobby
+	{
+		lobby_id: Keycode,
+	},
+	InGame
+	{
+		lobby_id: Keycode,
+		role: Role,
+	},
 }
 
 struct Ghostbuster
@@ -306,6 +349,7 @@ fn handle_join(
 		join_metadata,
 		handle,
 		rating_data,
+		availability_status: AvailabilityStatus::Available,
 		hidden: hidden,
 	};
 
@@ -433,8 +477,32 @@ fn do_init(
 			};
 			handle.send(message);
 
-			// TODO join_lobby
-			// TODO in_game
+			match client.availability_status
+			{
+				AvailabilityStatus::Available =>
+				{}
+				AvailabilityStatus::InLobby { lobby_id } =>
+				{
+					handle.send(Message::JoinLobby {
+						username: Some(client.username.clone()),
+						lobby_id: Some(lobby_id),
+						invite: None,
+					});
+				}
+				AvailabilityStatus::InGame { lobby_id, role } =>
+				{
+					handle.send(Message::JoinLobby {
+						username: Some(client.username.clone()),
+						lobby_id: Some(lobby_id),
+						invite: None,
+					});
+					handle.send(Message::InGame {
+						username: client.username.clone(),
+						lobby_id: lobby_id,
+						role,
+					});
+				}
+			}
 		}
 	}
 
@@ -448,14 +516,14 @@ fn do_init(
 	handle.send(Message::Init)
 }
 
-fn handle_rejoin(client_id: Keycode, clients: &mut Vec<Client>)
+fn handle_rating_and_stars(client_id: Keycode, clients: &mut Vec<Client>)
 {
 	let client = match clients.iter_mut().find(|x| x.id == client_id)
 	{
 		Some(client) => client,
 		None =>
 		{
-			warn!("Missing client {} has rejoined.", client_id);
+			warn!("Missing client {}.", client_id);
 			return;
 		}
 	};
@@ -497,6 +565,7 @@ fn handle_removed(
 			join_metadata: _,
 			mut handle,
 			rating_data: _,
+			availability_status: _,
 			hidden,
 		} = removed_client;
 
@@ -656,6 +725,55 @@ fn handle_find_lobby(
 	handle.notify(update);
 }
 
+fn handle_joined_lobby(
+	clients: &mut Vec<Client>,
+	lobby_id: Keycode,
+	client_id: Keycode,
+)
+{
+	let client = match clients.iter_mut().find(|x| x.id == client_id)
+	{
+		Some(client) => client,
+		None => return,
+	};
+
+	client.availability_status = AvailabilityStatus::InLobby { lobby_id };
+
+	let message = Message::JoinLobby {
+		lobby_id: Some(lobby_id),
+		username: Some(client.username.clone()),
+		invite: None,
+	};
+	for client in clients.iter_mut()
+	{
+		client.handle.send(message.clone());
+	}
+}
+
+fn handle_left_lobby(
+	clients: &mut Vec<Client>,
+	lobby_id: Keycode,
+	client_id: Keycode,
+)
+{
+	let client = match clients.iter_mut().find(|x| x.id == client_id)
+	{
+		Some(client) => client,
+		None => return,
+	};
+
+	client.availability_status = AvailabilityStatus::Available;
+
+	let message = Message::LeaveLobby {
+		lobby_id: Some(lobby_id),
+		username: Some(client.username.clone()),
+	};
+	for client in clients.iter_mut()
+	{
+		client.handle.send(message.clone());
+	}
+}
+
 fn handle_in_game(
 	clients: &mut Vec<Client>,
 	lobby_id: Keycode,
@@ -663,18 +781,17 @@ fn handle_in_game(
 	role: Role,
 )
 {
-	let found = clients
-		.iter()
-		.find(|client| client.id == client_id)
-		.map(|client| client.username.clone());
-	let username = match found
+	let client = match clients.iter_mut().find(|x| x.id == client_id)
 	{
-		Some(username) => username,
+		Some(client) => client,
 		None => return,
 	};
+
+	client.availability_status = AvailabilityStatus::InGame { lobby_id, role };
+
 	let message = Message::InGame {
-		lobby_id: lobby_id.to_string(),
-		username,
+		lobby_id,
+		username: client.username.clone(),
 		role,
 	};
 	for client in clients.iter_mut()
