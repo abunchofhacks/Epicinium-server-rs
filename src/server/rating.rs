@@ -162,6 +162,7 @@ impl Database
 		{
 			entry.data = data;
 			entry.sender.broadcast(data)?;
+			entry.handle.notify(client::Update::RatingAndStars);
 		}
 
 		Ok(())

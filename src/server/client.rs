@@ -375,6 +375,7 @@ pub enum Update
 	{
 		lobby: mpsc::Sender<lobby::Update>,
 	},
+	RatingAndStars,
 	Closing,
 	Closed,
 	Poison,
@@ -787,6 +788,18 @@ async fn handle_update(
 		Update::JoinedLobby { lobby } =>
 		{
 			client.lobby = Some(lobby);
+			Ok(None)
+		}
+
+		Update::RatingAndStars =>
+		{
+			if let Some(chat) = &mut client.general_chat
+			{
+				let update = chat::Update::Rejoin {
+					client_id: client.id,
+				};
+				chat.send(update).await?
+			}
 			Ok(None)
 		}
 
@@ -1497,25 +1510,6 @@ async fn handle_message(
 			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
-		Message::Init => match client.general_chat
-		{
-			Some(ref mut general_chat) =>
-			{
-				if client.closing
-				{
-					client.sendbuffer.try_send(Message::Closing)?;
-				}
-
-				let update = chat::Update::Init {
-					handle: client.handle.clone(),
-				};
-				general_chat.send(update).await?;
-			}
-			None =>
-			{
-				debug!("Ignoring message from offline client: {:?}", message);
-			}
-		},
 		Message::Chat { .. } if client.username.is_empty() =>
 		{
 			info!("Ignoring Chat from client without username: {:?}", message);
@@ -1583,7 +1577,8 @@ async fn handle_message(
 			// TODO escape newlines etcetera (#1266)
 			debug!("Client {} says: {}", client.id, content);
 		}
-		Message::DisbandLobby { .. }
+		Message::Init
+		| Message::DisbandLobby { .. }
 		| Message::ListLobby { .. }
 		| Message::ListChallenge { .. }
 		| Message::ListAi { .. }

@@ -30,9 +30,9 @@ pub enum Update
 		rating_data: watch::Receiver<rating::Data>,
 		handle: client::Handle,
 	},
-	Init
+	Rejoin
 	{
-		handle: client::Handle,
+		client_id: Keycode,
 	},
 	StillAlive
 	{
@@ -131,10 +131,7 @@ fn handle_update(
 			lobbies,
 			current_challenge,
 		),
-		Update::Init { mut handle } =>
-		{
-			handle_init(&mut handle, clients, lobbies, current_challenge)
-		}
+		Update::Rejoin { client_id } => handle_rejoin(client_id, clients),
 		Update::StillAlive { client_id } =>
 		{
 			handle_still_alive(client_id, clients, ghostbusters)
@@ -334,7 +331,10 @@ fn handle_join(
 	// FUTURE this is weird (#1411)
 	newcomer.handle.send(message);
 
+	do_init(&mut newcomer.handle, clients, lobbies, current_challenge);
+
 	// Tell everyone the rating and stars of the newcomer.
+	// Let the newcomer know how many stars they have for the current challenge.
 	if !newcomer.hidden
 	{
 		let rating_data: rating::Data = *newcomer.rating_data.borrow();
@@ -354,8 +354,6 @@ fn handle_join(
 		};
 		newcomer.handle.send(message);
 	}
-
-	handle_init(&mut newcomer.handle, clients, lobbies, current_challenge);
 
 	// If the user was a player in a game that is still in progress,
 	// automatically have them rejoin the lobby.
@@ -397,7 +395,7 @@ fn generate_join_metadata(unlocks: &EnumSet<Unlock>) -> Option<JoinMetadata>
 	}
 }
 
-fn handle_init(
+fn do_init(
 	handle: &mut client::Handle,
 	clients: &Vec<Client>,
 	lobbies: &Vec<Lobby>,
@@ -445,11 +443,32 @@ fn handle_init(
 		key: current_challenge.key.clone(),
 		metadata: current_challenge.metadata.clone(),
 	});
-	// Let the client know how many stars they have for the current challenge.
-	// TODO recent stars
 
 	// Let the client know we are done initializing.
 	handle.send(Message::Init)
+}
+
+fn handle_rejoin(client_id: Keycode, clients: &mut Vec<Client>)
+{
+	let client = match clients.iter_mut().find(|x| x.id == client_id)
+	{
+		Some(client) => client,
+		None =>
+		{
+			warn!("Missing client {} has rejoined.", client_id);
+			return;
+		}
+	};
+	let rating_data: rating::Data = *client.rating_data.borrow();
+	let message = Message::RatingAndStars {
+		username: client.username.clone(),
+		rating: rating_data.rating,
+		stars: rating_data.stars,
+	};
+	for client in clients.iter_mut()
+	{
+		client.handle.send(message.clone());
+	}
 }
 
 fn handle_leave(
