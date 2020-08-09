@@ -9,6 +9,8 @@ use log::*;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::json;
 
+use anyhow::anyhow;
+
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 
@@ -66,9 +68,9 @@ pub enum Post
 pub async fn run(
 	settings: &Settings,
 	mut posts: mpsc::Receiver<Post>,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<(), anyhow::Error>
 {
-	if settings.discordurl().is_some()
+	if settings.discordurl.is_some()
 	{
 		let connection = Connection::start(settings)?;
 		info!("Connected.");
@@ -106,11 +108,12 @@ struct Connection
 
 impl Connection
 {
-	fn start(
-		settings: &Settings,
-	) -> Result<Connection, Box<dyn std::error::Error>>
+	fn start(settings: &Settings) -> Result<Connection, anyhow::Error>
 	{
-		let url = settings.get_discordurl()?;
+		let url = settings
+			.discordurl
+			.as_ref()
+			.ok_or_else(|| anyhow!("missing 'discordurl'"))?;
 		let mut url = http::Url::parse(url)?;
 		url.query_pairs_mut().append_pair("wait", "true");
 

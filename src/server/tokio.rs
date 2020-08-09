@@ -14,12 +14,13 @@ use crate::server::settings::*;
 use crate::server::slack_api;
 use crate::server::terminate;
 
-use std::error;
 use std::net::SocketAddr;
 use std::sync;
 use std::sync::atomic;
 
 use log::*;
+
+use anyhow::anyhow;
 
 use futures::future;
 use futures::{FutureExt, StreamExt, TryFutureExt};
@@ -41,7 +42,7 @@ pub enum State
 pub async fn run_server(
 	settings: &Settings,
 	log_setup: logrotate::Setup,
-) -> Result<(), Box<dyn error::Error>>
+) -> Result<(), anyhow::Error>
 {
 	enable_coredumps()?;
 	increase_sockets()?;
@@ -106,9 +107,12 @@ async fn accept_clients(
 	discord_api: mpsc::Sender<discord_api::Post>,
 	server_state: watch::Receiver<State>,
 	client_canary: mpsc::Sender<()>,
-) -> Result<(), Box<dyn error::Error>>
+) -> Result<(), anyhow::Error>
 {
-	let server = settings.get_server()?;
+	let server = settings
+		.server
+		.as_ref()
+		.ok_or_else(|| anyhow!("missing 'server'"))?;
 	let ipaddress = server.to_string();
 	let binding: portal::Binding = portal::bind(settings).await?;
 	let port = binding.port;
@@ -205,7 +209,7 @@ async fn wait_for_close(
 	chat_canary: mpsc::Receiver<()>,
 	client_canary: mpsc::Receiver<()>,
 	server_state: watch::Sender<State>,
-) -> Result<(), Box<dyn error::Error>>
+) -> Result<(), anyhow::Error>
 {
 	let handler = tokio::signal::unix::signal(SignalKind::terminate())?;
 	let chat_closed = wait_for_canary(chat_canary).boxed();

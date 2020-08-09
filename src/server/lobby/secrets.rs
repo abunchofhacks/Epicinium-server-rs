@@ -4,7 +4,6 @@ use crate::common::base32;
 use crate::common::keycode::Keycode;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_derive::{Deserialize, Serialize};
 
 use rand::Rng;
 

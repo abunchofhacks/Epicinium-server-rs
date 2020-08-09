@@ -3,14 +3,12 @@
 use crate::common::coredump;
 use crate::common::version::*;
 use crate::server::message::*;
-use crate::server::settings::*;
 
-use std::error;
-use std::io;
-use std::io::ErrorKind;
 use std::net::SocketAddr;
 
 use log::*;
+
+use anyhow::anyhow;
 
 use rand::seq::SliceRandom;
 
@@ -21,32 +19,15 @@ use tokio::prelude::*;
 use itertools::Itertools;
 
 #[tokio::main]
-pub async fn run(settings: &Settings) -> Result<(), Box<dyn error::Error>>
+pub async fn run(
+	ntests: usize,
+	fakeversion: Version,
+	server: String,
+	port: u16,
+) -> Result<(), anyhow::Error>
 {
 	coredump::enable_coredumps()?;
 	increase_sockets()?;
-
-	let mut ntests: usize = 2;
-	let mut fakeversion: Version = Version::current();
-
-	for arg in std::env::args().skip(1)
-	{
-		if arg.starts_with("-")
-		{
-			// Setting argument, will be handled by Settings.
-		}
-		else if arg.starts_with("v")
-		{
-			fakeversion = arg.parse()?;
-		}
-		else
-		{
-			ntests = arg.parse()?;
-		}
-	}
-
-	let server = settings.get_server()?;
-	let port = settings.get_port()?;
 
 	info!(
 		"Starting (ntests = {}, fakeversion = v{}, server = {}, port = {})...",
@@ -74,7 +55,7 @@ async fn run_test(
 	count: usize,
 	fakeversion: Version,
 	serveraddress: &SocketAddr,
-) -> Result<(), Box<dyn error::Error>>
+) -> Result<(), anyhow::Error>
 {
 	match run_test_impl(number, count, fakeversion, serveraddress).await
 	{
@@ -92,7 +73,7 @@ async fn run_test_impl(
 	count: usize,
 	fakeversion: Version,
 	serveraddress: &SocketAddr,
-) -> Result<(), Box<dyn error::Error>>
+) -> Result<(), anyhow::Error>
 {
 	debug!("[{}] Connecting...", number);
 
@@ -125,12 +106,7 @@ async fn run_test_impl(
 
 		let responses =
 			handle_message(number, &mut waiting, &mut has_quit, message)
-				.map_err(|()| {
-					io::Error::new(
-						ErrorKind::Other,
-						"error while handling message",
-					)
-				})?;
+				.map_err(|()| anyhow!("error while handling message"))?;
 
 		for response in responses
 		{
@@ -157,16 +133,16 @@ enum QuitStage
 async fn receive_message(
 	number: usize,
 	socket: &mut ReadHalf<TcpStream>,
-) -> Result<Option<Message>, io::Error>
+) -> Result<Option<Message>, anyhow::Error>
 {
 	let length = match socket.read_u32().await
 	{
 		Ok(length) => length,
-		Err(error) if error.kind() == ErrorKind::UnexpectedEof =>
+		Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof =>
 		{
 			return Ok(None);
 		}
-		Err(error) => return Err(error),
+		Err(error) => return Err(error.into()),
 	};
 	if length == 0
 	{
@@ -184,16 +160,12 @@ async fn receive_message(
 	Ok(Some(message))
 }
 
-fn parse_message(number: usize, buffer: Vec<u8>) -> io::Result<Message>
+fn parse_message(
+	number: usize,
+	buffer: Vec<u8>,
+) -> Result<Message, anyhow::Error>
 {
-	let jsonstr = match String::from_utf8(buffer)
-	{
-		Ok(x) => x,
-		Err(e) =>
-		{
-			return Err(io::Error::new(ErrorKind::InvalidData, e));
-		}
-	};
+	let jsonstr = String::from_utf8(buffer)?;
 
 	if log_enabled!(log::Level::Trace)
 	{

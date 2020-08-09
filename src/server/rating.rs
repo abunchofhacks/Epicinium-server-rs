@@ -12,12 +12,13 @@ use crate::server::message::ResponseStatus;
 use crate::server::settings::Settings;
 
 use std::collections::HashMap;
-use std::error;
 
 use log::*;
 
 use serde_derive::{Deserialize, Serialize};
 use serde_json::json;
+
+use anyhow::anyhow;
 
 use tokio::sync::mpsc;
 use tokio::sync::watch;
@@ -52,7 +53,7 @@ pub enum Update
 pub async fn run(
 	settings: &Settings,
 	mut updates: mpsc::Receiver<Update>,
-) -> Result<(), Box<dyn error::Error>>
+) -> Result<(), anyhow::Error>
 {
 	let mut database = initialize(settings)?;
 
@@ -110,7 +111,7 @@ impl Database
 	async fn handle_result(
 		&mut self,
 		result: game::PlayerResult,
-	) -> Result<(), Box<dyn error::Error>>
+	) -> Result<(), anyhow::Error>
 	{
 		let user_id = result.user_id;
 		let entry = match self.cache.get_mut(&user_id)
@@ -231,9 +232,9 @@ fn adjust(rating: f64, score: i32, match_type: MatchType) -> Option<f64>
 	Some(0.1 * (ratingtenths as f64))
 }
 
-fn initialize(settings: &Settings) -> Result<Database, Box<dyn error::Error>>
+fn initialize(settings: &Settings) -> Result<Database, anyhow::Error>
 {
-	if settings.login_server().is_some()
+	if settings.login_server.is_some()
 		|| (!cfg!(feature = "version-is-dev")
 			&& (!cfg!(debug_assertions) || cfg!(feature = "candidate")))
 	{
@@ -262,10 +263,12 @@ struct Connection
 
 impl Connection
 {
-	fn connect(settings: &Settings)
-		-> Result<Connection, Box<dyn error::Error>>
+	fn connect(settings: &Settings) -> Result<Connection, anyhow::Error>
 	{
-		let url = settings.get_login_server()?;
+		let url = settings
+			.login_server
+			.as_ref()
+			.ok_or_else(|| anyhow!("missing 'login_server'"))?;
 		let base_url = http::Url::parse(url)?;
 
 		let mut update_rating_url = base_url.clone();
@@ -296,7 +299,7 @@ impl Connection
 		&self,
 		user_id: UserId,
 		rating: f64,
-	) -> Result<(), Box<dyn error::Error>>
+	) -> Result<(), anyhow::Error>
 	{
 		let payload = json!({
 			"user_id": user_id,
@@ -321,7 +324,7 @@ impl Connection
 		&self,
 		user_id: UserId,
 		stars_for_current_challenge: i32,
-	) -> Result<(), Box<dyn error::Error>>
+	) -> Result<(), anyhow::Error>
 	{
 		let payload = json!({
 			"user_id": user_id,

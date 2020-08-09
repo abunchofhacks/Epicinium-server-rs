@@ -4,9 +4,9 @@ use crate::common::platform::*;
 use crate::common::version::*;
 use crate::server::settings::*;
 
-use std::error;
-
 use serde_derive::{Deserialize, Serialize};
+
+use anyhow::anyhow;
 
 use reqwest as http;
 
@@ -29,10 +29,9 @@ struct Connection
 	registered_url: http::Url,
 }
 
-pub async fn bind(settings: &Settings)
-	-> Result<Binding, Box<dyn error::Error>>
+pub async fn bind(settings: &Settings) -> Result<Binding, anyhow::Error>
 {
-	if settings.login_server().is_some()
+	if settings.login_server.is_some()
 		|| (!cfg!(feature = "version-is-dev")
 			&& (!cfg!(debug_assertions) || cfg!(feature = "candidate")))
 	{
@@ -44,9 +43,9 @@ pub async fn bind(settings: &Settings)
 	}
 }
 
-fn dev_bind(settings: &Settings) -> Result<Binding, Box<dyn error::Error>>
+fn dev_bind(settings: &Settings) -> Result<Binding, anyhow::Error>
 {
-	let port = settings.get_port()?;
+	let port = settings.port.ok_or_else(|| anyhow!("missing 'port'"))?;
 
 	Ok(Binding {
 		connection: None,
@@ -56,7 +55,7 @@ fn dev_bind(settings: &Settings) -> Result<Binding, Box<dyn error::Error>>
 
 impl Binding
 {
-	pub async fn confirm(&self) -> Result<(), Box<dyn error::Error>>
+	pub async fn confirm(&self) -> Result<(), anyhow::Error>
 	{
 		match &self.connection
 		{
@@ -65,7 +64,7 @@ impl Binding
 		}
 	}
 
-	pub async fn unbind(self) -> Result<(), Box<dyn error::Error>>
+	pub async fn unbind(self) -> Result<(), anyhow::Error>
 	{
 		match self.connection
 		{
@@ -77,10 +76,12 @@ impl Binding
 
 impl Connection
 {
-	async fn bind(settings: &Settings)
-		-> Result<Binding, Box<dyn error::Error>>
+	async fn bind(settings: &Settings) -> Result<Binding, anyhow::Error>
 	{
-		let url = settings.get_login_server()?;
+		let url = settings
+			.login_server
+			.as_ref()
+			.ok_or_else(|| anyhow!("missing 'login_server'"))?;
 		let base_url = http::Url::parse(url)?;
 
 		let mut registration_url = base_url;
@@ -118,7 +119,7 @@ impl Connection
 		})
 	}
 
-	async fn deregister(self) -> Result<(), Box<dyn error::Error>>
+	async fn deregister(self) -> Result<(), anyhow::Error>
 	{
 		let _: http::Response = self
 			.http
@@ -129,7 +130,7 @@ impl Connection
 		Ok(())
 	}
 
-	async fn confirm(&self) -> Result<(), Box<dyn error::Error>>
+	async fn confirm(&self) -> Result<(), anyhow::Error>
 	{
 		let info = ServerConfirmation { online: true };
 		let payload = serde_json::to_string(&info)?;

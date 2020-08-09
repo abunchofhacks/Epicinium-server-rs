@@ -8,12 +8,12 @@ use crate::server::message::*;
 use crate::server::rating;
 use crate::server::settings::*;
 
-use std::error;
-
 use log::*;
 
 use serde_derive::{Deserialize, Serialize};
 use serde_json::json;
+
+use anyhow::anyhow;
 
 use reqwest as http;
 
@@ -57,9 +57,9 @@ pub struct Server
 	connection: Option<Connection>,
 }
 
-pub fn connect(settings: &Settings) -> Result<Server, Box<dyn error::Error>>
+pub fn connect(settings: &Settings) -> Result<Server, anyhow::Error>
 {
-	if settings.login_server().is_some()
+	if settings.login_server.is_some()
 		|| (!cfg!(feature = "version-is-dev")
 			&& (!cfg!(debug_assertions) || cfg!(feature = "candidate")))
 	{
@@ -147,9 +147,12 @@ struct Connection
 
 impl Connection
 {
-	fn open(settings: &Settings) -> Result<Connection, Box<dyn error::Error>>
+	fn open(settings: &Settings) -> Result<Connection, anyhow::Error>
 	{
-		let url = settings.get_login_server()?;
+		let url = settings
+			.login_server
+			.as_ref()
+			.ok_or_else(|| anyhow!("missing 'login_server'"))?;
 		let base_url = http::Url::parse(url)?;
 
 		let mut validate_session_url = base_url;

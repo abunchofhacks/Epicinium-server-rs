@@ -11,7 +11,6 @@ rlimit = "*"
 serde = "*"
 serde_derive = "*"
 serde_json = "*"
-serde_urlencoded = "*"
 serde_repr = "*"
 serde_plain = "*"
 enumset = { version = "1.0", features = ["serde"] }
@@ -20,7 +19,6 @@ rand = "0.7.0"
 reqwest = { version = "*", features = ["json"] }
 futures = "^0.3.5"
 tokio = { version = "0.2", features = ["rt-threaded", "macros", "time", "sync", "tcp", "signal", "fs", "io-util", "process"] }
-backtrace = "*"
 libc = "*"
 log = "*"
 fern = { version = "^0.6", features = ["reopen-03"] }
@@ -28,6 +26,8 @@ chrono = "*"
 thread-id = "*"
 itertools = "*"
 unindent = "*"
+docopt = "*"
+anyhow = "*"
 
 [features]
 defaults = []

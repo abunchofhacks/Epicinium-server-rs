@@ -8,6 +8,8 @@ use log::*;
 
 use serde_json::json;
 
+use anyhow::anyhow;
+
 use tokio::sync::mpsc;
 
 use reqwest as http;
@@ -21,9 +23,9 @@ pub struct Post
 pub async fn run(
 	settings: &Settings,
 	mut posts: mpsc::Receiver<Post>,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<(), anyhow::Error>
 {
-	if settings.slackurl().is_some()
+	if settings.slackurl.is_some()
 	{
 		let mut connection = Connection::start(settings)?;
 		info!("Connected.");
@@ -49,14 +51,18 @@ struct Connection
 
 impl Connection
 {
-	fn start(
-		settings: &Settings,
-	) -> Result<Connection, Box<dyn std::error::Error>>
+	fn start(settings: &Settings) -> Result<Connection, anyhow::Error>
 	{
-		let servername = settings.get_slackname()?;
+		let servername = settings
+			.slackname
+			.as_ref()
+			.ok_or_else(|| anyhow!("missing 'slackname'"))?;
 		let name = format!("{}-{}", servername, Version::current());
 
-		let url = settings.get_slackurl()?;
+		let url = settings
+			.slackurl
+			.as_ref()
+			.ok_or_else(|| anyhow!("missing 'slackurl'"))?;
 		let url = http::Url::parse(url)?;
 
 		let platform = Platform::current();
