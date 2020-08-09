@@ -14,6 +14,9 @@ use crate::server::botslot::Botslot;
 use crate::server::lobby;
 use crate::server::lobby::LobbyType;
 
+use serde_derive::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]

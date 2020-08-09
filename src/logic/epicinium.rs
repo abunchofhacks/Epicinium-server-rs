@@ -12,6 +12,8 @@ use log::*;
 use libc::c_char;
 use std::ffi::{CStr, CString};
 
+use serde_derive::{Deserialize, Serialize};
+
 pub fn allocate_automaton(
 	players: Vec<PlayerColor>,
 	ruleset_name: &str,

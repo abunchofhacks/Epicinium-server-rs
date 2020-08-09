@@ -1,5 +1,7 @@
 /* Log */
 
+use serde_derive::{Deserialize, Serialize};
+
 pub fn trace_filename(logname: &str) -> String
 {
 	format!("logs/{}.trace.log", logname).to_string()

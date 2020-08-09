@@ -8,6 +8,8 @@ use std::fmt;
 use std::fs;
 use std::io;
 
+use serde_derive::{Deserialize, Serialize};
+
 use backtrace::Backtrace;
 
 pub struct Settings

@@ -9,6 +9,8 @@ use crate::logic::epicinium::AllocatedAi;
 use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 
+use serde_derive::{Deserialize, Serialize};
+
 pub fn exists(ainame: &str) -> bool
 {
 	epicinium::ai_exists(ainame)

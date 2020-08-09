@@ -11,6 +11,8 @@ use crate::logic::map;
 use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 
+use serde_derive::{Deserialize, Serialize};
+
 #[derive(Debug)]
 pub struct Automaton(AllocatedAutomaton);
 

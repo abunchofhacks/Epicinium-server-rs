@@ -5,6 +5,8 @@ pub use crate::logic::epicinium::ChallengeId;
 use crate::logic::difficulty::Difficulty;
 use crate::logic::epicinium;
 
+use serde_derive::{Deserialize, Serialize};
+
 #[derive(Debug)]
 pub struct Challenge
 {

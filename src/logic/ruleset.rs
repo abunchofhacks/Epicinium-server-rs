@@ -6,6 +6,7 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 
+use serde_derive::{Deserialize, Serialize};
 use serde_json;
 
 pub fn initialize_collection() -> Result<(), InitializationError>

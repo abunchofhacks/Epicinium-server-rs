@@ -2,6 +2,8 @@
 
 use crate::logic::player::PlayerColor;
 
+use serde_derive::{Deserialize, Serialize};
+
 #[derive(Default, Clone, Serialize, Deserialize, Debug)]
 pub struct Vision(Vec<PlayerColor>);
 

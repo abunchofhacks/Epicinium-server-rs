@@ -1,5 +1,7 @@
 /* Platform */
 
+use serde_derive::{Deserialize, Serialize};
+
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Platform

@@ -12,6 +12,9 @@ use std::error;
 
 use log::*;
 
+use serde_derive::{Deserialize, Serialize};
+use serde_json::json;
+
 use reqwest as http;
 
 use enumset::*;

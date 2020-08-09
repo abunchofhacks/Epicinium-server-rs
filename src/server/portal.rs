@@ -6,6 +6,8 @@ use crate::server::settings::*;
 
 use std::error;
 
+use serde_derive::{Deserialize, Serialize};
+
 use reqwest as http;
 
 pub struct Binding

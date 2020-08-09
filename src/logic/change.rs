@@ -3,6 +3,8 @@
 use crate::logic::player::*;
 use crate::logic::vision::*;
 
+use serde_derive::{Deserialize, Serialize};
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Change(serde_json::Value);
 

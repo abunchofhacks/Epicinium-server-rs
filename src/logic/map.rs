@@ -9,6 +9,7 @@ use tokio::fs::File;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 
+use serde_derive::{Deserialize, Serialize};
 use serde_json;
 
 pub fn exists(mapname: &str) -> bool

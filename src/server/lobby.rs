@@ -36,6 +36,8 @@ use log::*;
 
 use rand::Rng;
 
+use serde_derive::{Deserialize, Serialize};
+
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 
