@@ -1186,7 +1186,11 @@ fn change_color(
 			{
 				// Claim successful.
 				lobby.available_colors.retain(|&x| x != color);
-				lobby.player_colors.insert(client_id, color);
+				let oldcolor = lobby.player_colors.insert(client_id, color);
+				if let Some(oldcolor) = oldcolor
+				{
+					lobby.available_colors.push(oldcolor);
+				}
 				color
 			}
 			else
@@ -1227,7 +1231,11 @@ fn change_color(
 			{
 				// Claim successful.
 				lobby.available_colors.retain(|&x| x != color);
-				lobby.bot_colors.insert(slot, color);
+				let oldcolor = lobby.bot_colors.insert(slot, color);
+				if let Some(oldcolor) = oldcolor
+				{
+					lobby.available_colors.push(oldcolor);
+				}
 				color
 			}
 			else
