@@ -40,6 +40,7 @@ pub struct Secret
 pub struct Salt([u8; 20]);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct Secrets
 {
 	pub join_secret: Secret,
