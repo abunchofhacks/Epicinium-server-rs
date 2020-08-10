@@ -1264,14 +1264,14 @@ fn change_visiontype(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
 	username_or_slot: UsernameOrSlot,
-	visiontype: VisionType,
+	mut visiontype: VisionType,
 )
 {
 	if lobby.lobby_type == LobbyType::OneVsOne
+		&& visiontype != VisionType::Normal
 	{
 		warn!("Cannot change visiontype in onevsone lobby {}.", lobby.id);
-		// FUTURE let the sender know somehow?
-		return;
+		visiontype = VisionType::Normal;
 	}
 
 	match &username_or_slot
@@ -1355,7 +1355,13 @@ fn change_ai(
 	if !ai::exists(&ai_name)
 	{
 		warn!("Cannot set AI to non-existing '{}'.", ai_name);
-		// FUTURE let the sender know somehow?
+		for client in clients.into_iter()
+		{
+			client.handle.send(Message::ClaimAi {
+				slot: Some(bot.slot),
+				ai_name: bot.ai_name.clone(),
+			});
+		}
 		return;
 	}
 	else if lobby
@@ -1364,7 +1370,13 @@ fn change_ai(
 		.any(|blocker| ai_name.to_lowercase().contains(blocker))
 	{
 		warn!("Cannot set AI to blocked '{}'.", ai_name);
-		// FUTURE let the sender know somehow?
+		for client in clients.into_iter()
+		{
+			client.handle.send(Message::ClaimAi {
+				slot: Some(bot.slot),
+				ai_name: bot.ai_name.clone(),
+			});
+		}
 		return;
 	}
 
@@ -1419,7 +1431,13 @@ fn change_difficulty(
 	if difficulty == Difficulty::None && bot.ai_name != "Dummy"
 	{
 		warn!("Cannot send difficulty of AI '{}' to none.", bot.ai_name);
-		// FUTURE let the sender know somehow?
+		for client in clients.into_iter()
+		{
+			client.handle.send(Message::ClaimDifficulty {
+				slot: Some(bot.slot),
+				difficulty,
+			});
+		}
 		return;
 	}
 
@@ -1446,6 +1464,7 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 	if lobby.num_players >= lobby.max_players
 	{
 		warn!("Cannot add bot to lobby {}: lobby full", lobby.id);
+		// FUTURE let the sender know somehow?
 		return;
 	}
 
@@ -1453,6 +1472,7 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 		if lobby.open_botslots.is_empty()
 		{
 			warn!("Cannot add bot to lobby {}: all slots taken", lobby.id);
+			// FUTURE let the sender know somehow?
 			return;
 		}
 		let mut rng = rand::thread_rng();
@@ -2064,7 +2084,7 @@ async fn become_custom_lobby(
 async fn pick_timer(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
-	timer_in_seconds: u32,
+	mut timer_in_seconds: u32,
 ) -> Result<(), Error>
 {
 	// FUTURE check if client is host
@@ -2078,17 +2098,15 @@ async fn pick_timer(
 	}
 	else if lobby.lobby_type == LobbyType::OneVsOne
 	{
-		warn!("Refusing a change in lobby {} because OneVsOne.", lobby.id);
-		// FUTURE let the sender know somehow?
-		return Ok(());
+		warn!("Ignoring a change in lobby {} because OneVsOne.", lobby.id);
+		timer_in_seconds = lobby.timer_in_seconds;
 	}
 
 	// Not much need for extreme validation. Current hard cap 5 minutes.
 	if timer_in_seconds > 300
 	{
-		warn!("Refusing excessive timer value in lobby {}.", lobby.id);
-		// FUTURE let the sender know somehow?
-		return Ok(());
+		warn!("Capping excessive timer value in lobby {}.", lobby.id);
+		timer_in_seconds = 300;
 	}
 
 	lobby.timer_in_seconds = timer_in_seconds;
@@ -2122,7 +2140,13 @@ async fn pick_ruleset(
 	else if lobby.lobby_type == LobbyType::OneVsOne
 	{
 		warn!("Cannot pick ruleset in onevsone lobby {}.", lobby.id);
-		// FUTURE let the sender know somehow?
+		let message = Message::PickRuleset {
+			ruleset_name: lobby.ruleset_name.clone(),
+		};
+		for client in clients.iter_mut()
+		{
+			client.handle.send(message.clone());
+		}
 		return Ok(());
 	}
 
