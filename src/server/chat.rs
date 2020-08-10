@@ -481,19 +481,23 @@ fn do_init(
 			{
 				AvailabilityStatus::Available =>
 				{}
-				AvailabilityStatus::InLobby { lobby_id } =>
+				AvailabilityStatus::InLobby { lobby_id: _ } =>
 				{
+					// Send JoinLobby without lobby_id because the lobby itself
+					// also sends JoinLobby messages that have more importance.
 					handle.send(Message::JoinLobby {
 						username: Some(client.username.clone()),
-						lobby_id: Some(lobby_id),
+						lobby_id: None,
 						invite: None,
 					});
 				}
 				AvailabilityStatus::InGame { lobby_id, role } =>
 				{
+					// Send JoinLobby without lobby_id because the lobby itself
+					// also sends JoinLobby messages that have more importance.
 					handle.send(Message::JoinLobby {
 						username: Some(client.username.clone()),
-						lobby_id: Some(lobby_id),
+						lobby_id: None,
 						invite: None,
 					});
 					handle.send(Message::InGame {
@@ -739,8 +743,10 @@ fn handle_joined_lobby(
 
 	client.availability_status = AvailabilityStatus::InLobby { lobby_id };
 
+	// Send JoinLobby without lobby_id because the lobby itself
+	// also sends JoinLobby messages that have more importance.
 	let message = Message::JoinLobby {
-		lobby_id: Some(lobby_id),
+		lobby_id: None,
 		username: Some(client.username.clone()),
 		invite: None,
 	};
@@ -752,7 +758,7 @@ fn handle_joined_lobby(
 
 fn handle_left_lobby(
 	clients: &mut Vec<Client>,
-	lobby_id: Keycode,
+	_lobby_id: Keycode,
 	client_id: Keycode,
 )
 {
@@ -764,8 +770,10 @@ fn handle_left_lobby(
 
 	client.availability_status = AvailabilityStatus::Available;
 
+	// Send LeaveLobby without lobby_id because the lobby itself
+	// also sends LeaveLobby messages that have more importance.
 	let message = Message::LeaveLobby {
-		lobby_id: Some(lobby_id),
+		lobby_id: None,
 		username: Some(client.username.clone()),
 	};
 	for client in clients.iter_mut()

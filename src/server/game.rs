@@ -278,7 +278,7 @@ pub async fn run(
 	}
 	let metadata = automaton::Metadata {
 		map_name: map_name.clone(),
-		map_metadata: map_metadata,
+		map_metadata: map_metadata.clone(),
 		is_online: true,
 		planning_time_in_seconds_or_zero: planning_time_in_seconds.unwrap_or(0),
 		players: metadata_players,
@@ -369,6 +369,8 @@ pub async fn run(
 		challenge,
 		should_mention_on_discord,
 		num_bots: bots.len(),
+		map_name,
+		map_metadata,
 		ruleset_name,
 		planning_time_in_seconds,
 		initial_messages,
@@ -449,6 +451,8 @@ struct LobbyInfo
 	challenge: Option<ChallengeId>,
 	should_mention_on_discord: bool,
 	num_bots: usize,
+	map_name: String,
+	map_metadata: map::Metadata,
 	ruleset_name: String,
 	planning_time_in_seconds: Option<u32>,
 	description_metadata: LobbyMetadata,
@@ -1193,12 +1197,10 @@ async fn handle_join(
 		Err(error) => return Err(error),
 	}
 
-	let message = Message::JoinLobby {
-		lobby_id: Some(lobby.id),
-		username: Some(client_username),
-		invite: None,
+	let update = chat::Update::JoinedLobby {
+		client_id,
+		lobby_id: lobby.id,
 	};
-	let update = chat::Update::Msg(message);
 	general_chat.send(update).await?;
 
 	Ok(())
@@ -1288,6 +1290,23 @@ fn do_join(
 		other.handle.send(message.clone());
 	}
 	client_handle.send(message);
+
+	// Tell the client certain pieces of lobby configuration so that the
+	// Discord presence has the right info.
+	client_handle.send(Message::ListMap {
+		map_name: lobby.map_name.clone(),
+		metadata: lobby.map_metadata.clone(),
+	});
+	client_handle.send(Message::PickMap {
+		map_name: lobby.map_name.clone(),
+	});
+	// TODO tell them the recording if this is a replay lobby
+	if let Some(_id) = lobby.challenge
+	{
+		// FUTURE this should be the challenge key of _id
+		let challenge_key = challenge::get_current_key();
+		client_handle.send(Message::PickChallenge { challenge_key });
+	}
 
 	// Describe the lobby to the client so that Discord presence is updated.
 	let message = Message::ListLobby {
