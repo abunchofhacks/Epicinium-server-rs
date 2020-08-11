@@ -1041,6 +1041,22 @@ async fn handle_message(
 		{
 			Some(ref general_chat) =>
 			{
+				if let Some(metadata) = metadata
+				{
+					if metadata.lobby_type == lobby::LobbyType::Replay
+					{
+						info!("Replay lobbies are disabled");
+						let message = Message::Chat {
+							content: "Replays are not available at the moment."
+								.to_string(),
+							sender: Some("server".to_string()),
+							target: ChatTarget::General,
+						};
+						client.sendbuffer.try_send(message)?;
+						return Ok(None);
+					}
+				}
+
 				let mut lobby = lobby::create(
 					&mut client.lobby_authority,
 					client.rating_database.clone(),
