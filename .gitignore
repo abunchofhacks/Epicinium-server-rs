@@ -27,6 +27,7 @@
 # private keys
 /keys/*private*
 !/keys/dummy_private.pem
+/keys/*steam*
 
 # core dumps
 /*core*
