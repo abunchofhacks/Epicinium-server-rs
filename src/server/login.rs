@@ -22,7 +22,7 @@ use enumset::*;
 #[derive(Debug)]
 pub struct Request
 {
-	pub account_id_as_string: String,
+	pub account_identifier: String,
 	pub token: String,
 }
 
@@ -138,11 +138,17 @@ impl Server
 	}
 }
 
+const STEAM_APP_ID: u32 = 1286730;
+
 struct Connection
 {
 	http: http::Client,
+
 	validate_session_url: http::Url,
 	current_challenge_key: String,
+
+	steam_web_key: String,
+	steam_ticket_url: http::Url,
 }
 
 impl Connection
@@ -167,19 +173,45 @@ impl Connection
 		);
 		let http = http::Client::builder().user_agent(user_agent).build()?;
 
+		// TODO read from file
+		let steam_web_key = "9AEC9FF2DCCE17637BBD14B700DD54BB".to_string();
+
+		// TODO https://partner.steam-api.com
+		let steam_base_url = "https://api.steampowered.com";
+		let steam_base_url = http::Url::parse(steam_base_url)?;
+		let mut steam_ticket_url = steam_base_url.clone();
+		steam_ticket_url.set_path("SteamUserAuth/AuthenticateUserTicket/v1/");
+
 		Ok(Connection {
 			http,
 			validate_session_url,
 			current_challenge_key: challenge::get_current_key(),
+			steam_web_key,
+			steam_ticket_url,
 		})
 	}
 
 	async fn login(&self, request: Request)
 		-> Result<LoginData, ResponseStatus>
 	{
+		if request.account_identifier == "!steam"
+		{
+			self.login_with_steam(request).await
+		}
+		else
+		{
+			self.login_live(request).await
+		}
+	}
+
+	async fn login_live(
+		&self,
+		request: Request,
+	) -> Result<LoginData, ResponseStatus>
+	{
 		let payload = json!({
 			"token": request.token,
-			"id": request.account_id_as_string,
+			"id": request.account_identifier,
 			"challenge_key": self.current_challenge_key,
 		});
 
@@ -221,6 +253,41 @@ impl Connection
 			Err(response.status)
 		}
 	}
+
+	async fn login_with_steam(
+		&self,
+		request: Request,
+	) -> Result<LoginData, ResponseStatus>
+	{
+		let payload = SteamAuthenticateUserTicketRequest {
+			key: self.steam_web_key.clone(),
+			app_id: STEAM_APP_ID,
+			ticket: request.token,
+		};
+
+		let response = self
+			.http
+			.post(self.steam_ticket_url.clone())
+			.form(&payload)
+			.send()
+			.await
+			.map_err(|error| {
+				error!("Login failed: {:?}", error);
+
+				ResponseStatus::ConnectionFailed
+			})?
+			.error_for_status()
+			.map_err(|error| {
+				error!("Login failed: {:?}", error);
+
+				ResponseStatus::ConnectionFailed
+			})?;
+
+		debug!("Received: {:?}", response);
+
+		// TODO implement
+		Err(ResponseStatus::UnknownError)
+	}
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -230,4 +297,15 @@ struct LoginResponse
 
 	#[serde(flatten)]
 	data: Option<LoginData>,
+}
+
+#[derive(Debug, Serialize)]
+struct SteamAuthenticateUserTicketRequest
+{
+	key: String,
+
+	#[serde(rename = "appid")]
+	app_id: u32,
+
+	ticket: String,
 }

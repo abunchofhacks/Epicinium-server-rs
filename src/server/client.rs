@@ -881,7 +881,7 @@ async fn handle_message(
 		Message::JoinServer {
 			status: None,
 			content: Some(token),
-			sender: Some(account_id_as_string),
+			sender: Some(account_identifier),
 			metadata: _,
 		} =>
 		{
@@ -901,7 +901,7 @@ async fn handle_message(
 			{
 				let request = login::Request {
 					token,
-					account_id_as_string,
+					account_identifier,
 				};
 				joining_server(client, request)?;
 			}
