@@ -1,5 +1,7 @@
 /* Log */
 
+use epicinium_lib;
+
 use serde_derive::{Deserialize, Serialize};
 
 pub fn trace_filename(logname: &str) -> String
@@ -63,6 +65,17 @@ pub fn start(logname: &str, level: Level) -> Result<(), fern::InitError>
 				.chain(fern::log_reopen(&errorlogfilename, sighup)?),
 		)
 		.apply()?;
+
+	let severity = match level
+	{
+		Level::Error => epicinium_lib::log::Severity::Error,
+		Level::Warn => epicinium_lib::log::Severity::Warning,
+		Level::Info => epicinium_lib::log::Severity::Info,
+		Level::Debug => epicinium_lib::log::Severity::Debug,
+		Level::Verbose => epicinium_lib::log::Severity::Verbose,
+	};
+	epicinium_lib::log_initialize(severity);
+
 	Ok(())
 }
 

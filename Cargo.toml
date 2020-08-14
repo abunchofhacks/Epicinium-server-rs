@@ -6,6 +6,7 @@ edition = "2018"
 publish = false
 
 [dependencies]
+epicinium_lib = { version = "*", path = "../epicinium_lib" }
 openssl = { version = "0.10", features = ["vendored"] }
 rlimit = "*"
 serde = "*"

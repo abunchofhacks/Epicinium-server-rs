@@ -1,6 +1,3 @@
 /* Order */
 
-use serde_derive::{Deserialize, Serialize};
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct Order(serde_json::Value);
+pub use epicinium_lib::logic::order::Order;

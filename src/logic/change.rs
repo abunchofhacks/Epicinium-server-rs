@@ -1,31 +1,4 @@
 /* Change */
 
-use crate::logic::player::*;
-use crate::logic::vision::*;
-
-use serde_derive::{Deserialize, Serialize};
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct Change(serde_json::Value);
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ChangeSet(Vec<ChangeSetItem>);
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ChangeSetItem
-{
-	change: Change,
-	vision: Vision,
-}
-
-impl ChangeSet
-{
-	pub fn get(&self, player: PlayerColor) -> Vec<Change>
-	{
-		self.0
-			.iter()
-			.filter(|&item| item.vision.contains(player))
-			.map(|item| item.change.clone())
-			.collect()
-	}
-}
+pub use epicinium_lib::logic::change::Change;
+pub use epicinium_lib::logic::change::ChangeSet;

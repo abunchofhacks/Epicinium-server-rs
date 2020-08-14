@@ -1,6 +1,6 @@
 /* Ruleset */
 
-use crate::logic::epicinium;
+pub use epicinium_lib::error::InitializationError;
 
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
@@ -11,17 +11,17 @@ use serde_json;
 
 pub fn initialize_collection() -> Result<(), InitializationError>
 {
-	epicinium::initialize_ruleset_collection()
+	epicinium_lib::initialize_ruleset_collection()
 }
 
 pub fn current() -> String
 {
-	epicinium::name_current_ruleset()
+	epicinium_lib::name_current_ruleset()
 }
 
 pub fn exists(name: &str) -> bool
 {
-	epicinium::ruleset_exists(name)
+	epicinium_lib::ruleset_exists(name)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,22 +42,3 @@ fn filename(name: &str) -> String
 {
 	format!("rulesets/{}.json", name)
 }
-
-#[derive(Debug)]
-pub enum InitializationError
-{
-	Failed,
-}
-
-impl std::fmt::Display for InitializationError
-{
-	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
-	{
-		match self
-		{
-			InitializationError::Failed => write!(f, "initialization failed"),
-		}
-	}
-}
-
-impl std::error::Error for InitializationError {}

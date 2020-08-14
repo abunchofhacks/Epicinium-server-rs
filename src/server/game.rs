@@ -3,7 +3,6 @@
 use crate::common::keycode::*;
 use crate::logic::ai;
 use crate::logic::automaton;
-use crate::logic::automaton as metadata;
 use crate::logic::automaton::Automaton;
 use crate::logic::challenge;
 use crate::logic::challenge::ChallengeId;
@@ -255,7 +254,7 @@ pub async fn run(
 	let mut metadata_players = Vec::new();
 	for player in &players
 	{
-		metadata_players.push(metadata::Player {
+		metadata_players.push(automaton::PlayerMetadata {
 			color: player.color,
 			username: player.username.clone(),
 		});
@@ -263,7 +262,7 @@ pub async fn run(
 	let mut metadata_watchers = Vec::new();
 	for watcher in &watchers
 	{
-		metadata_watchers.push(metadata::Watcher {
+		metadata_watchers.push(automaton::WatcherMetadata {
 			username: watcher.username.clone(),
 		});
 	}
@@ -271,7 +270,7 @@ pub async fn run(
 	for bot in &mut bots
 	{
 		let ai_metadata = bot.ai.metadata()?;
-		metadata_bots.push(metadata::Bot {
+		metadata_bots.push(automaton::BotMetadata {
 			color: bot.color,
 			ai_metadata,
 		});

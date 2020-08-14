@@ -75,7 +75,6 @@ fn main() -> std::result::Result<(), anyhow::Error>
 	let logname = settings.logname.clone().unwrap_or("rust".to_string());
 	let loglevel = settings.loglevel.unwrap_or(epicinium::log::Level::Verbose);
 	epicinium::log::start(&logname, loglevel)?;
-	epicinium::logic::log_initialize(loglevel);
 	let log_setup = epicinium::logrotate::setup(&logname)?;
 
 	let currentversion = Version::current();

@@ -1,3 +1,3 @@
 /* Difficulty */
 
-pub use crate::logic::epicinium::Difficulty;
+pub use epicinium_lib::logic::difficulty::Difficulty;
