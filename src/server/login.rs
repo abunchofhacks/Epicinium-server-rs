@@ -10,6 +10,7 @@ use crate::server::settings::*;
 
 use log::*;
 
+use serde_aux::field_attributes::deserialize_number_from_string;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -50,6 +51,22 @@ pub enum Unlock
 	Dev,
 	BetaAccess,
 	Guest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SteamId
+{
+	#[serde(deserialize_with = "deserialize_number_from_string")]
+	as_u64: u64,
+}
+
+impl std::fmt::Display for SteamId
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
+	{
+		write!(f, "{}", self.as_u64)
+	}
 }
 
 pub struct Server
@@ -180,7 +197,7 @@ impl Connection
 		let steam_base_url = "https://api.steampowered.com";
 		let steam_base_url = http::Url::parse(steam_base_url)?;
 		let mut steam_ticket_url = steam_base_url.clone();
-		steam_ticket_url.set_path("SteamUserAuth/AuthenticateUserTicket/v1/");
+		steam_ticket_url.set_path("ISteamUserAuth/AuthenticateUserTicket/v1/");
 
 		Ok(Connection {
 			http,
@@ -259,16 +276,16 @@ impl Connection
 		request: Request,
 	) -> Result<LoginData, ResponseStatus>
 	{
-		let payload = SteamAuthenticateUserTicketRequest {
-			key: self.steam_web_key.clone(),
+		let payload = SteamAuthenticateUserTicketParameters {
 			app_id: STEAM_APP_ID,
 			ticket: request.token,
 		};
 
-		let response = self
+		let response: SteamAuthenticateUserTicketResponse = self
 			.http
-			.post(self.steam_ticket_url.clone())
-			.form(&payload)
+			.get(self.steam_ticket_url.clone())
+			.header("x-webapi-key", self.steam_web_key.clone())
+			.query(&payload)
 			.send()
 			.await
 			.map_err(|error| {
@@ -281,11 +298,34 @@ impl Connection
 				error!("Login failed: {:?}", error);
 
 				ResponseStatus::ConnectionFailed
+			})?
+			.json()
+			.await
+			.map_err(|error| {
+				error!("Received malformed response from Steam: {}", error);
+				ResponseStatus::ResponseMalformed
 			})?;
 
-		debug!("Received: {:?}", response);
+		debug!("Got a response from Steam: {:?}", response);
 
-		// TODO implement
+		let data = response.inner.params;
+		if data.is_banned_by_vac || data.is_banned_by_publisher
+		{
+			info!("Refusing user with banned Steam ID {}.", data.steam_id);
+			// TODO notify login-server to flag this account as banned?
+			return Err(ResponseStatus::AccountDisabled);
+		}
+		else if data.result != SteamResult::Ok
+		{
+			warn!("Unknown 'result' in {:?}", data);
+			return Err(ResponseStatus::UnknownError);
+		}
+
+		//let steam_id = data.steam_id;
+		// TOOD get persona name from PlayerSummaries
+		// TODO CheckAppOwnership
+
+		// TODO create account and epicinium_user if necessary
 		Err(ResponseStatus::UnknownError)
 	}
 }
@@ -300,12 +340,48 @@ struct LoginResponse
 }
 
 #[derive(Debug, Serialize)]
-struct SteamAuthenticateUserTicketRequest
+struct SteamAuthenticateUserTicketParameters
 {
-	key: String,
-
 	#[serde(rename = "appid")]
 	app_id: u32,
 
 	ticket: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SteamAuthenticateUserTicketResponse
+{
+	#[serde(rename = "response")]
+	inner: SteamAuthenticateUserTicketResponseInner,
+}
+
+#[derive(Debug, Deserialize)]
+struct SteamAuthenticateUserTicketResponseInner
+{
+	params: SteamAuthenticateUserTicketResponseInnerParams,
+}
+
+#[derive(Debug, Deserialize)]
+struct SteamAuthenticateUserTicketResponseInnerParams
+{
+	result: SteamResult,
+
+	#[serde(rename = "steamid")]
+	steam_id: SteamId,
+
+	#[serde(rename = "ownersteamid")]
+	owner_steam_id: SteamId,
+
+	#[serde(rename = "vacbanned")]
+	is_banned_by_vac: bool,
+
+	#[serde(rename = "publisherbanned")]
+	is_banned_by_publisher: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+enum SteamResult
+{
+	#[serde(rename = "OK")]
+	Ok,
 }
