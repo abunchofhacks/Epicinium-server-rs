@@ -289,10 +289,17 @@ impl Connection
 		let steam_id = self.get_steam_id(request).await?;
 
 		let persona_name = self.get_steam_persona_name(steam_id).await?;
-
-		debug!("Got {} aka '{}'.", steam_id, persona_name);
+		if !is_valid_username(&persona_name)
+		{
+			error!("Non-strict usernames are not yet supported.");
+			// TODO support UTF8 usernames
+			return Err(ResponseStatus::UnknownError);
+		}
+		let username = persona_name;
 
 		// TODO CheckAppOwnership
+
+		debug!("Got {} aka '{}'.", steam_id, username);
 
 		// TODO create account and epicinium_user if necessary
 		Err(ResponseStatus::UnknownError)
@@ -486,4 +493,33 @@ enum SteamResult
 {
 	#[serde(rename = "OK")]
 	Ok,
+}
+
+fn is_valid_username(username: &str) -> bool
+{
+	username.len() >= 3
+		&& username.len() <= 36
+		&& username.is_ascii()
+		&& username.chars().all(|x| is_valid_username_char(x))
+}
+
+fn is_valid_username_char(x: char) -> bool
+{
+	match x
+	{
+		// not space
+		// not !"#$%'()*+,
+		'-' | '.' => true,
+		// not /
+		'0'..='9' => true,
+		// not :;<=>?@
+		'a'..='z' => true,
+		// not [\]^
+		'_' => true,
+		// not `
+		'A'..='Z' => true,
+		// not {|}
+		'~' => true,
+		_ => false,
+	}
 }
