@@ -12,7 +12,6 @@ use log::*;
 
 use serde_aux::field_attributes::deserialize_number_from_string;
 use serde_derive::{Deserialize, Serialize};
-use serde_json::json;
 
 use anyhow::anyhow;
 
@@ -162,6 +161,7 @@ struct Connection
 	http: http::Client,
 
 	validate_session_url: http::Url,
+	confirm_steam_user_url: http::Url,
 	current_challenge_key: String,
 
 	steam_web_key: String,
@@ -179,8 +179,17 @@ impl Connection
 			.ok_or_else(|| anyhow!("missing 'login_server'"))?;
 		let base_url = http::Url::parse(url)?;
 
-		let mut validate_session_url = base_url;
-		validate_session_url.set_path("validate_session.php");
+		let validate_session_url = {
+			let mut url = base_url.clone();
+			url.set_path("validate_session.php");
+			url
+		};
+
+		let confirm_steam_user_url = {
+			let mut url = base_url.clone();
+			url.set_path("api/v1/confirm_steam_user");
+			url
+		};
 
 		let platform = Platform::current();
 		let platformstring = serde_plain::to_string(&platform)?;
@@ -211,6 +220,7 @@ impl Connection
 		Ok(Connection {
 			http,
 			validate_session_url,
+			confirm_steam_user_url,
 			current_challenge_key: challenge::get_current_key(),
 			steam_web_key,
 			steam_ticket_url,
@@ -236,11 +246,11 @@ impl Connection
 		request: Request,
 	) -> Result<LoginData, ResponseStatus>
 	{
-		let payload = json!({
-			"token": request.token,
-			"id": request.account_identifier,
-			"challenge_key": self.current_challenge_key,
-		});
+		let payload = ValidateSessionPayload {
+			session_token: request.token,
+			account_id_as_string: request.account_identifier,
+			challenge_key: self.current_challenge_key.clone(),
+		};
 
 		let response: LoginResponse = self
 			.http
@@ -250,13 +260,11 @@ impl Connection
 			.await
 			.map_err(|error| {
 				error!("Login failed: {:?}", error);
-
 				ResponseStatus::ConnectionFailed
 			})?
 			.error_for_status()
 			.map_err(|error| {
 				error!("Login failed: {:?}", error);
-
 				ResponseStatus::ConnectionFailed
 			})?
 			.json()
@@ -295,14 +303,13 @@ impl Connection
 			// TODO support UTF8 usernames
 			return Err(ResponseStatus::UnknownError);
 		}
-		let username = persona_name;
+
+		let mut data = self.confirm_steam_user(steam_id, persona_name).await?;
 
 		// TODO CheckAppOwnership
+		data.unlocks.insert(Unlock::BetaAccess);
 
-		debug!("Got {} aka '{}'.", steam_id, username);
-
-		// TODO create account and epicinium_user if necessary
-		Err(ResponseStatus::UnknownError)
+		Ok(data)
 	}
 
 	async fn get_steam_id(
@@ -324,13 +331,11 @@ impl Connection
 			.await
 			.map_err(|error| {
 				error!("Login failed: {:?}", error);
-
 				ResponseStatus::ConnectionFailed
 			})?
 			.error_for_status()
 			.map_err(|error| {
 				error!("Login failed: {:?}", error);
-
 				ResponseStatus::ConnectionFailed
 			})?
 			.json()
@@ -376,13 +381,11 @@ impl Connection
 			.await
 			.map_err(|error| {
 				error!("Login failed: {:?}", error);
-
 				ResponseStatus::ConnectionFailed
 			})?
 			.error_for_status()
 			.map_err(|error| {
 				error!("Login failed: {:?}", error);
-
 				ResponseStatus::ConnectionFailed
 			})?
 			.json()
@@ -406,6 +409,78 @@ impl Connection
 
 		Ok(summary.persona_name)
 	}
+
+	async fn confirm_steam_user(
+		&self,
+		steam_id: SteamId,
+		steam_persona_name: String,
+	) -> Result<LoginData, ResponseStatus>
+	{
+		let payload = ConfirmSteamUserPayload {
+			steam_id,
+			steam_persona_name,
+			challenge_key: self.current_challenge_key.clone(),
+		};
+
+		let response: LoginResponse = self
+			.http
+			.post(self.confirm_steam_user_url.clone())
+			.json(&payload)
+			.send()
+			.await
+			.map_err(|error| {
+				error!("Login failed: {:?}", error);
+				ResponseStatus::ConnectionFailed
+			})?
+			.error_for_status()
+			.map_err(|error| {
+				error!("Login failed: {:?}", error);
+				ResponseStatus::ConnectionFailed
+			})?
+			.json()
+			.await
+			.map_err(|error| {
+				error!(
+					"Received malformed response from login server: {}",
+					error
+				);
+				ResponseStatus::ResponseMalformed
+			})?;
+
+		debug!("Got a response from login server: {:?}", response);
+
+		if response.status == ResponseStatus::Success
+		{
+			response.data.ok_or(ResponseStatus::ResponseMalformed)
+		}
+		else
+		{
+			Err(response.status)
+		}
+	}
+}
+
+#[derive(Debug, Serialize)]
+struct ValidateSessionPayload
+{
+	#[serde(rename = "token")]
+	session_token: String,
+
+	#[serde(rename = "id")]
+	account_id_as_string: String,
+
+	challenge_key: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ConfirmSteamUserPayload
+{
+	#[serde(rename = "steam_id_as_string")]
+	steam_id: SteamId,
+
+	steam_persona_name: String,
+
+	challenge_key: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

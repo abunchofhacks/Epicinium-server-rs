@@ -430,6 +430,8 @@ pub enum ResponseStatus
 	KeyTaken = 6,  // only used for key activation (for now)
 	IpBlocked = 7, // only used for key activation (for now)
 	KeyRequired = 8,
+	EmailUnverified = 9,
+	UsernameRequired = 10,
 
 	DatabaseError = 94,
 	MethodInvalid = 95,
