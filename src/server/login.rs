@@ -166,6 +166,7 @@ struct Connection
 
 	steam_web_key: String,
 	steam_ticket_url: http::Url,
+	steam_player_summaries_url: http::Url,
 }
 
 impl Connection
@@ -196,8 +197,16 @@ impl Connection
 		// TODO https://partner.steam-api.com
 		let steam_base_url = "https://api.steampowered.com";
 		let steam_base_url = http::Url::parse(steam_base_url)?;
-		let mut steam_ticket_url = steam_base_url.clone();
-		steam_ticket_url.set_path("ISteamUserAuth/AuthenticateUserTicket/v1/");
+		let steam_ticket_url = {
+			let mut url = steam_base_url.clone();
+			url.set_path("ISteamUserAuth/AuthenticateUserTicket/v1/");
+			url
+		};
+		let steam_player_summaries_url = {
+			let mut url = steam_base_url.clone();
+			url.set_path("ISteamUser/GetPlayerSummaries/v2/");
+			url
+		};
 
 		Ok(Connection {
 			http,
@@ -205,6 +214,7 @@ impl Connection
 			current_challenge_key: challenge::get_current_key(),
 			steam_web_key,
 			steam_ticket_url,
+			steam_player_summaries_url,
 		})
 	}
 
@@ -276,6 +286,23 @@ impl Connection
 		request: Request,
 	) -> Result<LoginData, ResponseStatus>
 	{
+		let steam_id = self.get_steam_id(request).await?;
+
+		let persona_name = self.get_steam_persona_name(steam_id).await?;
+
+		debug!("Got {} aka '{}'.", steam_id, persona_name);
+
+		// TODO CheckAppOwnership
+
+		// TODO create account and epicinium_user if necessary
+		Err(ResponseStatus::UnknownError)
+	}
+
+	async fn get_steam_id(
+		&self,
+		request: Request,
+	) -> Result<SteamId, ResponseStatus>
+	{
 		let payload = SteamAuthenticateUserTicketParameters {
 			app_id: STEAM_APP_ID,
 			ticket: request.token,
@@ -321,12 +348,56 @@ impl Connection
 			return Err(ResponseStatus::UnknownError);
 		}
 
-		//let steam_id = data.steam_id;
-		// TOOD get persona name from PlayerSummaries
-		// TODO CheckAppOwnership
+		Ok(data.steam_id)
+	}
 
-		// TODO create account and epicinium_user if necessary
-		Err(ResponseStatus::UnknownError)
+	async fn get_steam_persona_name(
+		&self,
+		steam_id: SteamId,
+	) -> Result<String, ResponseStatus>
+	{
+		let payload = SteamGetPlayerSummariesParameters {
+			steam_ids_as_string: format!("{}", steam_id),
+		};
+
+		let response: SteamGetPlayerSummariesResponse = self
+			.http
+			.get(self.steam_player_summaries_url.clone())
+			.header("x-webapi-key", self.steam_web_key.clone())
+			.query(&payload)
+			.send()
+			.await
+			.map_err(|error| {
+				error!("Login failed: {:?}", error);
+
+				ResponseStatus::ConnectionFailed
+			})?
+			.error_for_status()
+			.map_err(|error| {
+				error!("Login failed: {:?}", error);
+
+				ResponseStatus::ConnectionFailed
+			})?
+			.json()
+			.await
+			.map_err(|error| {
+				error!("Received malformed response from Steam: {}", error);
+				ResponseStatus::ResponseMalformed
+			})?;
+
+		debug!("Got a response from Steam: {:?}", response);
+
+		let summary = response
+			.inner
+			.players
+			.into_iter()
+			.find(|x| x.steam_id == steam_id)
+			.ok_or_else(|| {
+				error!("Received malformed response from Steam: no summary");
+				ResponseStatus::ResponseMalformed
+			})?;
+
+		Ok(summary.persona_name)
 	}
 }
 
@@ -377,6 +448,37 @@ struct SteamAuthenticateUserTicketResponseInnerParams
 
 	#[serde(rename = "publisherbanned")]
 	is_banned_by_publisher: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct SteamGetPlayerSummariesParameters
+{
+	#[serde(rename = "steamids")]
+	steam_ids_as_string: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SteamGetPlayerSummariesResponse
+{
+	#[serde(rename = "response")]
+	inner: SteamGetPlayerSummariesResponseInner,
+}
+
+#[derive(Debug, Deserialize)]
+struct SteamGetPlayerSummariesResponseInner
+{
+	players: Vec<SteamPlayerSummary>,
+}
+
+// Omitting certain extra fields.
+#[derive(Debug, Deserialize)]
+struct SteamPlayerSummary
+{
+	#[serde(rename = "steamid")]
+	steam_id: SteamId,
+
+	#[serde(rename = "personaname")]
+	persona_name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
