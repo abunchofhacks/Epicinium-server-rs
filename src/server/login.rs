@@ -24,6 +24,7 @@ pub struct Request
 {
 	pub account_identifier: String,
 	pub token: String,
+	pub metadata: JoinMetadata,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -233,7 +234,7 @@ impl Connection
 	{
 		if request.account_identifier == "!steam"
 		{
-			self.login_with_steam(request).await
+			self.login_with_steam(request.token, request.metadata).await
 		}
 		else
 		{
@@ -291,20 +292,25 @@ impl Connection
 
 	async fn login_with_steam(
 		&self,
-		request: Request,
+		ticket: String,
+		metadata: JoinMetadata,
 	) -> Result<LoginData, ResponseStatus>
 	{
-		let steam_id = self.get_steam_id(request).await?;
+		let steam_id = self.get_steam_id(ticket).await?;
 
-		let persona_name = self.get_steam_persona_name(steam_id).await?;
-		if !is_valid_username(&persona_name)
+		let username = match metadata.desired_username
 		{
-			error!("Non-strict usernames are not yet supported.");
+			Some(username) => username,
+			None => self.get_steam_persona_name(steam_id).await?,
+		};
+		if !is_valid_username(&username)
+		{
+			warn!("Rejecting invalid desired username '{}'.", username);
 			// TODO support UTF8 usernames
-			return Err(ResponseStatus::UnknownError);
+			return Err(ResponseStatus::UsernameRequired);
 		}
 
-		let mut data = self.confirm_steam_user(steam_id, persona_name).await?;
+		let mut data = self.confirm_steam_user(steam_id, username).await?;
 
 		// TODO CheckAppOwnership
 		data.unlocks.insert(Unlock::BetaAccess);
@@ -314,12 +320,12 @@ impl Connection
 
 	async fn get_steam_id(
 		&self,
-		request: Request,
+		ticket: String,
 	) -> Result<SteamId, ResponseStatus>
 	{
 		let payload = SteamAuthenticateUserTicketParameters {
 			app_id: STEAM_APP_ID,
-			ticket: request.token,
+			ticket,
 		};
 
 		let response: SteamAuthenticateUserTicketResponse = self
@@ -413,12 +419,12 @@ impl Connection
 	async fn confirm_steam_user(
 		&self,
 		steam_id: SteamId,
-		steam_persona_name: String,
+		desired_username: String,
 	) -> Result<LoginData, ResponseStatus>
 	{
 		let payload = ConfirmSteamUserPayload {
 			steam_id,
-			steam_persona_name,
+			desired_username,
 			challenge_key: self.current_challenge_key.clone(),
 		};
 
@@ -478,7 +484,7 @@ struct ConfirmSteamUserPayload
 	#[serde(rename = "steam_id_as_string")]
 	steam_id: SteamId,
 
-	steam_persona_name: String,
+	desired_username: String,
 
 	challenge_key: String,
 }

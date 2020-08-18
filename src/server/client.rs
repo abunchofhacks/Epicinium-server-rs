@@ -690,7 +690,7 @@ async fn handle_update(
 								status: Some(ResponseStatus::UnknownError),
 								content: None,
 								sender: None,
-								metadata: None,
+								metadata: Default::default(),
 							};
 							client.sendbuffer.try_send(message)?;
 							Ok(None)
@@ -882,7 +882,7 @@ async fn handle_message(
 			status: None,
 			content: Some(token),
 			sender: Some(account_identifier),
-			metadata: _,
+			metadata: JoinMetadataOrTagMetadata::JoinMetadata(metadata),
 		} =>
 		{
 			let curver = Version::current();
@@ -902,6 +902,7 @@ async fn handle_message(
 				let request = login::Request {
 					token,
 					account_identifier,
+					metadata,
 				};
 				joining_server(client, request)?;
 			}
@@ -1695,7 +1696,7 @@ fn joining_server(
 				status: Some(ResponseStatus::ConnectionFailed),
 				content: None,
 				sender: None,
-				metadata: None,
+				metadata: Default::default(),
 			};
 			client.sendbuffer.try_send(message)?;
 			Ok(())

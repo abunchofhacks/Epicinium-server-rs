@@ -226,7 +226,7 @@ struct Client
 {
 	id: Keycode,
 	username: String,
-	join_metadata: Option<JoinMetadata>,
+	join_metadata: JoinMetadataOrTagMetadata,
 	handle: client::Handle,
 	rating_data: watch::Receiver<rating::Data>,
 	availability_status: AvailabilityStatus,
@@ -268,7 +268,7 @@ impl Ghostbuster
 			status: Some(ResponseStatus::UsernameTaken),
 			content: None,
 			sender: None,
-			metadata: None,
+			metadata: Default::default(),
 		};
 		self.handle.send(message);
 	}
@@ -358,7 +358,7 @@ fn handle_join(
 		status: None,
 		content: Some(newcomer.username.clone()),
 		sender: None,
-		metadata: newcomer.join_metadata,
+		metadata: newcomer.join_metadata.clone(),
 	};
 	newcomer.handle.send(message.clone());
 
@@ -417,9 +417,11 @@ fn welcome_client(_client: &mut Client)
 	// No welcome message at the moment.
 }
 
-fn generate_join_metadata(unlocks: &EnumSet<Unlock>) -> Option<JoinMetadata>
+fn generate_join_metadata(
+	unlocks: &EnumSet<Unlock>,
+) -> JoinMetadataOrTagMetadata
 {
-	let mut metadata: JoinMetadata = Default::default();
+	let mut metadata: TagMetadata = Default::default();
 	if unlocks.contains(Unlock::Dev)
 	{
 		metadata.dev = true;
@@ -429,14 +431,7 @@ fn generate_join_metadata(unlocks: &EnumSet<Unlock>) -> Option<JoinMetadata>
 		metadata.guest = true;
 	}
 
-	if metadata == Default::default()
-	{
-		None
-	}
-	else
-	{
-		Some(metadata)
-	}
+	JoinMetadataOrTagMetadata::TagMetadata(metadata)
 }
 
 fn do_init(
@@ -466,7 +461,7 @@ fn do_init(
 				status: None,
 				content: Some(client.username.clone()),
 				sender: None,
-				metadata: client.join_metadata,
+				metadata: client.join_metadata.clone(),
 			});
 
 			let rating_data: rating::Data = *client.rating_data.borrow();

@@ -41,7 +41,7 @@ pub enum Message
 		sender: Option<String>,
 
 		#[serde(default, skip_serializing_if = "is_zero")]
-		metadata: Option<JoinMetadata>,
+		metadata: JoinMetadataOrTagMetadata,
 	},
 	LeaveServer
 	{
@@ -386,8 +386,31 @@ pub enum UsernameOrSlot
 	Username(String),
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum JoinMetadataOrTagMetadata
+{
+	JoinMetadata(JoinMetadata),
+	TagMetadata(TagMetadata),
+}
+
+impl Default for JoinMetadataOrTagMetadata
+{
+	fn default() -> JoinMetadataOrTagMetadata
+	{
+		JoinMetadataOrTagMetadata::JoinMetadata(Default::default())
+	}
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct JoinMetadata
+{
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub desired_username: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct TagMetadata
 {
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub dev: bool,

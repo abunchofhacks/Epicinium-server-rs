@@ -195,7 +195,7 @@ fn handle_message(
 			status: None,
 			content: Some("".to_string()),
 			sender: Some((1000 + number).to_string()),
-			metadata: None,
+			metadata: Default::default(),
 		}]),
 		Message::JoinServer { content: None, .. } =>
 		{

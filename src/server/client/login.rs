@@ -37,7 +37,7 @@ pub async fn run(
 						status: Some(ResponseStatus::KeyRequired),
 						content: None,
 						sender: None,
-						metadata: None,
+						metadata: Default::default(),
 					};
 					sendbuffer.send(message).await?;
 				}
@@ -49,7 +49,7 @@ pub async fn run(
 					status: Some(responsestatus),
 					content: None,
 					sender: None,
-					metadata: None,
+					metadata: Default::default(),
 				};
 				sendbuffer.send(message).await?;
 			}
