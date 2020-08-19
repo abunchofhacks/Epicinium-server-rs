@@ -21,6 +21,7 @@ Options:
 	--login-server=URL           The login server to connect to.
 	--allow-discord-login=BOOL   Whether to allow clients to log in using only
 	                             their Discord username as credentials.
+	--steam-web-key=FILENAME     The location of the Steam Web API Key.
 	--slackurl=URL               The Slack callback url to post to.
 	--slackname=NAME             The name with which to post to Slack.
 	--discordurl=URL             The Discord callback url to post to.
@@ -40,6 +41,7 @@ struct Args
 
 	flag_login_server: Option<String>,
 	flag_allow_discord_login: Option<bool>,
+	flag_steam_web_key: Option<String>,
 
 	flag_slackname: Option<String>,
 	flag_slackurl: Option<String>,
@@ -68,6 +70,7 @@ fn main() -> std::result::Result<(), anyhow::Error>
 	settings.allow_discord_login = args
 		.flag_allow_discord_login
 		.or(settings.allow_discord_login);
+	settings.steam_web_key = args.flag_steam_web_key.or(settings.steam_web_key);
 	settings.slackurl = args.flag_slackurl.or(settings.slackurl);
 	settings.slackname = args.flag_slackname.or(settings.slackname);
 	settings.discordurl = args.flag_discordurl.or(settings.discordurl);

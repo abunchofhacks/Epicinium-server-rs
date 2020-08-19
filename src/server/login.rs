@@ -13,7 +13,7 @@ use log::*;
 use serde_aux::field_attributes::deserialize_number_from_string;
 use serde_derive::{Deserialize, Serialize};
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 
 use reqwest as http;
 
@@ -155,8 +155,6 @@ impl Server
 	}
 }
 
-const STEAM_APP_ID: u32 = 1286730;
-
 struct Connection
 {
 	http: http::Client,
@@ -165,9 +163,10 @@ struct Connection
 	confirm_steam_user_url: http::Url,
 	current_challenge_key: String,
 
-	steam_web_key: String,
+	steam_api_config: SteamApiConfig,
 	steam_ticket_url: http::Url,
 	steam_player_summaries_url: http::Url,
+	steam_app_ownership_url: http::Url,
 }
 
 impl Connection
@@ -201,11 +200,22 @@ impl Connection
 		);
 		let http = http::Client::builder().user_agent(user_agent).build()?;
 
-		// TODO read from file
-		let steam_web_key = "9AEC9FF2DCCE17637BBD14B700DD54BB".to_string();
+		let filename = settings
+			.steam_web_key
+			.as_ref()
+			.ok_or_else(|| anyhow!("missing 'steam_web_key'"))?;
+		let filename = std::path::Path::new(filename);
+		let raw = std::fs::read_to_string(filename)?;
+		let steam_api_config: SteamApiConfig = toml::from_str(&raw)
+			.with_context(|| {
+				format!("parsing steam web key from '{}'", filename.display())
+			})?;
 
-		// TODO https://partner.steam-api.com
-		let steam_base_url = "https://api.steampowered.com";
+		let steam_base_url = match steam_api_config.api_type
+		{
+			SteamApiType::Publisher => "https://partner.steam-api.com",
+			SteamApiType::User => "https://api.steampowered.com",
+		};
 		let steam_base_url = http::Url::parse(steam_base_url)?;
 		let steam_ticket_url = {
 			let mut url = steam_base_url.clone();
@@ -217,15 +227,21 @@ impl Connection
 			url.set_path("ISteamUser/GetPlayerSummaries/v2/");
 			url
 		};
+		let steam_app_ownership_url = {
+			let mut url = steam_base_url.clone();
+			url.set_path("ISteamUser/CheckAppOwnership/v2/");
+			url
+		};
 
 		Ok(Connection {
 			http,
 			validate_session_url,
 			confirm_steam_user_url,
 			current_challenge_key: challenge::get_current_key(),
-			steam_web_key,
+			steam_api_config,
 			steam_ticket_url,
 			steam_player_summaries_url,
+			steam_app_ownership_url,
 		})
 	}
 
@@ -314,7 +330,17 @@ impl Connection
 			.confirm_steam_user(steam_id, username, metadata.merge_token)
 			.await?;
 
-		// TODO CheckAppOwnership
+		match self.steam_api_config.api_type
+		{
+			SteamApiType::Publisher =>
+			{
+				self.check_app_ownership(steam_id).await?;
+			}
+			SteamApiType::User =>
+			{
+				warn!("Granting automatic beta access to everyone!");
+			}
+		}
 		data.unlocks.insert(Unlock::BetaAccess);
 
 		Ok(data)
@@ -326,14 +352,14 @@ impl Connection
 	) -> Result<SteamId, ResponseStatus>
 	{
 		let payload = SteamAuthenticateUserTicketParameters {
-			app_id: STEAM_APP_ID,
+			app_id: self.steam_api_config.app_id,
 			ticket,
 		};
 
 		let response: SteamAuthenticateUserTicketResponse = self
 			.http
 			.get(self.steam_ticket_url.clone())
-			.header("x-webapi-key", self.steam_web_key.clone())
+			.header("x-webapi-key", self.steam_api_config.web_key.clone())
 			.query(&payload)
 			.send()
 			.await
@@ -383,7 +409,7 @@ impl Connection
 		let response: SteamGetPlayerSummariesResponse = self
 			.http
 			.get(self.steam_player_summaries_url.clone())
-			.header("x-webapi-key", self.steam_web_key.clone())
+			.header("x-webapi-key", self.steam_api_config.web_key.clone())
 			.query(&payload)
 			.send()
 			.await
@@ -416,6 +442,51 @@ impl Connection
 			})?;
 
 		Ok(summary.persona_name)
+	}
+
+	async fn check_app_ownership(
+		&self,
+		steam_id: SteamId,
+	) -> Result<(), ResponseStatus>
+	{
+		let payload = SteamCheckAppOwnershipParameters {
+			steam_id,
+			app_id: self.steam_api_config.app_id,
+		};
+
+		let response: SteamCheckAppOwnershipResponse = self
+			.http
+			.get(self.steam_app_ownership_url.clone())
+			.header("x-webapi-key", self.steam_api_config.web_key.clone())
+			.query(&payload)
+			.send()
+			.await
+			.map_err(|error| {
+				error!("Login failed: {:?}", error);
+				ResponseStatus::ConnectionFailed
+			})?
+			.error_for_status()
+			.map_err(|error| {
+				error!("Login failed: {:?}", error);
+				ResponseStatus::ConnectionFailed
+			})?
+			.json()
+			.await
+			.map_err(|error| {
+				error!("Received malformed response from Steam: {}", error);
+				ResponseStatus::ResponseMalformed
+			})?;
+
+		debug!("Got a response from Steam: {:?}", response);
+
+		if response.inner.result == SteamResult::Ok && response.inner.owns_app
+		{
+			Ok(())
+		}
+		else
+		{
+			Err(ResponseStatus::KeyRequired)
+		}
 	}
 
 	async fn confirm_steam_user(
@@ -575,6 +646,34 @@ struct SteamPlayerSummary
 	persona_name: String,
 }
 
+#[derive(Debug, Serialize)]
+struct SteamCheckAppOwnershipParameters
+{
+	#[serde(rename = "appid")]
+	app_id: u32,
+
+	#[serde(rename = "steamid")]
+	steam_id: SteamId,
+}
+
+// Omitting certain extra fields.
+#[derive(Debug, Deserialize)]
+struct SteamCheckAppOwnershipResponse
+{
+	#[serde(rename = "appownership")]
+	inner: SteamCheckAppOwnershipResponseInner,
+}
+
+// Omitting certain extra fields.
+#[derive(Debug, Deserialize)]
+struct SteamCheckAppOwnershipResponseInner
+{
+	result: SteamResult,
+
+	#[serde(rename = "ownsapp")]
+	owns_app: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 enum SteamResult
 {
@@ -609,4 +708,20 @@ fn is_valid_username_char(x: char) -> bool
 		'~' => true,
 		_ => false,
 	}
+}
+
+#[derive(Debug, Deserialize)]
+struct SteamApiConfig
+{
+	app_id: u32,
+	api_type: SteamApiType,
+	web_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SteamApiType
+{
+	User,
+	Publisher,
 }

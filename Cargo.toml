@@ -30,6 +30,7 @@ itertools = "*"
 unindent = "*"
 docopt = "*"
 anyhow = "*"
+toml = "*"
 
 [features]
 defaults = []

@@ -26,6 +26,8 @@ pub struct Settings
 	pub login_server: Option<String>,
 	#[serde(default)]
 	pub allow_discord_login: Option<bool>,
+	#[serde(default)]
+	pub steam_web_key: Option<String>,
 
 	#[serde(default)]
 	pub slackname: Option<String>,
