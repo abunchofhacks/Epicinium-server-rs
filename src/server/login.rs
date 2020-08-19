@@ -310,7 +310,9 @@ impl Connection
 			return Err(ResponseStatus::UsernameRequired);
 		}
 
-		let mut data = self.confirm_steam_user(steam_id, username).await?;
+		let mut data = self
+			.confirm_steam_user(steam_id, username, metadata.merge_token)
+			.await?;
 
 		// TODO CheckAppOwnership
 		data.unlocks.insert(Unlock::BetaAccess);
@@ -420,11 +422,13 @@ impl Connection
 		&self,
 		steam_id: SteamId,
 		desired_username: String,
+		merge_token: Option<String>,
 	) -> Result<LoginData, ResponseStatus>
 	{
 		let payload = ConfirmSteamUserPayload {
 			steam_id,
 			desired_username,
+			merge_token,
 			challenge_key: self.current_challenge_key.clone(),
 		};
 
@@ -485,6 +489,8 @@ struct ConfirmSteamUserPayload
 	steam_id: SteamId,
 
 	desired_username: String,
+
+	merge_token: Option<String>,
 
 	challenge_key: String,
 }

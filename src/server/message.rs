@@ -407,6 +407,9 @@ pub struct JoinMetadata
 {
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub desired_username: Option<String>,
+
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub merge_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
