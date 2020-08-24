@@ -334,6 +334,10 @@ pub enum Message
 
 		target: ChatTarget,
 	},
+	LinkAccounts
+	{
+		metadata: AccountLinkingMetadata,
+	},
 	Debug
 	{
 		content: String,
@@ -439,6 +443,12 @@ pub struct LobbyMetadata
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub is_public: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AccountLinkingMetadata
+{
+	pub discord_user_id: String,
 }
 
 #[derive(

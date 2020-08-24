@@ -425,6 +425,10 @@ enum Error
 	{
 		error: mpsc::error::SendError<slack_api::Post>,
 	},
+	DiscordApi
+	{
+		error: mpsc::error::SendError<discord_api::Post>,
+	},
 	Rating
 	{
 		error: mpsc::error::SendError<rating::Update>,
@@ -513,6 +517,14 @@ impl From<mpsc::error::SendError<slack_api::Post>> for Error
 	fn from(error: mpsc::error::SendError<slack_api::Post>) -> Self
 	{
 		Error::SlackApi { error }
+	}
+}
+
+impl From<mpsc::error::SendError<discord_api::Post>> for Error
+{
+	fn from(error: mpsc::error::SendError<discord_api::Post>) -> Self
+	{
+		Error::DiscordApi { error }
 	}
 }
 
@@ -613,6 +625,7 @@ impl fmt::Display for Error
 			Error::Lobby { error } => error.fmt(f),
 			Error::Login { error } => error.fmt(f),
 			Error::SlackApi { error } => error.fmt(f),
+			Error::DiscordApi { error } => error.fmt(f),
 			Error::Rating { error } => error.fmt(f),
 			Error::Tolerance { error } => error.fmt(f),
 			Error::Watch { error } => error.fmt(f),
@@ -961,6 +974,23 @@ async fn handle_message(
 				// it sends a LEAVE_SERVER message. We just ignore it.
 			}
 		},
+		Message::LinkAccounts { metadata } =>
+		{
+			let AccountLinkingMetadata { discord_user_id } = metadata;
+
+			if !client.username.is_empty()
+			{
+				let post = discord_api::Post::Link {
+					username: client.username.clone(),
+					discord_id: discord_user_id,
+				};
+				client.discord_api.send(post).await?;
+			}
+			else
+			{
+				debug!("Ignoring LinkAccounts from client without username");
+			}
+		}
 		Message::JoinLobby { .. } if client.closing =>
 		{
 			client.sendbuffer.try_send(Message::Closing)?;

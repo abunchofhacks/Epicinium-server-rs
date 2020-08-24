@@ -63,6 +63,11 @@ pub enum Post
 		#[serde(rename = "player2_score")]
 		second_player_score: i32,
 	},
+	Link
+	{
+		discord_id: String,
+		username: String,
+	},
 }
 
 pub async fn run(
