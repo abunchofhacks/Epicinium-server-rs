@@ -2,7 +2,6 @@
 
 use crate::common::header::*;
 use crate::common::keycode::*;
-use crate::common::platform::Platform;
 use crate::common::version::*;
 use crate::logic::challenge;
 use crate::logic::change::Change;
@@ -29,9 +28,6 @@ pub enum Message
 	Version
 	{
 		version: Version,
-
-		#[serde(default, skip_serializing_if = "Option::is_none")]
-		metadata: Option<VersionMetadata>,
 	},
 	JoinServer
 	{
@@ -392,14 +388,6 @@ pub enum UsernameOrSlot
 {
 	Slot(Botslot),
 	Username(String),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VersionMetadata
-{
-	pub platform: Platform,
-
-	pub patchmode: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

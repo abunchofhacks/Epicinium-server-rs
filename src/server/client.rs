@@ -870,9 +870,9 @@ async fn handle_message(
 				chat.send(update).await?
 			}
 		}
-		Message::Version { version, metadata } =>
+		Message::Version { version } =>
 		{
-			greet_client(client, version, metadata)?;
+			greet_client(client, version)?;
 
 			// We want to know if someone is peeking.
 			client.appears_active_according_to_notifications = true;
@@ -1658,33 +1658,16 @@ async fn handle_message(
 	Ok(None)
 }
 
-fn greet_client(
-	client: &mut Client,
-	version: Version,
-	metadata: Option<VersionMetadata>,
-) -> Result<(), Error>
+fn greet_client(client: &mut Client, version: Version) -> Result<(), Error>
 {
 	client.version = version;
 	info!("Client {} has version {}.", client.id, version);
-	if let Some(metadata) = &metadata
-	{
-		info!("Client {} has version metadata {:?}.", client.id, metadata);
-	}
-	else
-	{
-		info!("Client {} has no version metadata; rejecting...", client.id);
-	}
 
 	let myversion = Version::current();
-	let response = Message::Version {
-		version: myversion,
-		metadata: None,
-	};
+	let response = Message::Version { version: myversion };
 	client.sendbuffer.try_send(response)?;
 
-	if version.major != myversion.major
-		|| version == Version::undefined()
-		|| metadata.is_none()
+	if version.major != myversion.major || version == Version::undefined()
 	{
 		// The client does not have a proper version.
 		return Ok(());
