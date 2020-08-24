@@ -1,6 +1,7 @@
 /* Server::Test::Counting */
 
 use crate::common::coredump;
+use crate::common::platform;
 use crate::common::version::*;
 use crate::server::message::*;
 
@@ -83,6 +84,10 @@ async fn run_test_impl(
 
 	let initialmessage = Message::Version {
 		version: fakeversion,
+		metadata: Some(VersionMetadata {
+			platform: platform::Platform::current(),
+			patchmode: "none".to_string(),
+		}),
 	};
 
 	let mut has_quit = QuitStage::None;
@@ -191,7 +196,10 @@ fn handle_message(
 	{
 		Message::Ping => Ok(vec![Message::Pong]),
 		Message::Pong | Message::Pulse => Ok(Vec::new()),
-		Message::Version { version: _ } => Ok(vec![Message::JoinServer {
+		Message::Version {
+			version: _,
+			metadata: _,
+		} => Ok(vec![Message::JoinServer {
 			status: None,
 			content: Some("".to_string()),
 			sender: Some((1000 + number).to_string()),

@@ -6,13 +6,14 @@ use serde_derive::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum Platform
 {
-	Unknown,
 	Windows32,
 	Windows64,
 	Osx32,
 	Osx64,
 	Debian32,
 	Debian64,
+	#[serde(other)]
+	Unknown,
 }
 
 impl Default for Platform
