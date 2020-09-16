@@ -20,6 +20,7 @@ pub struct Metadata
 	display_name: String,
 	panel_picture_name: String,
 	discord_image_key: String,
+	steam_short_key: String,
 }
 
 pub fn current_id() -> ChallengeId
@@ -39,6 +40,7 @@ pub fn load_current() -> Challenge
 	let display_name = epicinium_lib::challenge_display_name(id);
 	let panel_picture_name = epicinium_lib::challenge_panel_picture_name(id);
 	let discord_image_key = epicinium_lib::challenge_discord_image_key(id);
+	let steam_short_key = epicinium_lib::challenge_steam_short_key(id);
 
 	Challenge {
 		key,
@@ -46,6 +48,7 @@ pub fn load_current() -> Challenge
 			display_name,
 			panel_picture_name,
 			discord_image_key,
+			steam_short_key,
 		},
 	}
 }
