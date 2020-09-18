@@ -314,21 +314,7 @@ impl Connection
 	{
 		let steam_id = self.get_steam_id(ticket).await?;
 
-		let username = match metadata.desired_username
-		{
-			Some(username) => username,
-			None => self.get_steam_persona_name(steam_id).await?,
-		};
-		if !is_valid_username(&username)
-		{
-			warn!("Rejecting invalid desired username '{}'.", username);
-			// TODO support UTF8 usernames
-			return Err(ResponseStatus::UsernameRequired);
-		}
-
-		let mut data = self
-			.confirm_steam_user(steam_id, username, metadata.merge_token)
-			.await?;
+		let mut data = self.login_steam_user(steam_id, metadata).await?;
 
 		match self.steam_api_config.api_type
 		{
@@ -344,6 +330,62 @@ impl Connection
 		data.unlocks.insert(Unlock::BetaAccess);
 
 		Ok(data)
+	}
+
+	async fn login_steam_user(
+		&self,
+		steam_id: SteamId,
+		metadata: JoinMetadata,
+	) -> Result<LoginData, ResponseStatus>
+	{
+		if let Some(merge_token) = metadata.merge_token
+		{
+			info!("Confirming steam user with merge token...");
+			return self
+				.confirm_steam_user(steam_id, None, Some(merge_token))
+				.await;
+		}
+		else if let Some(username) = metadata.desired_username
+		{
+			if !is_valid_username(&username)
+			{
+				warn!("Rejecting invalid desired username '{}'.", username);
+				// TODO support UTF8 usernames
+				return Err(ResponseStatus::UsernameRequiredInvalid);
+			}
+			info!("Confirming steam user with desired username...");
+			return self
+				.confirm_steam_user(steam_id, Some(username), None)
+				.await;
+		}
+
+		// First see if this user already exists.
+		info!("Confirming steam user (if exists)...");
+		let result = self.confirm_steam_user(steam_id, None, None).await;
+		match result
+		{
+			Ok(data) => Ok(data),
+			Err(ResponseStatus::UsernameRequiredNoUser) =>
+			{
+				// If not, get the current Steam persona name and use that
+				// as the username for the new account.
+				let username = self.get_steam_persona_name(steam_id).await?;
+				if !is_valid_username(&username)
+				{
+					warn!("Rejecting persona name '{}' as username.", username);
+					// TODO support UTF8 usernames
+					// We use a "milder" response status here because it is not
+					// the user's fault that their Steam persona name is not
+					// a valid Epicinium username.
+					return Err(ResponseStatus::UsernameRequiredNoUser);
+				}
+
+				info!("Confirming steam user with personaname as username...");
+				self.confirm_steam_user(steam_id, Some(username), None)
+					.await
+			}
+			Err(err) => Err(err),
+		}
 	}
 
 	async fn get_steam_id(
@@ -492,7 +534,7 @@ impl Connection
 	async fn confirm_steam_user(
 		&self,
 		steam_id: SteamId,
-		desired_username: String,
+		desired_username: Option<String>,
 		merge_token: Option<String>,
 	) -> Result<LoginData, ResponseStatus>
 	{
@@ -559,7 +601,7 @@ struct ConfirmSteamUserPayload
 	#[serde(rename = "steam_id_as_string")]
 	steam_id: SteamId,
 
-	desired_username: String,
+	desired_username: Option<String>,
 
 	merge_token: Option<String>,
 
