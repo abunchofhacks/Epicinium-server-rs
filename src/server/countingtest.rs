@@ -16,8 +16,6 @@ use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 
-use itertools::Itertools;
-
 #[tokio::main]
 pub async fn run(
 	ntests: usize,
@@ -169,10 +167,7 @@ fn parse_message(
 
 	if log_enabled!(log::Level::Trace)
 	{
-		// TODO add dots if longer than 200 characters
-		let preview = jsonstr.chars().take(200);
-		// TODO escape newlines (#1266)
-		trace!("[{}] Received message: {}", number, preview.format(""));
+		trace!("[{}] Received message: {}", number, jsonstr);
 	}
 
 	let message: Message = serde_json::from_str(&jsonstr)?;
@@ -356,10 +351,7 @@ fn prepare_message_data(number: usize, message: Message) -> (String, u32)
 
 	if log_enabled!(log::Level::Trace)
 	{
-		// TODO add dots if longer than 200 characters
-		let preview = jsonstr.chars().take(200);
-		// TODO escape newlines (#912)
-		trace!("[{}] Sending message: {}", number, preview.format(""));
+		trace!("[{}] Sending message: {}", number, jsonstr);
 	}
 
 	(jsonstr, length)

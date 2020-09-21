@@ -91,10 +91,23 @@ fn parse_message(buffer: Vec<u8>) -> Result<Message, Error>
 
 	if log_enabled!(log::Level::Trace)
 	{
-		// TODO add dots if longer than 200 characters
-		let preview = jsonstr.chars().take(200);
-		// TODO escape newlines (#1266)
-		trace!("Received message: {}", preview.format(""));
+		trace!(
+			"Received message: {}",
+			jsonstr
+				.chars()
+				.take(500)
+				.map(|x| {
+					if x == '"'
+					{
+						x.to_string()
+					}
+					else
+					{
+						x.escape_debug().to_string()
+					}
+				})
+				.format("")
+		);
 	}
 
 	let message: Message = serde_json::from_str(&jsonstr)?;

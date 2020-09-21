@@ -97,10 +97,23 @@ fn prepare_message_data(message: Message) -> (String, u32)
 
 	if log_enabled!(log::Level::Trace)
 	{
-		// TODO add dots if longer than 200 characters
-		let preview = jsonstr.chars().take(200);
-		// TODO escape newlines (#1266)
-		trace!("Sending message: {}", preview.format(""));
+		trace!(
+			"Sending message: {}",
+			jsonstr
+				.chars()
+				.take(500)
+				.map(|x| {
+					if x == '"'
+					{
+						x.to_string()
+					}
+					else
+					{
+						x.escape_debug().to_string()
+					}
+				})
+				.format("")
+		);
 	}
 
 	(jsonstr, length)

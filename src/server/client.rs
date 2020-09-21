@@ -1571,7 +1571,9 @@ async fn handle_message(
 			{
 				info!(
 					"Client {} '{}' sent chat message: {}",
-					client.id, client.username, content
+					client.id,
+					client.username,
+					content.escape_debug()
 				);
 
 				let update = chat::Update::Msg(Message::Chat {
@@ -1596,7 +1598,9 @@ async fn handle_message(
 			{
 				info!(
 					"Client {} '{}' sent lobby chat message: {}",
-					client.id, client.username, content
+					client.id,
+					client.username,
+					content.escape_debug()
 				);
 
 				let update = lobby::Update::Msg(Message::Chat {
@@ -1621,8 +1625,7 @@ async fn handle_message(
 		}
 		Message::Debug { content } =>
 		{
-			// TODO escape newlines etcetera (#1266)
-			debug!("Client {} says: {}", client.id, content);
+			debug!("Client {} says: {}", client.id, content.escape_debug());
 		}
 		Message::Init
 		| Message::DisbandLobby { .. }
