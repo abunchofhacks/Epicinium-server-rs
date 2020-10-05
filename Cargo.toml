@@ -7,7 +7,7 @@ publish = false
 default-run = "server"
 
 [dependencies]
-epicinium_lib = { version = "0.35.1" }
+epicinium_lib = { version = "1.0.*" }
 openssl = { version = "0.10", features = ["vendored"] }
 rlimit = "*"
 serde = "*"
