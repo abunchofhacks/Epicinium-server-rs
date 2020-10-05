@@ -40,9 +40,9 @@ impl Version
 	pub fn latest() -> Version
 	{
 		Version {
-			major: 0,
-			minor: 35,
-			patch: 1,
+			major: 1,
+			minor: 0,
+			patch: 0,
 			release: 1,
 		}
 	}
