@@ -50,6 +50,7 @@ pub enum Unlock
 {
 	Dev,
 	BetaAccess,
+	Supporter,
 	Guest,
 }
 

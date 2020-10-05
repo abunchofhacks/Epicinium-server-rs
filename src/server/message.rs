@@ -424,6 +424,9 @@ pub struct TagMetadata
 
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub guest: bool,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub supporter: bool,
 }
 
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]
