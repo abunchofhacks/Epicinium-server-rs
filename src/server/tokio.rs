@@ -23,7 +23,7 @@ use log::*;
 use anyhow::anyhow;
 
 use futures::future;
-use futures::{FutureExt, StreamExt, TryFutureExt};
+use futures::{FutureExt, StreamExt};
 
 use tokio::net::TcpListener;
 use tokio::signal::unix::SignalKind;
@@ -38,30 +38,74 @@ pub enum State
 	Closed,
 }
 
-#[tokio::main]
-pub async fn run_server(
+pub struct Server
+{
+	scoped_terminate: terminate::Setup,
+	log_setup: logrotate::Setup,
+	login_server: login::Server,
+	portal_setup: portal::Setup,
+	slack_setup: slack_api::Setup,
+	discord_setup: discord_api::Setup,
+	rating_database: rating::Database,
+	ip_address: String,
+}
+
+pub fn setup_server(
 	settings: &Settings,
 	log_setup: logrotate::Setup,
-) -> Result<(), anyhow::Error>
+) -> Result<Server, anyhow::Error>
 {
 	enable_coredumps()?;
 	increase_sockets()?;
 
-	let _scoped_terminate = terminate::setup()?;
+	let scoped_terminate = terminate::setup()?;
+
+	let server = settings
+		.server
+		.as_ref()
+		.ok_or_else(|| anyhow!("missing 'server'"))?;
+	let ip_address = server.to_string();
 
 	ruleset::initialize_collection()?;
 
-	let (slack_in, slack_out) = mpsc::channel::<slack_api::Post>(10000);
-	let slack_task = slack_api::run(settings, slack_out);
+	let server = Server {
+		scoped_terminate,
+		log_setup,
+		login_server: login::connect(settings)?,
+		portal_setup: portal::setup(settings)?,
+		slack_setup: slack_api::setup(settings)?,
+		discord_setup: discord_api::setup(settings)?,
+		rating_database: rating::initialize(settings)?,
+		ip_address,
+	};
+	Ok(server)
+}
 
-	let login_server = login::connect(settings)?;
-	let login = sync::Arc::new(login_server);
+#[tokio::main]
+pub async fn run_server(server: Server)
+{
+	let Server {
+		scoped_terminate,
+		log_setup,
+		login_server,
+		portal_setup,
+		slack_setup,
+		discord_setup,
+		rating_database,
+		ip_address,
+	} = server;
+
+	// Keep the terminator in scope until the end of run_server().
+	let _scoped_terminate = scoped_terminate;
+
+	let (slack_in, slack_out) = mpsc::channel::<slack_api::Post>(10000);
+	let slack_task = slack_api::run(slack_setup, slack_out);
 
 	let (rating_in, rating_out) = mpsc::channel::<rating::Update>(10000);
-	let rating_task = rating::run(settings, rating_out);
+	let rating_task = rating::run(rating_database, rating_out);
 
 	let (discord_in, discord_out) = mpsc::channel::<discord_api::Post>(10000);
-	let discord_task = discord_api::run(settings, discord_out);
+	let discord_task = discord_api::run(discord_setup, discord_out);
 
 	let (state_in, state_out) = watch::channel(State::Open);
 	let (client_canary_in, client_canary_out) = mpsc::channel::<()>(1);
@@ -70,15 +114,15 @@ pub async fn run_server(
 		wait_for_close(general_canary_out, client_canary_out, state_in);
 
 	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
-	let chat_task = chat::run(general_out, general_canary_in).map(|()| Ok(()));
+	let chat_task = chat::run(general_out, general_canary_in);
 
 	let logrotate_task =
-		logrotate::run(log_setup, state_out.clone(), slack_in.clone())
-			.map(|()| Ok(()));
+		logrotate::run(log_setup, state_out.clone(), slack_in.clone());
 
 	let acceptance_task = accept_clients(
-		settings,
-		login,
+		ip_address,
+		login_server,
+		portal_setup,
 		general_in,
 		rating_in,
 		slack_in,
@@ -87,61 +131,21 @@ pub async fn run_server(
 		client_canary_in,
 	);
 
-	let server_task = future::try_join4(
+	let server_task = future::join4(
 		acceptance_task,
-		future::try_join(chat_task, rating_task),
-		future::try_join3(slack_task, discord_task, logrotate_task),
+		future::join(chat_task, rating_task),
+		future::join3(slack_task, discord_task, logrotate_task),
 		close_task,
 	)
-	.map_ok(|((), ((), ()), ((), (), ()), ())| ());
+	.map(|((), ((), ()), ((), (), ()), ())| ());
 
-	server_task.await
+	server_task.await;
 }
 
 async fn accept_clients(
-	settings: &Settings,
-	login: sync::Arc<login::Server>,
-	general_chat: mpsc::Sender<chat::Update>,
-	ratings: mpsc::Sender<rating::Update>,
-	slack_api: mpsc::Sender<slack_api::Post>,
-	discord_api: mpsc::Sender<discord_api::Post>,
-	server_state: watch::Receiver<State>,
-	client_canary: mpsc::Sender<()>,
-) -> Result<(), anyhow::Error>
-{
-	let server = settings
-		.server
-		.as_ref()
-		.ok_or_else(|| anyhow!("missing 'server'"))?;
-	let ipaddress = server.to_string();
-	let binding: portal::Binding = portal::bind(settings).await?;
-	let port = binding.port;
-	let address: SocketAddr = format!("{}:{}", ipaddress, port).parse()?;
-	let listener = TcpListener::bind(&address).await?;
-	binding.confirm().await?;
-
-	info!("Listening on {}:{}...", ipaddress, port);
-
-	listen(
-		listener,
-		login,
-		general_chat,
-		ratings,
-		slack_api,
-		discord_api,
-		server_state,
-		client_canary,
-	)
-	.await;
-
-	info!("Stopped listening.");
-
-	binding.unbind().await
-}
-
-async fn listen(
-	mut listener: TcpListener,
-	login: sync::Arc<login::Server>,
+	ip_address: String,
+	login_server: login::Server,
+	portal_setup: portal::Setup,
 	general_chat: mpsc::Sender<chat::Update>,
 	ratings: mpsc::Sender<rating::Update>,
 	slack_api: mpsc::Sender<slack_api::Post>,
@@ -150,6 +154,97 @@ async fn listen(
 	client_canary: mpsc::Sender<()>,
 )
 {
+	let binding = match portal::bind(portal_setup).await
+	{
+		Ok(binding) => binding,
+		Err(error) =>
+		{
+			error!("Error running server: {}", error);
+			error!("{:#?}", error);
+			println!("Error running server: {}", error);
+			return;
+		}
+	};
+	// If binding succeeds, we must unbind.
+
+	let port = binding.port;
+	let address: SocketAddr = match format!("{}:{}", ip_address, port).parse()
+	{
+		Ok(address) => address,
+		Err(error) =>
+		{
+			warn!("Failed to parse '{}:{}': {}", ip_address, port, error);
+			let localhost = std::net::Ipv4Addr::new(127, 0, 0, 1);
+			SocketAddr::new(std::net::IpAddr::V4(localhost), port)
+		}
+	};
+
+	let listener = match TcpListener::bind(&address).await
+	{
+		Ok(listener) => match binding.confirm().await
+		{
+			Ok(()) => Some(listener),
+			Err(error) =>
+			{
+				error!("Error running server: {}", error);
+				error!("{:#?}", error);
+				println!("Error running server: {}", error);
+				None
+			}
+		},
+		Err(error) =>
+		{
+			error!("Error running server: {}", error);
+			error!("{:#?}", error);
+			println!("Error running server: {}", error);
+			None
+		}
+	};
+
+	if let Some(listener) = listener
+	{
+		info!("Listening on {}...", address);
+
+		listen(
+			listener,
+			login_server,
+			general_chat,
+			ratings,
+			slack_api,
+			discord_api,
+			server_state,
+			client_canary,
+		)
+		.await;
+
+		info!("Stopped listening.");
+	}
+
+	match binding.unbind().await
+	{
+		Ok(()) => (),
+		Err(error) =>
+		{
+			error!("Error running server: {}", error);
+			error!("{:#?}", error);
+			println!("Error running server: {}", error);
+		}
+	}
+}
+
+async fn listen(
+	mut listener: TcpListener,
+	login_server: login::Server,
+	general_chat: mpsc::Sender<chat::Update>,
+	ratings: mpsc::Sender<rating::Update>,
+	slack_api: mpsc::Sender<slack_api::Post>,
+	discord_api: mpsc::Sender<discord_api::Post>,
+	server_state: watch::Receiver<State>,
+	client_canary: mpsc::Sender<()>,
+)
+{
+	let login = sync::Arc::new(login_server);
+
 	let mut ticker: u64 = rand::random();
 	let lobbyticker = sync::Arc::new(atomic::AtomicU64::new(rand::random()));
 
@@ -209,24 +304,47 @@ async fn wait_for_close(
 	chat_canary: mpsc::Receiver<()>,
 	client_canary: mpsc::Receiver<()>,
 	server_state: watch::Sender<State>,
-) -> Result<(), anyhow::Error>
+)
 {
-	let handler = tokio::signal::unix::signal(SignalKind::terminate())?;
-	let chat_closed = wait_for_canary(chat_canary).boxed();
-	let mut signals = handler.take_until(chat_closed);
-
-	let mut is_open = true;
-	while let Some(()) = signals.next().await
+	let handler = match tokio::signal::unix::signal(SignalKind::terminate())
 	{
-		if is_open
+		Ok(handler) => Some(handler),
+		Err(error) =>
 		{
-			info!("Closing...");
-			server_state.broadcast(State::Closing)?;
-			is_open = false;
+			error!("Error running server: {}", error);
+			error!("{:#?}", error);
+			println!("Error running server: {}", error);
+			None
 		}
-		else
+	};
+
+	if let Some(handler) = handler
+	{
+		let chat_closed = wait_for_canary(chat_canary).boxed();
+		let mut signals = handler.take_until(chat_closed);
+
+		let mut is_open = true;
+		while let Some(()) = signals.next().await
 		{
-			break;
+			if is_open
+			{
+				info!("Closing...");
+				match server_state.broadcast(State::Closing)
+				{
+					Ok(()) => (),
+					Err(error) =>
+					{
+						error!("Error running server: {}", error);
+						error!("{:#?}", error);
+						println!("Error running server: {}", error);
+					}
+				}
+				is_open = false;
+			}
+			else
+			{
+				break;
+			}
 		}
 	}
 
@@ -236,7 +354,6 @@ async fn wait_for_close(
 
 	wait_for_canary(client_canary).await;
 	info!("All clients have disconnected.");
-	Ok(())
 }
 
 async fn wait_for_canary(mut canary: mpsc::Receiver<()>)

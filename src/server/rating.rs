@@ -50,13 +50,8 @@ pub enum Update
 	},
 }
 
-pub async fn run(
-	settings: &Settings,
-	mut updates: mpsc::Receiver<Update>,
-) -> Result<(), anyhow::Error>
+pub async fn run(mut database: Database, mut updates: mpsc::Receiver<Update>)
 {
-	let mut database = initialize(settings)?;
-
 	while let Some(update) = updates.recv().await
 	{
 		match update
@@ -75,10 +70,7 @@ pub async fn run(
 				};
 				database.cache.insert(user_id, entry);
 			}
-			Update::GameResult(result) =>
-			{
-				database.handle_result(result).await?
-			}
+			Update::GameResult(result) => database.handle_result(result).await,
 			Update::Left { user_id } =>
 			{
 				if let Some(entry) = database.cache.get_mut(&user_id)
@@ -90,7 +82,6 @@ pub async fn run(
 	}
 
 	info!("Ratings have been pushed.");
-	Ok(())
 }
 
 struct Entry
@@ -100,7 +91,7 @@ struct Entry
 	handle: client::Handle,
 }
 
-struct Database
+pub struct Database
 {
 	connection: Option<Connection>,
 	cache: HashMap<UserId, Entry>,
@@ -108,10 +99,7 @@ struct Database
 
 impl Database
 {
-	async fn handle_result(
-		&mut self,
-		result: game::PlayerResult,
-	) -> Result<(), anyhow::Error>
+	async fn handle_result(&mut self, result: game::PlayerResult)
 	{
 		let user_id = result.user_id;
 		let entry = match self.cache.get_mut(&user_id)
@@ -122,7 +110,7 @@ impl Database
 				error!("Missing entry for user id {:?}!", user_id);
 				// We do not want this to end the rating task.
 				// FUTURE insert entry now to avoid losing data?
-				return Ok(());
+				return;
 			}
 		};
 		let mut data = entry.data;
@@ -136,7 +124,16 @@ impl Database
 
 				if let Some(connection) = &mut self.connection
 				{
-					connection.update_rating(user_id, data.rating).await?;
+					match connection.update_rating(user_id, data.rating).await
+					{
+						Ok(()) => (),
+						Err(error) =>
+						{
+							error!("Error running server: {}", error);
+							error!("{:#?}", error);
+							println!("Error running server: {}", error);
+						}
+					}
 				}
 
 				let message = Message::UpdatedRating { rating: new_rating };
@@ -153,7 +150,16 @@ impl Database
 
 			if let Some(connection) = &mut self.connection
 			{
-				connection.award_stars(user_id, data.recent_stars).await?;
+				match connection.award_stars(user_id, data.recent_stars).await
+				{
+					Ok(()) => (),
+					Err(error) =>
+					{
+						error!("Error running server: {}", error);
+						error!("{:#?}", error);
+						println!("Error running server: {}", error);
+					}
+				}
 			}
 
 			let message = Message::RecentStars {
@@ -165,11 +171,18 @@ impl Database
 		if data != entry.data
 		{
 			entry.data = data;
-			entry.sender.broadcast(data)?;
+			match entry.sender.broadcast(data)
+			{
+				Ok(()) => (),
+				Err(error) =>
+				{
+					error!("Error running server: {}", error);
+					error!("{:#?}", error);
+					println!("Error running server: {}", error);
+				}
+			}
 			entry.handle.notify(client::Update::RatingAndStars);
 		}
-
-		Ok(())
 	}
 }
 
@@ -232,7 +245,7 @@ fn adjust(rating: f64, score: i32, match_type: MatchType) -> Option<f64>
 	Some(0.1 * (ratingtenths as f64))
 }
 
-fn initialize(settings: &Settings) -> Result<Database, anyhow::Error>
+pub fn initialize(settings: &Settings) -> Result<Database, anyhow::Error>
 {
 	if settings.login_server.is_some()
 		|| (!cfg!(feature = "version-is-dev")

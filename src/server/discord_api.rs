@@ -70,39 +70,59 @@ pub enum Post
 	},
 }
 
-pub async fn run(
-	settings: &Settings,
-	mut posts: mpsc::Receiver<Post>,
-) -> Result<(), anyhow::Error>
+pub struct Setup
+{
+	connection: Option<Connection>,
+}
+
+pub fn setup(settings: &Settings) -> Result<Setup, anyhow::Error>
 {
 	if settings.discordurl.is_some()
 	{
 		let connection = Connection::start(settings)?;
-		info!("Connected.");
-		while let Some(post) = posts.recv().await
-		{
-			connection.send(post).await;
-		}
-		info!("Finished sending posts to Discord.");
+		Ok(Setup {
+			connection: Some(connection),
+		})
 	}
 	else
 	{
-		while let Some(post) = posts.recv().await
+		Ok(Setup { connection: None })
+	}
+}
+
+pub async fn run(setup: Setup, mut posts: mpsc::Receiver<Post>)
+{
+	match setup
+	{
+		Setup {
+			connection: Some(connection),
+		} =>
 		{
-			let message = match serde_json::to_string(&post)
+			info!("Connected.");
+			while let Some(post) = posts.recv().await
 			{
-				Ok(message) => message,
-				Err(error) =>
+				connection.send(post).await;
+			}
+			info!("Finished sending posts to Discord.");
+		}
+		Setup { connection: None } =>
+		{
+			while let Some(post) = posts.recv().await
+			{
+				let message = match serde_json::to_string(&post)
 				{
-					error!("Error while jsonifying: {:?}", error);
-					debug!("Original post: {:?}", post);
-					continue;
-				}
-			};
-			debug!("{}", message);
+					Ok(message) => message,
+					Err(error) =>
+					{
+						error!("Error while jsonifying: {:?}", error);
+						debug!("Original post: {:?}", post);
+						continue;
+					}
+				};
+				debug!("{}", message);
+			}
 		}
 	}
-	Ok(())
 }
 
 struct Connection

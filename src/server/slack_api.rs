@@ -20,26 +20,46 @@ pub struct Post
 	pub message: String,
 }
 
-pub async fn run(
-	settings: &Settings,
-	mut posts: mpsc::Receiver<Post>,
-) -> Result<(), anyhow::Error>
+pub struct Setup
+{
+	connection: Option<Connection>,
+}
+
+pub fn setup(settings: &Settings) -> Result<Setup, anyhow::Error>
 {
 	if settings.slackurl.is_some()
 	{
-		let mut connection = Connection::start(settings)?;
-		info!("Connected.");
-		connection.run(posts).await;
-		info!("Finished sending posts to Slack.");
+		let connection = Connection::start(settings)?;
+		Ok(Setup {
+			connection: Some(connection),
+		})
 	}
 	else
 	{
-		while let Some(post) = posts.recv().await
+		Ok(Setup { connection: None })
+	}
+}
+
+pub async fn run(setup: Setup, mut posts: mpsc::Receiver<Post>)
+{
+	match setup
+	{
+		Setup {
+			connection: Some(mut connection),
+		} =>
 		{
-			debug!("{}", post.message);
+			info!("Connected.");
+			connection.run(posts).await;
+			info!("Finished sending posts to Slack.");
+		}
+		Setup { connection: None } =>
+		{
+			while let Some(post) = posts.recv().await
+			{
+				debug!("{}", post.message);
+			}
 		}
 	}
-	Ok(())
 }
 
 struct Connection

@@ -10,6 +10,19 @@ use anyhow::anyhow;
 
 use reqwest as http;
 
+pub enum Setup
+{
+	Real
+	{
+		http: http::Client,
+		registration_url: http::Url,
+	},
+	Dev
+	{
+		port: u16
+	},
+}
+
 pub struct Binding
 {
 	connection: Option<Connection>,
@@ -29,28 +42,39 @@ struct Connection
 	registered_url: http::Url,
 }
 
-pub async fn bind(settings: &Settings) -> Result<Binding, anyhow::Error>
+pub fn setup(settings: &Settings) -> Result<Setup, anyhow::Error>
 {
 	if settings.login_server.is_some()
 		|| (!cfg!(feature = "version-is-dev")
 			&& (!cfg!(debug_assertions) || cfg!(feature = "candidate")))
 	{
-		Connection::bind(settings).await
+		Connection::setup(settings)
 	}
 	else
 	{
-		dev_bind(settings)
+		let port = settings.port.ok_or_else(|| anyhow!("missing 'port'"))?;
+
+		Ok(Setup::Dev { port })
 	}
 }
 
-fn dev_bind(settings: &Settings) -> Result<Binding, anyhow::Error>
+pub async fn bind(setup: Setup) -> Result<Binding, anyhow::Error>
 {
-	let port = settings.port.ok_or_else(|| anyhow!("missing 'port'"))?;
-
-	Ok(Binding {
-		connection: None,
-		port,
-	})
+	match setup
+	{
+		Setup::Real {
+			http,
+			registration_url,
+		} => Connection::bind(http, registration_url).await,
+		Setup::Dev { port } =>
+		{
+			let binding = Binding {
+				connection: None,
+				port,
+			};
+			Ok(binding)
+		}
+	}
 }
 
 impl Binding
@@ -76,7 +100,7 @@ impl Binding
 
 impl Connection
 {
-	async fn bind(settings: &Settings) -> Result<Binding, anyhow::Error>
+	fn setup(settings: &Settings) -> Result<Setup, anyhow::Error>
 	{
 		let url = settings
 			.login_server
@@ -97,6 +121,18 @@ impl Connection
 
 		let http = http::Client::builder().user_agent(user_agent).build()?;
 
+		let setup = Setup::Real {
+			http,
+			registration_url,
+		};
+		Ok(setup)
+	}
+
+	async fn bind(
+		http: http::Client,
+		registration_url: http::Url,
+	) -> Result<Binding, anyhow::Error>
+	{
 		let response: RegistrationResponse = http
 			.request(http::Method::POST, registration_url.clone())
 			.send()

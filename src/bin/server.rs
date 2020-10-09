@@ -1,10 +1,10 @@
 /* Server */
 
-use epicinium::run_server;
 use epicinium::Settings;
 use epicinium::Version;
+use epicinium::{run_server, setup_server};
 
-use log::info;
+use log::{error, info};
 
 use docopt::Docopt;
 
@@ -87,7 +87,19 @@ fn main() -> std::result::Result<(), anyhow::Error>
 
 	info!("Server started.");
 
-	run_server(&settings, log_setup)?;
+	let server = match setup_server(&settings, log_setup)
+	{
+		Ok(server) => server,
+		Err(error) =>
+		{
+			error!("Error running server: {}", error);
+			error!("{:#?}", error);
+			println!("Error running server: {}", error);
+			return Err(error);
+		}
+	};
+
+	run_server(server);
 
 	info!("Server stopped.");
 
