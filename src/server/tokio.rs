@@ -95,9 +95,6 @@ pub async fn run_server(server: Server)
 		ip_address,
 	} = server;
 
-	// Keep the terminator in scope until the end of run_server().
-	let _scoped_terminate = scoped_terminate;
-
 	let (slack_in, slack_out) = mpsc::channel::<slack_api::Post>(10000);
 	let slack_task = slack_api::run(slack_setup, slack_out);
 
@@ -140,6 +137,8 @@ pub async fn run_server(server: Server)
 	.map(|((), ((), ()), ((), (), ()), ())| ());
 
 	server_task.await;
+
+	let _discarded = scoped_terminate;
 }
 
 async fn accept_clients(

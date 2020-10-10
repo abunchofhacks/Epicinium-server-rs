@@ -92,9 +92,9 @@ fn main() -> std::result::Result<(), anyhow::Error>
 		Ok(server) => server,
 		Err(error) =>
 		{
-			error!("Error running server: {}", error);
+			error!("Error setting up server: {}", error);
 			error!("{:#?}", error);
-			println!("Error running server: {}", error);
+			println!("Error setting up server: {}", error);
 			return Err(error);
 		}
 	};
