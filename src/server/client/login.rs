@@ -1,6 +1,5 @@
 /**/
 
-use crate::server::login::Unlock;
 use crate::server::message::*;
 
 pub use crate::server::login::LoginData;
@@ -26,21 +25,7 @@ pub async fn run(
 		{
 			Ok(logindata) =>
 			{
-				if logindata.unlocks.contains(Unlock::BetaAccess)
-				{
-					joinedbuffer.send(logindata).await?;
-				}
-				else
-				{
-					debug!("Login failed due to insufficient access.");
-					let message = Message::JoinServer {
-						status: Some(ResponseStatus::KeyRequired),
-						content: None,
-						sender: None,
-						metadata: Default::default(),
-					};
-					sendbuffer.send(message).await?;
-				}
+				joinedbuffer.send(logindata).await?;
 			}
 			Err(responsestatus) =>
 			{
