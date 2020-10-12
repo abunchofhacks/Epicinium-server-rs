@@ -154,7 +154,7 @@ pub fn encode(data: &[u8]) -> String
 // Convert a big-endian base32 string back into a big-endian base256 number. A
 // byte array of size S=5N+K is encoded as a word of length l(S)=8N+f(K), where
 // f(0) = 0, f(1) = 2, f(2) = 4, f(3) = 5 and f(4) = 7. Note that l() is
-// surjective, so we can determine the size S of a byte array given l(S).
+// injective, so we can determine the size S of a byte array given l(S).
 pub fn decode(word: &str) -> Result<Vec<u8>, DecodeError>
 {
 	if !word.is_ascii()
@@ -175,6 +175,8 @@ pub fn decode(word: &str) -> Result<Vec<u8>, DecodeError>
 	// E.g. if we had encoded a single uint8_t, we are now decoding two
 	// characters, which is 10 bits, but the first two bits should be zero.
 	let discarded = (wordlength * 5) % 8;
+	// FUTURE this assertion fails if the word is e.g. 1 character, which
+	// shouldn't happen but it shouldn't crash a debug server either.
 	debug_assert!(discarded < 5);
 
 	// We have a buffer of between 0 and 12 bits to draw from; we use the
@@ -352,6 +354,26 @@ mod tests
 				assert_eq!(encode(&decoded), encoded,);
 			}
 		}
+		Ok(())
+	}
+
+	#[test]
+	fn test_inverse_len() -> Result<(), DecodeError>
+	{
+		let len = 256;
+		let text = "a".repeat(len);
+		for n in 0..=len
+		{
+			assert!(decode(&text[0..n]).is_ok());
+		}
+		Ok(())
+	}
+
+	#[test]
+	fn test_garbage() -> Result<(), DecodeError>
+	{
+		assert!(decode("abc ").is_err());
+		assert!(decode("abc\0").is_err());
 		Ok(())
 	}
 }
