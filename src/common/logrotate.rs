@@ -42,7 +42,7 @@ pub fn setup(logname: &str) -> Result<Setup, std::io::Error>
 	let conf = format!(
 		"
 		\"{trace}\" \"{info}\" \"{error}\" {{
-			rotate 20
+			rotate 500
 			size 1M
 			extension .log
 			compress

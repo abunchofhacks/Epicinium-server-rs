@@ -40,3 +40,6 @@ candidate = ["epicinium_lib/candidate"]
 version-is-dev = ["epicinium_lib/version-is-dev"]
 
 no-increase-sockets = []
+
+[profile.release]
+debug = true
