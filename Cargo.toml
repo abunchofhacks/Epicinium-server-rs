@@ -7,7 +7,7 @@ publish = false
 default-run = "server"
 
 [dependencies]
-epicinium_lib = { version = "1.0.4", path = "/home/sander/Documents/Rust/epicinium_lib" }
+epicinium_lib = { version = "1.0.4" }
 openssl = { version = "0.10", features = ["vendored"] }
 rlimit = "*"
 serde = "*"
