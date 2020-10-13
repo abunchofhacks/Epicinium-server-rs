@@ -1,13 +1,13 @@
 [package]
 name = "epicinium"
-version = "1.0.3"
+version = "1.0.4"
 authors = ["Sander in 't Veld <sanderintveld@hotmail.com>"]
 edition = "2018"
 publish = false
 default-run = "server"
 
 [dependencies]
-epicinium_lib = { version = "1.0.3" }
+epicinium_lib = { version = "1.0.4", path = "/home/sander/Documents/Rust/epicinium_lib" }
 openssl = { version = "0.10", features = ["vendored"] }
 rlimit = "*"
 serde = "*"
