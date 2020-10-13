@@ -42,7 +42,7 @@ impl Version
 		Version {
 			major: 1,
 			minor: 0,
-			patch: 2,
+			patch: 3,
 			release: 1,
 		}
 	}
