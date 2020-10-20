@@ -138,26 +138,24 @@ impl Drop for Client
 
 		if self.appears_active_according_to_notifications
 		{
-			let message = if self.has_gracefully_disconnected
+			if self.has_gracefully_disconnected
 			{
-				format!("Someone was peeking. (v{})", self.version).to_string()
+				info!("Someone was peeking. (v{})", self.version);
 			}
 			else if !self.username.is_empty()
 			{
-				format!("User '{}' crashed. (v{})", self.username, self.version)
-					.to_string()
+				info!("User '{}' crashed. (v{})", self.username, self.version);
 			}
 			else
 			{
-				format!("Someone crashed. (v{})", self.version).to_string()
-			};
-			let post = slack_api::Post { message };
-			match self.slack_api.try_send(post)
-			{
-				Ok(()) => (),
-				Err(e) => error!("Error while dropping client: {:?}", e),
+				info!("Someone crashed. (v{})", self.version);
 			}
 		}
+
+		// We do nothing with slack_api, but the fact that each client has a
+		// reference to it means we won't see "Server stopped" until all
+		// clients have disconnected.
+		let _ignored = &self.slack_api;
 	}
 }
 
@@ -741,13 +739,10 @@ async fn handle_update(
 					client.rating_database.send(update).await?;
 				}
 
-				let message = format!(
+				info!(
 					"User '{}' joined. (v{})",
 					client.username, client.version,
-				)
-				.to_string();
-				let post = slack_api::Post { message };
-				client.slack_api.send(post).await?;
+				);
 				client.appears_active_according_to_notifications = true;
 
 				client.general_chat = Some(chat);
@@ -954,13 +949,7 @@ async fn handle_message(
 				};
 				general_chat.send(update).await?;
 
-				let message = format!(
-					"User '{}' left. (v{})",
-					client.username, client.version,
-				)
-				.to_string();
-				let post = slack_api::Post { message };
-				client.slack_api.send(post).await?;
+				info!("User '{}' left. (v{})", client.username, client.version,);
 				client.appears_active_according_to_notifications = false;
 
 				if !client.closing
