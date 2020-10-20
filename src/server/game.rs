@@ -1460,13 +1460,13 @@ async fn retire(
 		None => return Ok(()),
 	};
 
-	// Resigning while not yet being defeated is not rated
-	// as a defeat until they reach the third action phase,
+	// Because players may resign immediately after starting the game,
+	// e.g. due to lobby mishaps or deciding not to play on a certain map,
+	// the game is not rated until the game reaches the third action phase,
 	// which is when the Automaton updates its _round variable.
 	// Note that this means it is possible for someone to resign while unrated
 	// even though their opponent keeps playing a rated game.
-	let is_rated =
-		automaton.is_defeated(client.color) || automaton.current_round() >= 3;
+	let is_rated = automaton.current_round() >= 3;
 	let result = PlayerResult {
 		user_id: client.user_id,
 		username: client.username.clone(),

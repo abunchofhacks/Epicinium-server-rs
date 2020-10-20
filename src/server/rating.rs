@@ -223,6 +223,13 @@ fn adjust(rating: f64, score: i32, match_type: MatchType) -> Option<f64>
 		// Increase the rating by the gain.
 		std::cmp::max(0, std::cmp::min(ratingtenths + gaintenths, 1000))
 	}
+	// ... or increase by a minimal amount because they were victorious ...
+	else if score > 0
+	{
+		let gaintenths = 1;
+		// Increase the rating by the gain.
+		std::cmp::max(0, std::cmp::min(ratingtenths + gaintenths, 1000))
+	}
 	// ... or decrease...
 	else if scoretenths < ratingtenths
 	{
