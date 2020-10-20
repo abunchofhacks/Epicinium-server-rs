@@ -11,6 +11,7 @@ use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
 use crate::logic::ruleset;
 use crate::server::botslot::Botslot;
+use crate::server::botslot::EmptyBotslot;
 use crate::server::lobby;
 use crate::server::lobby::LobbyType;
 
@@ -121,16 +122,16 @@ pub enum Message
 	},
 	ClaimAi
 	{
-		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
-		slot: Option<Botslot>,
+		#[serde(rename = "sender")]
+		username_or_slot: UsernameOrSlot,
 
 		#[serde(rename = "content")]
 		ai_name: String,
 	},
 	ClaimDifficulty
 	{
-		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
-		slot: Option<Botslot>,
+		#[serde(rename = "sender")]
+		username_or_slot: UsernameOrSlot,
 
 		difficulty: Difficulty,
 	},
@@ -386,6 +387,7 @@ pub enum VisionType
 #[serde(untagged)]
 pub enum UsernameOrSlot
 {
+	Empty(EmptyBotslot),
 	Slot(Botslot),
 	Username(String),
 }

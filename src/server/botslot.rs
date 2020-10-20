@@ -155,3 +155,71 @@ impl std::fmt::Display for DecodeError
 		}
 	}
 }
+
+#[derive(Debug, Copy, Clone)]
+pub struct EmptyBotslot;
+
+impl std::fmt::Display for EmptyBotslot
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+	{
+		write!(f, "")
+	}
+}
+
+impl std::str::FromStr for EmptyBotslot
+{
+	type Err = NotEmptyError;
+
+	fn from_str(s: &str) -> Result<EmptyBotslot, NotEmptyError>
+	{
+		if s.is_empty()
+		{
+			Ok(EmptyBotslot)
+		}
+		else
+		{
+			Err(NotEmptyError::NotEmpty)
+		}
+	}
+}
+
+impl Serialize for EmptyBotslot
+{
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+	where
+		S: Serializer,
+	{
+		self.to_string().serialize(serializer)
+	}
+}
+
+impl<'de> Deserialize<'de> for EmptyBotslot
+{
+	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+	where
+		D: Deserializer<'de>,
+	{
+		let s = String::deserialize(deserializer)?;
+		std::str::FromStr::from_str(&s).map_err(::serde::de::Error::custom)
+	}
+}
+
+#[derive(Debug)]
+pub enum NotEmptyError
+{
+	NotEmpty,
+}
+
+impl std::error::Error for NotEmptyError {}
+
+impl std::fmt::Display for NotEmptyError
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
+	{
+		match self
+		{
+			NotEmptyError::NotEmpty => write!(f, "not empty"),
+		}
+	}
+}

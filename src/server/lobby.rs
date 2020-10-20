@@ -114,12 +114,12 @@ pub enum Sub
 	},
 	ClaimAi
 	{
-		slot: Option<Botslot>,
+		username_or_slot: UsernameOrSlot,
 		ai_name: String,
 	},
 	ClaimDifficulty
 	{
-		slot: Option<Botslot>,
+		username_or_slot: UsernameOrSlot,
 		difficulty: Difficulty,
 	},
 	AddBot
@@ -481,14 +481,20 @@ async fn handle_sub(
 			change_visiontype(lobby, clients, username_or_slot, visiontype);
 			Ok(None)
 		}
-		Sub::ClaimAi { slot, ai_name } =>
+		Sub::ClaimAi {
+			username_or_slot,
+			ai_name,
+		} =>
 		{
-			change_ai(lobby, clients, slot, ai_name);
+			change_ai(lobby, clients, username_or_slot, ai_name);
 			Ok(None)
 		}
-		Sub::ClaimDifficulty { slot, difficulty } =>
+		Sub::ClaimDifficulty {
+			username_or_slot,
+			difficulty,
+		} =>
 		{
-			change_difficulty(lobby, clients, slot, difficulty);
+			change_difficulty(lobby, clients, username_or_slot, difficulty);
 			Ok(None)
 		}
 
@@ -849,11 +855,11 @@ fn do_join(
 			slot: Some(bot.slot),
 		});
 		newcomer.handle.send(Message::ClaimAi {
-			slot: Some(bot.slot),
+			username_or_slot: UsernameOrSlot::Slot(bot.slot),
 			ai_name: bot.ai_name.clone(),
 		});
 		newcomer.handle.send(Message::ClaimDifficulty {
-			slot: Some(bot.slot),
+			username_or_slot: UsernameOrSlot::Slot(bot.slot),
 			difficulty: bot.difficulty,
 		});
 		if let Some(&color) = lobby.bot_colors.get(&bot.slot)
@@ -1135,10 +1141,23 @@ fn change_role(
 fn change_color(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
-	username_or_slot: UsernameOrSlot,
+	mut username_or_slot: UsernameOrSlot,
 	color: PlayerColor,
 )
 {
+	if let UsernameOrSlot::Empty(_empty) = username_or_slot
+	{
+		match lobby.bots.last()
+		{
+			Some(bot) =>
+			{
+				username_or_slot = UsernameOrSlot::Slot(bot.slot);
+			}
+			None =>
+			{}
+		}
+	}
+
 	let resulting_color = match &username_or_slot
 	{
 		UsernameOrSlot::Username(ref username) =>
@@ -1248,6 +1267,12 @@ fn change_color(
 				}
 			}
 		}
+		&UsernameOrSlot::Empty(_empty) =>
+		{
+			warn!("Failed to find latest bot: there are no bots.");
+			// FUTURE let the sender know somehow?
+			return;
+		}
 	};
 
 	// Broadcast whatever the result of the claim was.
@@ -1263,7 +1288,7 @@ fn change_color(
 fn change_visiontype(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
-	username_or_slot: UsernameOrSlot,
+	mut username_or_slot: UsernameOrSlot,
 	mut visiontype: VisionType,
 )
 {
@@ -1272,6 +1297,19 @@ fn change_visiontype(
 	{
 		warn!("Cannot change visiontype in onevsone lobby {}.", lobby.id);
 		visiontype = VisionType::Normal;
+	}
+
+	if let UsernameOrSlot::Empty(_empty) = username_or_slot
+	{
+		match lobby.bots.last()
+		{
+			Some(bot) =>
+			{
+				username_or_slot = UsernameOrSlot::Slot(bot.slot);
+			}
+			None =>
+			{}
+		}
 	}
 
 	match &username_or_slot
@@ -1315,6 +1353,12 @@ fn change_visiontype(
 
 			lobby.bot_visiontypes.insert(slot, visiontype);
 		}
+		&UsernameOrSlot::Empty(_empty) =>
+		{
+			warn!("Failed to find latest bot: there are no bots.");
+			// FUTURE let the sender know somehow?
+			return;
+		}
 	};
 
 	// Broadcast the claim.
@@ -1330,10 +1374,26 @@ fn change_visiontype(
 fn change_ai(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
-	slot: Option<Botslot>,
+	username_or_slot: UsernameOrSlot,
 	ai_name: String,
 )
 {
+	let slot: Option<Botslot> = match username_or_slot
+	{
+		UsernameOrSlot::Username(username) =>
+		{
+			warn!("Failed to find bot with username '{:?}'.", username);
+			// FUTURE let the sender know somehow?
+			return;
+		}
+		UsernameOrSlot::Slot(slot) => Some(slot),
+		UsernameOrSlot::Empty(_empty) => match lobby.bots.last()
+		{
+			Some(bot) => Some(bot.slot),
+			None => None,
+		},
+	};
+
 	let mut bot = {
 		let found = match slot
 		{
@@ -1358,7 +1418,7 @@ fn change_ai(
 		for client in clients.into_iter()
 		{
 			client.handle.send(Message::ClaimAi {
-				slot: Some(bot.slot),
+				username_or_slot: UsernameOrSlot::Slot(bot.slot),
 				ai_name: bot.ai_name.clone(),
 			});
 		}
@@ -1373,7 +1433,7 @@ fn change_ai(
 		for client in clients.into_iter()
 		{
 			client.handle.send(Message::ClaimAi {
-				slot: Some(bot.slot),
+				username_or_slot: UsernameOrSlot::Slot(bot.slot),
 				ai_name: bot.ai_name.clone(),
 			});
 		}
@@ -1397,7 +1457,7 @@ fn change_ai(
 	for client in clients.into_iter()
 	{
 		client.handle.send(Message::ClaimAi {
-			slot: Some(bot.slot),
+			username_or_slot: UsernameOrSlot::Slot(bot.slot),
 			ai_name: bot.ai_name.clone(),
 		});
 	}
@@ -1406,10 +1466,26 @@ fn change_ai(
 fn change_difficulty(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
-	slot: Option<Botslot>,
+	username_or_slot: UsernameOrSlot,
 	difficulty: Difficulty,
 )
 {
+	let slot: Option<Botslot> = match username_or_slot
+	{
+		UsernameOrSlot::Username(username) =>
+		{
+			warn!("Failed to find bot with username '{:?}'.", username);
+			// FUTURE let the sender know somehow?
+			return;
+		}
+		UsernameOrSlot::Slot(slot) => Some(slot),
+		UsernameOrSlot::Empty(_empty) => match lobby.bots.last()
+		{
+			Some(bot) => Some(bot.slot),
+			None => None,
+		},
+	};
+
 	let mut bot = {
 		let found = match slot
 		{
@@ -1434,7 +1510,7 @@ fn change_difficulty(
 		for client in clients.into_iter()
 		{
 			client.handle.send(Message::ClaimDifficulty {
-				slot: Some(bot.slot),
+				username_or_slot: UsernameOrSlot::Slot(bot.slot),
 				difficulty,
 			});
 		}
@@ -1446,7 +1522,7 @@ fn change_difficulty(
 	for client in clients.into_iter()
 	{
 		client.handle.send(Message::ClaimDifficulty {
-			slot: Some(bot.slot),
+			username_or_slot: UsernameOrSlot::Slot(bot.slot),
 			difficulty,
 		});
 	}
@@ -1497,11 +1573,11 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 			slot: Some(bot.slot),
 		});
 		client.handle.send(Message::ClaimAi {
-			slot: Some(bot.slot),
+			username_or_slot: UsernameOrSlot::Slot(bot.slot),
 			ai_name: bot.ai_name.clone(),
 		});
 		client.handle.send(Message::ClaimDifficulty {
-			slot: Some(bot.slot),
+			username_or_slot: UsernameOrSlot::Slot(bot.slot),
 			difficulty: bot.difficulty,
 		});
 	}
@@ -1962,8 +2038,10 @@ async fn become_tutorial_lobby(
 	for _ in 0..num
 	{
 		add_bot(lobby, clients);
-		change_ai(lobby, clients, None, ai_name.to_string());
-		change_difficulty(lobby, clients, None, difficulty);
+		let latest = UsernameOrSlot::Empty(botslot::EmptyBotslot);
+		change_ai(lobby, clients, latest, ai_name.to_string());
+		let latest = UsernameOrSlot::Empty(botslot::EmptyBotslot);
+		change_difficulty(lobby, clients, latest, difficulty);
 	}
 
 	Ok(())
@@ -2033,8 +2111,10 @@ async fn become_challenge_lobby(
 	for _ in 0..num
 	{
 		add_bot(lobby, clients);
-		change_ai(lobby, clients, None, ai_name.clone());
-		change_difficulty(lobby, clients, None, difficulty);
+		let latest = UsernameOrSlot::Empty(botslot::EmptyBotslot);
+		change_ai(lobby, clients, latest, ai_name.clone());
+		let latest = UsernameOrSlot::Empty(botslot::EmptyBotslot);
+		change_difficulty(lobby, clients, latest, difficulty);
 	}
 
 	Ok(())
@@ -2225,7 +2305,8 @@ fn block_ai(lobby: &mut Lobby, clients: &mut Vec<Client>, blocker: String)
 		for slot in to_be_changed
 		{
 			let replacement = "RampantRhino".to_string();
-			change_ai(lobby, clients, Some(slot), replacement);
+			let username_or_slot = UsernameOrSlot::Slot(slot);
+			change_ai(lobby, clients, username_or_slot, replacement);
 		}
 
 		lobby.ai_name_blockers.push(blocker);

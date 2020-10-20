@@ -1275,12 +1275,15 @@ async fn handle_message(
 				debug!("Ignoring ClaimVisionType from unlobbied client");
 			}
 		},
-		Message::ClaimAi { slot, ai_name } => match client.lobby
+		Message::ClaimAi {
+			username_or_slot,
+			ai_name,
+		} => match client.lobby
 		{
 			Some(ref mut lobby) =>
 			{
 				let update = lobby::Update::ForSetup(lobby::Sub::ClaimAi {
-					slot,
+					username_or_slot,
 					ai_name,
 				});
 				lobby.send(update).await?;
@@ -1290,13 +1293,16 @@ async fn handle_message(
 				debug!("Ignoring ClaimAi from unlobbied client");
 			}
 		},
-		Message::ClaimDifficulty { slot, difficulty } => match client.lobby
+		Message::ClaimDifficulty {
+			username_or_slot,
+			difficulty,
+		} => match client.lobby
 		{
 			Some(ref mut lobby) =>
 			{
 				let update =
 					lobby::Update::ForSetup(lobby::Sub::ClaimDifficulty {
-						slot,
+						username_or_slot,
 						difficulty,
 					});
 				lobby.send(update).await?;
