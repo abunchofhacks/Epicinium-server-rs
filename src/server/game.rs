@@ -438,6 +438,20 @@ pub enum Sub
 	{
 		client_id: Keycode
 	},
+	BotOrders
+	{
+		client_id: Keycode,
+		slot: Botslot,
+		orders: Vec<Order>,
+	},
+	BotSync
+	{
+		client_id: Keycode, slot: Botslot
+	},
+	BotResign
+	{
+		client_id: Keycode, slot: Botslot
+	},
 }
 
 #[derive(Debug)]
@@ -517,6 +531,7 @@ async fn iterate(
 
 	let message = Message::Sync {
 		time_remaining_in_seconds: planning_time_in_seconds,
+		connected_bot: None,
 	};
 	for client in players.into_iter()
 	{
@@ -580,7 +595,10 @@ fn broadcast(
 	for client in players
 	{
 		let changes = cset.get(client.color);
-		let message = Message::Changes { changes };
+		let message = Message::Changes {
+			changes,
+			connected_bot: None,
+		};
 		client.handle.send(message);
 	}
 
@@ -593,7 +611,10 @@ fn broadcast(
 	for client in watchers
 	{
 		let changes = cset.get(client.vision_level);
-		let message = Message::Changes { changes };
+		let message = Message::Changes {
+			changes,
+			connected_bot: None,
+		};
 		client.handle.send(message);
 	}
 
@@ -629,6 +650,10 @@ async fn rest(
 			{
 				debug!("Ignoring orders from {} while resting", client_id);
 			}
+			Update::ForGame(Sub::BotOrders { client_id, .. }) =>
+			{
+				debug!("Ignoring orders from {} while resting", client_id);
+			}
 			Update::ForGame(Sub::Sync { client_id }) =>
 			{
 				for client in players.iter_mut()
@@ -646,9 +671,19 @@ async fn rest(
 					}
 				}
 			}
+			Update::ForGame(Sub::BotSync { client_id, slot }) =>
+			{
+				// TODO
+				unimplemented!()
+			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
 				handle_resign(lobby, automaton, players, client_id).await?;
+			}
+			Update::ForGame(Sub::BotResign { client_id, slot }) =>
+			{
+				// TODO
+				unimplemented!()
 			}
 			Update::Leave {
 				client_id,
@@ -762,13 +797,26 @@ async fn ensure_live_players(
 			{
 				debug!("Ignoring orders from {} after resting", client_id);
 			}
+			Update::ForGame(Sub::BotOrders { client_id, .. }) =>
+			{
+				debug!("Ignoring orders from {} after resting", client_id);
+			}
 			Update::ForGame(Sub::Sync { client_id }) =>
+			{
+				debug!("Ignoring sync from {} after resting", client_id);
+			}
+			Update::ForGame(Sub::BotSync { client_id, .. }) =>
 			{
 				debug!("Ignoring sync from {} after resting", client_id);
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
 				handle_resign(lobby, automaton, players, client_id).await?;
+			}
+			Update::ForGame(Sub::BotResign { client_id, slot }) =>
+			{
+				// TODO
+				unimplemented!()
 			}
 			Update::Leave {
 				client_id,
@@ -895,7 +943,20 @@ async fn sleep(
 					}
 				}
 			}
+			Update::ForGame(Sub::BotOrders {
+				client_id,
+				slot,
+				orders,
+			}) =>
+			{
+				// TODO
+				unimplemented!()
+			}
 			Update::ForGame(Sub::Sync { client_id }) =>
+			{
+				debug!("Ignoring sync from {} while sleeping", client_id);
+			}
+			Update::ForGame(Sub::BotSync { client_id, .. }) =>
 			{
 				debug!("Ignoring sync from {} while sleeping", client_id);
 			}
@@ -908,6 +969,11 @@ async fn sleep(
 					trace!("Ending sleep early");
 					return Ok(());
 				}
+			}
+			Update::ForGame(Sub::BotResign { client_id, slot }) =>
+			{
+				// TODO
+				unimplemented!()
 			}
 			Update::Leave {
 				client_id,
@@ -1039,13 +1105,32 @@ async fn stage(
 					}
 				}
 			}
+			Update::ForGame(Sub::BotOrders {
+				client_id,
+				slot,
+				orders,
+			}) =>
+			{
+				// TODO
+				unimplemented!()
+			}
+
 			Update::ForGame(Sub::Sync { client_id }) =>
+			{
+				debug!("Ignoring sync from {} while staging", client_id);
+			}
+			Update::ForGame(Sub::BotSync { client_id, .. }) =>
 			{
 				debug!("Ignoring sync from {} while staging", client_id);
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
 				handle_resign(lobby, automaton, players, client_id).await?;
+			}
+			Update::ForGame(Sub::BotResign { client_id, slot }) =>
+			{
+				// TODO
+				unimplemented!()
 			}
 			Update::Leave {
 				client_id,
@@ -1353,7 +1438,10 @@ fn do_join(
 	client_handle.send(Message::ReplayWithAnimations {
 		on_or_off: OnOrOff::Off,
 	});
-	client_handle.send(Message::Changes { changes });
+	client_handle.send(Message::Changes {
+		changes,
+		connected_bot: None,
+	});
 	client_handle.send(Message::ReplayWithAnimations {
 		on_or_off: OnOrOff::On,
 	});
@@ -1365,6 +1453,7 @@ fn do_join(
 		{
 			client_handle.send(Message::Sync {
 				time_remaining_in_seconds,
+				connected_bot: None,
 			});
 		}
 		RejoinPhase::Other =>
@@ -1372,6 +1461,7 @@ fn do_join(
 	}
 
 	let update = client::Update::JoinedLobby {
+		lobby_id: lobby.id,
 		lobby: lobby_sendbuffer,
 	};
 	client_handle.notify(update);

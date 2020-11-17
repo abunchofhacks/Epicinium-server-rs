@@ -52,6 +52,7 @@ pub enum Unlock
 	BetaAccess,
 	Supporter,
 	Guest,
+	Bot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -264,6 +265,18 @@ impl Connection
 		request: Request,
 	) -> Result<LoginData, ResponseStatus>
 	{
+		if !request
+			.account_identifier
+			.chars()
+			.all(|x| x.is_ascii_digit())
+		{
+			error!(
+				"Login failed: refusing account id with non-digits '{}'",
+				request.account_identifier
+			);
+			return Err(ResponseStatus::RequestMalformed);
+		}
+
 		let payload = ValidateSessionPayload {
 			session_token: request.token,
 			account_id_as_string: request.account_identifier,

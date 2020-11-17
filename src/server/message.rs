@@ -188,6 +188,10 @@ pub enum Message
 	{
 		#[serde(rename = "content")]
 		ruleset_name: String,
+
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		#[serde(rename = "metadata")]
+		connected_bot: Option<ConnectedBotMetadata>,
 	},
 	EnableCustomMaps,
 	AssignColor
@@ -279,26 +283,46 @@ pub enum Message
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
 		username: Option<String>,
+
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		#[serde(rename = "metadata")]
+		connected_bot: Option<ConnectedBotMetadata>,
 	},
 	#[serde(rename = "change")]
 	Changes
 	{
 		changes: Vec<Change>,
+
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		#[serde(rename = "metadata")]
+		connected_bot: Option<ConnectedBotMetadata>,
 	},
 	#[serde(rename = "order_old")]
 	OrdersOld
 	{
 		orders: Vec<Order>,
+
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		#[serde(rename = "metadata")]
+		connected_bot: Option<ConnectedBotMetadata>,
 	},
 	#[serde(rename = "order_new")]
 	OrdersNew
 	{
 		orders: Vec<Order>,
+
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		#[serde(rename = "metadata")]
+		connected_bot: Option<ConnectedBotMetadata>,
 	},
 	Sync
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "time")]
 		time_remaining_in_seconds: Option<u32>,
+
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		#[serde(rename = "metadata")]
+		connected_bot: Option<ConnectedBotMetadata>,
 	},
 	Init,
 	RatingAndStars
@@ -428,6 +452,9 @@ pub struct TagMetadata
 	pub guest: bool,
 
 	#[serde(default, skip_serializing_if = "is_zero")]
+	pub bot: bool,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
 	pub supporter: bool,
 }
 
@@ -454,6 +481,13 @@ pub struct LobbyMetadata
 pub struct AccountLinkingMetadata
 {
 	pub discord_user_id: String,
+}
+
+#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
+pub struct ConnectedBotMetadata
+{
+	pub lobby_id: Keycode,
+	pub slot: Botslot,
 }
 
 #[derive(

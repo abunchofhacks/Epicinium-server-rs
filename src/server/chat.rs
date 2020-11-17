@@ -430,6 +430,10 @@ fn generate_join_metadata(
 	{
 		metadata.guest = true;
 	}
+	if unlocks.contains(Unlock::Bot)
+	{
+		metadata.bot = true;
+	}
 	if unlocks.contains(Unlock::Supporter)
 	{
 		metadata.supporter = true;

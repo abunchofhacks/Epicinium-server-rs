@@ -154,6 +154,13 @@ pub enum Sub
 		ruleset_name: String,
 		general_chat: mpsc::Sender<chat::Update>,
 	},
+	BotConfirmRuleset
+	{
+		client_id: Keycode,
+		slot: Botslot,
+		ruleset_name: String,
+		general_chat: mpsc::Sender<chat::Update>,
+	},
 
 	Start
 	{
@@ -557,6 +564,17 @@ async fn handle_sub(
 			.await
 		}
 
+		Sub::BotConfirmRuleset {
+			client_id,
+			slot,
+			ruleset_name,
+			mut general_chat,
+		} =>
+		{
+			// TODO
+			unimplemented!()
+		}
+
 		Sub::Start { mut general_chat } =>
 		{
 			try_start(lobby, clients, &mut general_chat).await
@@ -897,6 +915,7 @@ fn do_join(
 
 		newcomer.handle.send(Message::ListRuleset {
 			ruleset_name: lobby.ruleset_name.clone(),
+			connected_bot: None,
 		});
 		newcomer.handle.send(Message::PickRuleset {
 			ruleset_name: lobby.ruleset_name.clone(),
@@ -920,6 +939,7 @@ fn do_join(
 	newcomer.handle.send(message);
 
 	let update = client::Update::JoinedLobby {
+		lobby_id: lobby.id,
 		lobby: lobby_sendbuffer,
 	};
 	newcomer.handle.notify(update);
@@ -2266,6 +2286,7 @@ async fn pick_ruleset(
 	// reconfirm the ruleset every time it is picked, just once it is listed.
 	let listmessage = Message::ListRuleset {
 		ruleset_name: lobby.ruleset_name.clone(),
+		connected_bot: None,
 	};
 	let pickmessage = Message::PickRuleset {
 		ruleset_name: lobby.ruleset_name.clone(),
@@ -2530,6 +2551,7 @@ async fn try_start(
 		// List the new ruleset to trigger additional confirmations.
 		let message = Message::ListRuleset {
 			ruleset_name: lobby.ruleset_name.clone(),
+			connected_bot: None,
 		};
 		for client in clients.iter_mut()
 		{

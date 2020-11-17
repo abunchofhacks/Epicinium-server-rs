@@ -63,6 +63,8 @@ struct Client
 	canary_for_lobbies: mpsc::Sender<()>,
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
 	lobby: Option<mpsc::Sender<lobby::Update>>,
+	bot_lobbies:
+		std::collections::HashMap<Keycode, mpsc::Sender<lobby::Update>>,
 	has_proper_version: bool,
 	has_proper_version_a: sync::Arc<atomic::AtomicBool>,
 	appears_active_according_to_notifications: bool,
@@ -75,6 +77,14 @@ struct Client
 	pub unlocks: EnumSet<Unlock>,
 
 	closing: bool,
+}
+
+impl Client
+{
+	fn is_bot(&self) -> bool
+	{
+		self.unlocks.contains(Unlock::Bot)
+	}
 }
 
 impl Drop for Client
@@ -134,6 +144,35 @@ impl Drop for Client
 			},
 			None =>
 			{}
+		}
+
+		if !self.bot_lobbies.is_empty()
+		{
+			match general_chat
+			{
+				Some(ref general_chat) =>
+				{
+					for (_, mut lobby) in self.bot_lobbies.drain()
+					{
+						let update = lobby::Update::Leave {
+							client_id: self.id,
+							general_chat: general_chat.clone(),
+						};
+						match lobby.try_send(update)
+						{
+							Ok(()) => (),
+							Err(e) =>
+							{
+								error!("Error while dropping client: {:?}", e)
+							}
+						}
+					}
+				}
+				None =>
+				{
+					warn!("Expected general_chat when dropping lobby");
+				}
+			}
 		}
 
 		if self.appears_active_according_to_notifications
@@ -211,6 +250,7 @@ pub fn accept(
 		lobby_authority: lobby_authority,
 		canary_for_lobbies,
 		lobby: None,
+		bot_lobbies: std::collections::HashMap::new(),
 		has_proper_version: false,
 		has_proper_version_a: sync::Arc::new(atomic::AtomicBool::new(false)),
 		appears_active_according_to_notifications: false,
@@ -371,6 +411,7 @@ pub enum Update
 	},
 	JoinedLobby
 	{
+		lobby_id: Keycode,
 		lobby: mpsc::Sender<lobby::Update>,
 	},
 	RatingAndStars,
@@ -793,9 +834,16 @@ async fn handle_update(
 			})?;
 			Ok(None)
 		}
-		Update::JoinedLobby { lobby } =>
+		Update::JoinedLobby { lobby_id, lobby } =>
 		{
-			client.lobby = Some(lobby);
+			if client.is_bot()
+			{
+				client.bot_lobbies.insert(lobby_id, lobby);
+			}
+			else
+			{
+				client.lobby = Some(lobby);
+			}
 			Ok(None)
 		}
 
@@ -938,6 +986,15 @@ async fn handle_message(
 					{}
 				}
 
+				for (_, mut lobby) in client.bot_lobbies.drain()
+				{
+					let update = lobby::Update::Leave {
+						client_id: client.id,
+						general_chat: general_chat.clone(),
+					};
+					lobby.send(update).await?;
+				}
+
 				if let Some(user_id) = client.user_id
 				{
 					let update = rating::Update::Left { user_id };
@@ -979,6 +1036,11 @@ async fn handle_message(
 			{
 				debug!("Ignoring LinkAccounts from client without username");
 			}
+		}
+		Message::JoinLobby { .. } if client.is_bot() =>
+		{
+			debug!("Invalid message from bot: {:?}", message);
+			return Err(Error::Invalid);
 		}
 		Message::JoinLobby { .. } if client.closing =>
 		{
@@ -1047,6 +1109,11 @@ async fn handle_message(
 		Message::LeaveLobby { .. } =>
 		{
 			warn!("Invalid message from client: {:?}", message);
+			return Err(Error::Invalid);
+		}
+		Message::MakeLobby { .. } if client.is_bot() =>
+		{
+			debug!("Invalid message from bot: {:?}", message);
 			return Err(Error::Invalid);
 		}
 		Message::MakeLobby { .. } if client.closing =>
@@ -1364,7 +1431,41 @@ async fn handle_message(
 				debug!("Ignoring PickRuleset from unlobbied client");
 			}
 		},
-		Message::ListRuleset { ruleset_name } => match client.lobby
+		Message::ListRuleset {
+			ruleset_name,
+			connected_bot: Some(ConnectedBotMetadata { lobby_id, slot }),
+		} if client.is_bot() =>
+		{
+			if let Some(lobby) = client.bot_lobbies.get_mut(&lobby_id)
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						error!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::BotConfirmRuleset {
+						client_id: client.id,
+						slot,
+						general_chat,
+						ruleset_name,
+					});
+				lobby.send(update).await?;
+			}
+			else
+			{
+				debug!("Ignoring ListRuleset from unlobbied bot");
+			}
+		}
+		Message::ListRuleset {
+			ruleset_name,
+			connected_bot: _,
+		} => match client.lobby
 		{
 			Some(ref mut lobby) =>
 			{
@@ -1497,7 +1598,28 @@ async fn handle_message(
 				debug!("Ignoring Start from unlobbied client");
 			}
 		},
-		Message::Resign { username: None } => match client.lobby
+		Message::Resign {
+			username: None,
+			connected_bot: Some(ConnectedBotMetadata { lobby_id, slot }),
+		} if client.is_bot() =>
+		{
+			if let Some(lobby) = client.bot_lobbies.get_mut(&lobby_id)
+			{
+				let update = lobby::Update::ForGame(game::Sub::BotResign {
+					client_id: client.id,
+					slot: slot,
+				});
+				lobby.send(update).await?;
+			}
+			else
+			{
+				debug!("Ignoring ListRuleset from unlobbied bot");
+			}
+		}
+		Message::Resign {
+			username: None,
+			connected_bot: _,
+		} => match client.lobby
 		{
 			Some(ref mut lobby) =>
 			{
@@ -1516,7 +1638,29 @@ async fn handle_message(
 			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
-		Message::OrdersNew { orders } => match client.lobby
+		Message::OrdersNew {
+			orders,
+			connected_bot: Some(ConnectedBotMetadata { lobby_id, slot }),
+		} if client.is_bot() =>
+		{
+			if let Some(lobby) = client.bot_lobbies.get_mut(&lobby_id)
+			{
+				let update = lobby::Update::ForGame(game::Sub::BotOrders {
+					client_id: client.id,
+					slot: slot,
+					orders,
+				});
+				lobby.send(update).await?;
+			}
+			else
+			{
+				debug!("Ignoring ListRuleset from unlobbied bot");
+			}
+		}
+		Message::OrdersNew {
+			orders,
+			connected_bot: _,
+		} => match client.lobby
 		{
 			Some(ref mut lobby) =>
 			{
@@ -1533,6 +1677,25 @@ async fn handle_message(
 		},
 		Message::Sync {
 			time_remaining_in_seconds: None,
+			connected_bot: Some(ConnectedBotMetadata { lobby_id, slot }),
+		} if client.is_bot() =>
+		{
+			if let Some(lobby) = client.bot_lobbies.get_mut(&lobby_id)
+			{
+				let update = lobby::Update::ForGame(game::Sub::BotSync {
+					client_id: client.id,
+					slot: slot,
+				});
+				lobby.send(update).await?;
+			}
+			else
+			{
+				debug!("Ignoring ListRuleset from unlobbied bot");
+			}
+		}
+		Message::Sync {
+			time_remaining_in_seconds: None,
+			connected_bot: _,
 		} => match client.lobby
 		{
 			Some(ref mut lobby) =>
