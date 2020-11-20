@@ -1597,28 +1597,7 @@ async fn handle_message(
 				debug!("Ignoring Start from unlobbied client");
 			}
 		},
-		Message::Resign {
-			username: None,
-			connected_bot: Some(ConnectedBotMetadata { lobby_id, slot }),
-		} if client.is_bot() =>
-		{
-			if let Some(lobby) = client.bot_lobbies.get_mut(&lobby_id)
-			{
-				let update = lobby::Update::ForGame(game::Sub::BotResign {
-					client_id: client.id,
-					slot: slot,
-				});
-				lobby.send(update).await?;
-			}
-			else
-			{
-				debug!("Ignoring ListRuleset from unlobbied bot");
-			}
-		}
-		Message::Resign {
-			username: None,
-			connected_bot: _,
-		} => match client.lobby
+		Message::Resign { username: None } => match client.lobby
 		{
 			Some(ref mut lobby) =>
 			{
@@ -1676,25 +1655,6 @@ async fn handle_message(
 		},
 		Message::Sync {
 			time_remaining_in_seconds: None,
-			connected_bot: Some(ConnectedBotMetadata { lobby_id, slot }),
-		} if client.is_bot() =>
-		{
-			if let Some(lobby) = client.bot_lobbies.get_mut(&lobby_id)
-			{
-				let update = lobby::Update::ForGame(game::Sub::BotSync {
-					client_id: client.id,
-					slot: slot,
-				});
-				lobby.send(update).await?;
-			}
-			else
-			{
-				debug!("Ignoring ListRuleset from unlobbied bot");
-			}
-		}
-		Message::Sync {
-			time_remaining_in_seconds: None,
-			connected_bot: _,
 		} => match client.lobby
 		{
 			Some(ref mut lobby) =>

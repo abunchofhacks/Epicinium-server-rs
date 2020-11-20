@@ -282,10 +282,6 @@ pub enum Message
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
 		username: Option<String>,
-
-		#[serde(default, skip_serializing_if = "Option::is_none")]
-		#[serde(rename = "metadata")]
-		connected_bot: Option<ConnectedBotMetadata>,
 	},
 	#[serde(rename = "change")]
 	Changes
@@ -318,10 +314,6 @@ pub enum Message
 	{
 		#[serde(default, skip_serializing_if = "is_zero", rename = "time")]
 		time_remaining_in_seconds: Option<u32>,
-
-		#[serde(default, skip_serializing_if = "Option::is_none")]
-		#[serde(rename = "metadata")]
-		connected_bot: Option<ConnectedBotMetadata>,
 	},
 	Init,
 	RatingAndStars

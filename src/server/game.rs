@@ -65,6 +65,7 @@ pub struct BotClient
 	pub slot: Botslot,
 	pub descriptive_name: String,
 	pub ai_metadata: ai::Metadata,
+	pub connected_bot_metadata: ConnectedBotMetadata,
 
 	pub id: Keycode,
 	pub user_id: UserId,
@@ -75,7 +76,6 @@ pub struct BotClient
 	pub vision: VisionType,
 
 	pub is_defeated: bool,
-	pub has_synced: bool,
 	pub submitted_orders: Option<Vec<Order>>,
 }
 
@@ -421,10 +421,9 @@ pub async fn run(
 	};
 
 	// Is this a (rated or unrated) 1v1 match between two humans?
-	let should_mention_on_discord = players.len() == 2
+	let mentioned_on_discord = if players.len() == 2
 		&& connected_bots.len() == 0
-		&& local_bots.len() == 0;
-	if should_mention_on_discord
+		&& local_bots.len() == 0
 	{
 		let post = discord_api::Post::GameStarted {
 			is_rated,
@@ -436,7 +435,18 @@ pub async fn run(
 				.unwrap_or(0),
 		};
 		discord_api.send(post).await?;
+
+		Some(MentionedOnDiscord {
+			first_color: players[0].color,
+			second_color: players[1].color,
+			first_player_username: players[0].username.clone(),
+			second_player_username: players[1].username.clone(),
+		})
 	}
+	else
+	{
+		None
+	};
 
 	let lobby_info = LobbyInfo {
 		id: lobby_id,
@@ -445,7 +455,6 @@ pub async fn run(
 		is_public,
 		match_type,
 		challenge,
-		should_mention_on_discord,
 		num_bots: connected_bots.len() + local_bots.len(),
 		map_name,
 		map_metadata,
@@ -460,7 +469,7 @@ pub async fn run(
 			&lobby_info,
 			&mut automaton,
 			&mut players,
-			// TODO &mut connected_bots,
+			&mut connected_bots,
 			&mut local_bots,
 			&mut watchers,
 			&mut updates,
@@ -476,16 +485,21 @@ pub async fn run(
 	}
 
 	// Did we send a gameStarted post?
-	if should_mention_on_discord
+	if let Some(MentionedOnDiscord {
+		first_color,
+		second_color,
+		first_player_username,
+		second_player_username,
+	}) = mentioned_on_discord
 	{
 		let post = discord_api::Post::GameEnded {
 			is_rated,
-			first_player_username: players[0].username.clone(),
-			is_first_player_defeated: automaton.is_defeated(players[0].color),
-			first_player_score: automaton.score(players[0].color),
-			second_player_username: players[1].username.clone(),
-			is_second_player_defeated: automaton.is_defeated(players[1].color),
-			second_player_score: automaton.score(players[1].color),
+			first_player_username,
+			is_first_player_defeated: automaton.is_defeated(first_color),
+			first_player_score: automaton.score(first_color),
+			second_player_username,
+			is_second_player_defeated: automaton.is_defeated(second_color),
+			second_player_score: automaton.score(second_color),
 		};
 		discord_api.send(post).await?;
 	}
@@ -496,11 +510,15 @@ pub async fn run(
 		retire(&lobby_info, &mut automaton, client).await?;
 	}
 
-	// TODO retire connected bot if this is a Human-vs-Hard match?
-
 	debug!("Game has finished in lobby {}; lingering...", lobby_id);
-	// TODO &mut connected_bots
-	linger(&lobby_info, &mut players, &mut watchers, &mut updates).await?;
+	linger(
+		&lobby_info,
+		&mut players,
+		&mut connected_bots,
+		&mut watchers,
+		&mut updates,
+	)
+	.await?;
 
 	Ok(())
 }
@@ -527,14 +545,6 @@ pub enum Sub
 		slot: Botslot,
 		orders: Vec<Order>,
 	},
-	BotSync
-	{
-		client_id: Keycode, slot: Botslot
-	},
-	BotResign
-	{
-		client_id: Keycode, slot: Botslot
-	},
 }
 
 #[derive(Debug)]
@@ -545,7 +555,6 @@ struct LobbyInfo
 	is_public: bool,
 	match_type: MatchType,
 	challenge: Option<ChallengeId>,
-	should_mention_on_discord: bool,
 	num_bots: usize,
 	map_name: String,
 	map_metadata: map::Metadata,
@@ -553,6 +562,14 @@ struct LobbyInfo
 	planning_time_in_seconds: Option<u32>,
 	description_metadata: LobbyMetadata,
 	initial_messages: Vec<Message>,
+}
+
+struct MentionedOnDiscord
+{
+	first_color: PlayerColor,
+	second_color: PlayerColor,
+	first_player_username: String,
+	second_player_username: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -566,7 +583,8 @@ async fn iterate(
 	lobby: &LobbyInfo,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
-	bots: &mut Vec<LocalBot>,
+	connected_bots: &mut Vec<BotClient>,
+	local_bots: &mut Vec<LocalBot>,
 	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
 	planning_time_in_seconds: Option<u32>,
@@ -575,10 +593,10 @@ async fn iterate(
 	while automaton.is_active()
 	{
 		let cset = automaton.act()?;
-		broadcast(players, bots, watchers, cset)?;
+		broadcast(players, connected_bots, local_bots, watchers, cset)?;
 	}
 
-	// If players are defeated, we no longer wait for them in the
+	// If players or bots are defeated, we no longer wait for them in the
 	// planning phase.
 	for player in players.into_iter()
 	{
@@ -587,9 +605,14 @@ async fn iterate(
 			player.is_defeated = true;
 		}
 	}
-	// If bots are defeated, we no longer ask them for orders in the
-	// action phase.
-	for bot in bots.into_iter()
+	for bot in connected_bots.into_iter()
+	{
+		if automaton.is_defeated(bot.color)
+		{
+			bot.is_defeated = true;
+		}
+	}
+	for bot in local_bots.into_iter()
 	{
 		if automaton.is_defeated(bot.color)
 		{
@@ -597,7 +620,7 @@ async fn iterate(
 		}
 	}
 
-	rest(lobby, automaton, players, watchers, updates).await?;
+	rest(lobby, automaton, players, connected_bots, watchers, updates).await?;
 
 	// If the game has ended, we are done.
 	// We waited with this check until all players have finished animating,
@@ -610,11 +633,18 @@ async fn iterate(
 	// If all live players are disconnected during the resting phase,
 	// the game cannot continue until at least one player reconnects
 	// and has finished rejoining.
-	ensure_live_players(lobby, automaton, players, watchers, updates).await?;
+	ensure_live_players(
+		lobby,
+		automaton,
+		players,
+		connected_bots,
+		watchers,
+		updates,
+	)
+	.await?;
 
 	let message = Message::Sync {
 		time_remaining_in_seconds: planning_time_in_seconds,
-		connected_bot: None,
 	};
 	for client in players.into_iter()
 	{
@@ -628,23 +658,24 @@ async fn iterate(
 	}
 
 	let cset = automaton.hibernate()?;
-	broadcast(players, bots, watchers, cset)?;
+	broadcast(players, connected_bots, local_bots, watchers, cset)?;
 
 	// Allow the bots to calculate their next move.
 	// FUTURE bots could prepare orders asynchronously
 	// FUTURE start planning phase timer before bots prepare orders
-	for bot in bots.into_iter()
+	for bot in local_bots.into_iter()
 	{
 		bot.ai.prepare_orders();
 	}
 
-	sleep(lobby, automaton, players, watchers, updates).await?;
+	sleep(lobby, automaton, players, connected_bots, watchers, updates).await?;
 
 	let cset = automaton.awake()?;
-	broadcast(players, bots, watchers, cset)?;
+	broadcast(players, connected_bots, local_bots, watchers, cset)?;
 
-	stage(lobby, automaton, players, watchers, updates).await?;
+	stage(lobby, automaton, players, connected_bots, watchers, updates).await?;
 
+	// Get submitted or calculated orders.
 	for player in players.into_iter()
 	{
 		if let Some(orders) = player.submitted_orders.take()
@@ -652,8 +683,14 @@ async fn iterate(
 			automaton.receive(player.color, orders)?;
 		}
 	}
-
-	for bot in bots.into_iter()
+	for bot in connected_bots.into_iter()
+	{
+		if let Some(orders) = bot.submitted_orders.take()
+		{
+			automaton.receive(bot.color, orders)?;
+		}
+	}
+	for bot in local_bots.into_iter()
 	{
 		if !bot.is_defeated
 		{
@@ -663,14 +700,15 @@ async fn iterate(
 	}
 
 	let cset = automaton.prepare()?;
-	broadcast(players, bots, watchers, cset)?;
+	broadcast(players, connected_bots, local_bots, watchers, cset)?;
 
 	Ok(State::InProgress)
 }
 
 fn broadcast(
 	players: &mut Vec<PlayerClient>,
-	bots: &mut Vec<LocalBot>,
+	connected_bots: &mut Vec<BotClient>,
+	local_bots: &mut Vec<LocalBot>,
 	watchers: &mut Vec<WatcherClient>,
 	cset: ChangeSet,
 ) -> Result<(), Error>
@@ -685,7 +723,17 @@ fn broadcast(
 		client.handle.send(message);
 	}
 
-	for bot in bots
+	for client in connected_bots
+	{
+		let changes = cset.get(client.color);
+		let message = Message::Changes {
+			changes,
+			connected_bot: Some(client.connected_bot_metadata.clone()),
+		};
+		client.handle.send(message);
+	}
+
+	for bot in local_bots
 	{
 		let changes = cset.get(bot.color);
 		bot.ai.receive(changes)?;
@@ -708,6 +756,7 @@ async fn rest(
 	lobby: &LobbyInfo,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
+	bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
 ) -> Result<(), Error>
@@ -717,6 +766,8 @@ async fn rest(
 	// reconnect in the resting phase while others are animating.
 	// Players will wait until other players have fully rejoined,
 	// and watchers wait until other watchers have rejoined.
+	// Players will not wait for bots to sync, because bots do not animate
+	// their changes.
 	while !all_players_or_watchers_have_synced(players, watchers)
 	{
 		trace!("Waiting until all players/watchers have synced...");
@@ -754,19 +805,9 @@ async fn rest(
 					}
 				}
 			}
-			Update::ForGame(Sub::BotSync { client_id, slot }) =>
-			{
-				// TODO
-				unimplemented!()
-			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
 				handle_resign(lobby, automaton, players, client_id).await?;
-			}
-			Update::ForGame(Sub::BotResign { client_id, slot }) =>
-			{
-				// TODO
-				unimplemented!()
 			}
 			Update::Leave {
 				client_id,
@@ -776,6 +817,7 @@ async fn rest(
 				handle_leave(
 					lobby.id,
 					players,
+					bots,
 					watchers,
 					client_id,
 					&mut general_chat,
@@ -855,6 +897,7 @@ async fn ensure_live_players(
 	lobby: &LobbyInfo,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
+	bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
 ) -> Result<(), Error>
@@ -888,18 +931,9 @@ async fn ensure_live_players(
 			{
 				debug!("Ignoring sync from {} after resting", client_id);
 			}
-			Update::ForGame(Sub::BotSync { client_id, .. }) =>
-			{
-				debug!("Ignoring sync from {} after resting", client_id);
-			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
 				handle_resign(lobby, automaton, players, client_id).await?;
-			}
-			Update::ForGame(Sub::BotResign { client_id, slot }) =>
-			{
-				// TODO
-				unimplemented!()
 			}
 			Update::Leave {
 				client_id,
@@ -909,6 +943,7 @@ async fn ensure_live_players(
 				handle_leave(
 					lobby.id,
 					players,
+					bots,
 					watchers,
 					client_id,
 					&mut general_chat,
@@ -975,6 +1010,7 @@ async fn sleep(
 	lobby: &LobbyInfo,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
+	connected_bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
 ) -> Result<(), Error>
@@ -998,7 +1034,7 @@ async fn sleep(
 	// players are ready, or when all players except one are defeated
 	// or have retired. Players and watchers can reconnect in the
 	// planning phase if there is still time.
-	while !all_players_have_submitted_orders(players)
+	while !all_players_have_submitted_orders(players, connected_bots)
 	{
 		trace!("Waiting until all players have submitted orders...");
 
@@ -1032,14 +1068,16 @@ async fn sleep(
 				orders,
 			}) =>
 			{
-				// TODO
-				unimplemented!()
+				for client in connected_bots.iter_mut()
+				{
+					if client.id == client_id && client.slot == slot
+					{
+						client.submitted_orders = Some(orders);
+						break;
+					}
+				}
 			}
 			Update::ForGame(Sub::Sync { client_id }) =>
-			{
-				debug!("Ignoring sync from {} while sleeping", client_id);
-			}
-			Update::ForGame(Sub::BotSync { client_id, .. }) =>
 			{
 				debug!("Ignoring sync from {} while sleeping", client_id);
 			}
@@ -1053,11 +1091,6 @@ async fn sleep(
 					return Ok(());
 				}
 			}
-			Update::ForGame(Sub::BotResign { client_id, slot }) =>
-			{
-				// TODO
-				unimplemented!()
-			}
 			Update::Leave {
 				client_id,
 				mut general_chat,
@@ -1066,6 +1099,7 @@ async fn sleep(
 				handle_leave(
 					lobby.id,
 					players,
+					connected_bots,
 					watchers,
 					client_id,
 					&mut general_chat,
@@ -1138,18 +1172,26 @@ fn too_few_potential_winners(
 	potentialwinners + num_bots < 2
 }
 
-fn all_players_have_submitted_orders(players: &mut Vec<PlayerClient>) -> bool
+fn all_players_have_submitted_orders(
+	players: &mut Vec<PlayerClient>,
+	bots: &mut Vec<BotClient>,
+) -> bool
 {
 	players
 		.iter()
 		.filter(|x| !x.is_defeated && !x.is_retired() && x.is_connected())
 		.all(|x| x.submitted_orders.is_some())
+		&& bots
+			.iter()
+			.filter(|x| !x.is_defeated && !x.is_retired() && x.is_connected())
+			.all(|x| x.submitted_orders.is_some())
 }
 
 async fn stage(
 	lobby: &LobbyInfo,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
+	connected_bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
 ) -> Result<(), Error>
@@ -1160,7 +1202,7 @@ async fn stage(
 	// There is a 10 second grace period for anyone whose orders we
 	// haven't received; they might have sent their orders before
 	// receiving the staging announcement.
-	while !all_players_have_submitted_orders(players)
+	while !all_players_have_submitted_orders(players, connected_bots)
 	{
 		trace!("Waiting until all players have staged orders...");
 
@@ -1194,26 +1236,23 @@ async fn stage(
 				orders,
 			}) =>
 			{
-				// TODO
-				unimplemented!()
+				for client in connected_bots.iter_mut()
+				{
+					if client.id == client_id && client.slot == slot
+					{
+						client.submitted_orders = Some(orders);
+						break;
+					}
+				}
 			}
 
 			Update::ForGame(Sub::Sync { client_id }) =>
 			{
 				debug!("Ignoring sync from {} while staging", client_id);
 			}
-			Update::ForGame(Sub::BotSync { client_id, .. }) =>
-			{
-				debug!("Ignoring sync from {} while staging", client_id);
-			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
 				handle_resign(lobby, automaton, players, client_id).await?;
-			}
-			Update::ForGame(Sub::BotResign { client_id, slot }) =>
-			{
-				// TODO
-				unimplemented!()
 			}
 			Update::Leave {
 				client_id,
@@ -1223,6 +1262,7 @@ async fn stage(
 				handle_leave(
 					lobby.id,
 					players,
+					connected_bots,
 					watchers,
 					client_id,
 					&mut general_chat,
@@ -1280,6 +1320,7 @@ async fn stage(
 async fn linger(
 	lobby: &LobbyInfo,
 	players: &mut Vec<PlayerClient>,
+	bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
 ) -> Result<(), Error>
@@ -1296,6 +1337,7 @@ async fn linger(
 				handle_leave(
 					lobby.id,
 					players,
+					bots,
 					watchers,
 					client_id,
 					&mut general_chat,
@@ -1305,7 +1347,6 @@ async fn linger(
 			Update::Join { .. } =>
 			{
 				// The game has ended, no longer accept joins.
-				// TODO send joinlobby{}?
 			}
 			Update::ForSetup(..) =>
 			{}
@@ -1536,7 +1577,6 @@ fn do_join(
 		{
 			client_handle.send(Message::Sync {
 				time_remaining_in_seconds,
-				connected_bot: None,
 			});
 		}
 		RejoinPhase::Other =>
@@ -1657,11 +1697,28 @@ async fn retire(
 async fn handle_leave(
 	lobby_id: Keycode,
 	players: &mut Vec<PlayerClient>,
+	bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
 	client_id: Keycode,
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
+	let mut was_bot = false;
+	for bot in bots
+	{
+		if bot.id == client_id
+		{
+			bot.handle.take();
+			was_bot = true;
+			// Do not break, as a bot client may play in multiple bot slots,
+			// and all of them are now disconnected.
+		}
+	}
+	if was_bot
+	{
+		return Ok(());
+	}
+
 	let (username, mut handle) = {
 		if let Some(client) = players.iter_mut().find(|x| x.id == client_id)
 		{
