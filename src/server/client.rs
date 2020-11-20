@@ -1491,6 +1491,50 @@ async fn handle_message(
 				debug!("Ignoring ListRuleset from unlobbied client");
 			}
 		},
+		Message::ListAi {
+			ai_name,
+			metadata: Some(BotAuthorsMetadata { authors }),
+		} if client.is_bot() => match client.general_chat
+		{
+			Some(ref mut general_chat) =>
+			{
+				let update = chat::Update::ListBot {
+					client_id: client.id,
+					handle: client.handle.clone(),
+					ai_name,
+					authors,
+				};
+				general_chat.send(update).await?;
+			}
+			None =>
+			{
+				error!("Invalid message from offline bot");
+				return Err(Error::Invalid);
+			}
+		},
+		Message::ListAi {
+			ai_name,
+			metadata: None,
+		} if client.is_bot() && ai_name.is_empty() => match client.general_chat
+		{
+			Some(ref mut general_chat) =>
+			{
+				let update = chat::Update::UnlistBot {
+					client_id: client.id,
+				};
+				general_chat.send(update).await?;
+			}
+			None =>
+			{
+				error!("Invalid message from offline bot");
+				return Err(Error::Invalid);
+			}
+		},
+		Message::ListAi { .. } =>
+		{
+			warn!("Invalid message from client: {:?}", message);
+			return Err(Error::Invalid);
+		}
 		Message::AddBot { slot: None } => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -1748,7 +1792,6 @@ async fn handle_message(
 		| Message::DisbandLobby { .. }
 		| Message::ListLobby { .. }
 		| Message::ListChallenge { .. }
-		| Message::ListAi { .. }
 		| Message::ListMap { .. }
 		| Message::PickChallenge { .. }
 		| Message::AssignColor { .. }

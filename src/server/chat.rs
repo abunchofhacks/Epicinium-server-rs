@@ -43,6 +43,18 @@ pub enum Update
 		client_id: Keycode,
 	},
 
+	ListBot
+	{
+		client_id: Keycode,
+		ai_name: String,
+		authors: String,
+		handle: client::Handle,
+	},
+	UnlistBot
+	{
+		client_id: Keycode,
+	},
+
 	ListLobby
 	{
 		lobby_id: Keycode,
@@ -93,6 +105,7 @@ pub async fn run(mut updates: mpsc::Receiver<Update>, canary: mpsc::Sender<()>)
 	let mut clients: Vec<Client> = Vec::new();
 	let mut ghostbusters: HashMap<Keycode, Ghostbuster> = HashMap::new();
 	let mut lobbies: Vec<Lobby> = Vec::new();
+	let mut bots = Vec::new();
 
 	while let Some(update) = updates.recv().await
 	{
@@ -101,13 +114,14 @@ pub async fn run(mut updates: mpsc::Receiver<Update>, canary: mpsc::Sender<()>)
 			&mut clients,
 			&mut ghostbusters,
 			&mut lobbies,
+			&mut bots,
 			&current_challenge,
 		);
 
 		let removed = clients
 			.e_drain_where(|client| client.handle.is_disconnected())
 			.collect();
-		handle_removed(removed, &mut clients, &mut ghostbusters);
+		handle_removed(removed, &mut clients, &mut ghostbusters, &mut bots);
 	}
 
 	info!("General chat has disbanded.");
@@ -119,6 +133,7 @@ fn handle_update(
 	clients: &mut Vec<Client>,
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
 	lobbies: &mut Vec<Lobby>,
+	listed_bots: &mut Vec<lobby::ConnectedAi>,
 	current_challenge: &Challenge,
 )
 {
@@ -151,7 +166,36 @@ fn handle_update(
 		}
 		Update::Leave { client_id } =>
 		{
-			handle_leave(client_id, clients, ghostbusters)
+			handle_leave(client_id, clients, ghostbusters, listed_bots)
+		}
+
+		Update::ListBot {
+			client_id,
+			handle,
+			ai_name,
+			authors,
+		} =>
+		{
+			let bot = lobby::ConnectedAi {
+				client_id,
+				handle,
+				ai_name,
+				authors,
+			};
+			let lobby_ids: Vec<Keycode> =
+				lobbies.iter().map(|x| x.id).collect();
+			for lobby_id in lobby_ids
+			{
+				let update = lobby::Update::ForSetup(
+					lobby::Sub::ListConnectedAi(bot.clone()),
+				);
+				notify_lobby_or_disband(lobby_id, clients, lobbies, update);
+			}
+			listed_bots.push(bot);
+		}
+		Update::UnlistBot { client_id } =>
+		{
+			listed_bots.retain(|x| x.client_id != client_id);
 		}
 
 		Update::ListLobby {
@@ -167,7 +211,7 @@ fn handle_update(
 				metadata,
 				sendbuffer,
 			};
-			handle_list_lobby(lobby, clients, lobbies)
+			handle_list_lobby(lobby, clients, lobbies, listed_bots)
 		}
 		Update::DescribeLobby { lobby_id } =>
 		{
@@ -185,7 +229,7 @@ fn handle_update(
 			invite,
 		} =>
 		{
-			verify_lobby(lobby_id, clients, lobbies);
+			verify_lobby_or_disband(lobby_id, clients, lobbies);
 			handle_find_lobby(lobbies, lobby_id, handle, general_chat, invite);
 		}
 
@@ -550,18 +594,20 @@ fn handle_leave(
 	client_id: Keycode,
 	clients: &mut Vec<Client>,
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
+	listed_bots: &mut Vec<lobby::ConnectedAi>,
 )
 {
 	let removed: Vec<Client> = clients
 		.e_drain_where(|client| client.id == client_id)
 		.collect();
-	handle_removed(removed, clients, ghostbusters);
+	handle_removed(removed, clients, ghostbusters, listed_bots);
 }
 
 fn handle_removed(
 	removed: Vec<Client>,
 	clients: &mut Vec<Client>,
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
+	listed_bots: &mut Vec<lobby::ConnectedAi>,
 )
 {
 	for removed_client in removed
@@ -595,6 +641,8 @@ fn handle_removed(
 		{
 			ghostbuster.resolve();
 		}
+
+		listed_bots.retain(|x| x.client_id != id);
 	}
 }
 
@@ -628,13 +676,27 @@ fn handle_still_alive(
 }
 
 fn handle_list_lobby(
-	newlobby: Lobby,
+	mut newlobby: Lobby,
 	clients: &mut Vec<Client>,
 	lobbies: &mut Vec<Lobby>,
+	listed_bots: &mut Vec<lobby::ConnectedAi>,
 )
 {
 	lobbies.retain(|lobby| lobby.id != newlobby.id);
+
+	for bot in listed_bots
+	{
+		let update =
+			lobby::Update::ForSetup(lobby::Sub::ListConnectedAi(bot.clone()));
+		match newlobby.sendbuffer.try_send(update)
+		{
+			Ok(()) => (),
+			Err(_error) => return,
+		}
+	}
+
 	describe_lobby(&newlobby, clients);
+
 	lobbies.push(newlobby);
 }
 
@@ -685,15 +747,25 @@ fn handle_disband_lobby(
 	}
 }
 
-fn verify_lobby(
+fn verify_lobby_or_disband(
 	lobby_id: Keycode,
 	clients: &mut Vec<Client>,
 	lobbies: &mut Vec<Lobby>,
 )
 {
+	notify_lobby_or_disband(lobby_id, clients, lobbies, lobby::Update::Pulse)
+}
+
+fn notify_lobby_or_disband(
+	lobby_id: Keycode,
+	clients: &mut Vec<Client>,
+	lobbies: &mut Vec<Lobby>,
+	update: lobby::Update,
+)
+{
 	if let Some(lobby) = lobbies.iter_mut().find(|x| x.id == lobby_id)
 	{
-		if lobby.sendbuffer.try_send(lobby::Update::Pulse).is_ok()
+		if lobby.sendbuffer.try_send(update).is_ok()
 		{
 			return;
 		}

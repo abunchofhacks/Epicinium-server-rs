@@ -176,6 +176,9 @@ pub enum Message
 	{
 		#[serde(rename = "content")]
 		ai_name: String,
+
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		metadata: Option<BotAuthorsMetadata>,
 	},
 	ListMap
 	{
@@ -474,6 +477,12 @@ pub struct AccountLinkingMetadata
 	pub discord_user_id: String,
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct BotAuthorsMetadata
+{
+	pub authors: String,
+}
+
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
 pub struct ConnectedBotMetadata
 {
@@ -481,7 +490,7 @@ pub struct ConnectedBotMetadata
 	pub slot: Botslot,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub struct ListRulesetMetadata
 {
 	pub lobby_id: Keycode,

@@ -96,6 +96,8 @@ pub enum Sub
 		general_chat: mpsc::Sender<chat::Update>,
 	},
 
+	ListConnectedAi(ConnectedAi),
+
 	ClaimRole
 	{
 		general_chat: mpsc::Sender<chat::Update>,
@@ -142,11 +144,11 @@ pub enum Sub
 	},
 	PickTimer
 	{
-		seconds: u32
+		seconds: u32,
 	},
 	PickRuleset
 	{
-		ruleset_name: String
+		ruleset_name: String,
 	},
 	ConfirmRuleset
 	{
@@ -179,6 +181,15 @@ impl Default for LobbyType
 	{
 		LobbyType::Generic
 	}
+}
+
+#[derive(Debug, Clone)]
+pub struct ConnectedAi
+{
+	pub client_id: Keycode,
+	pub handle: client::Handle,
+	pub ai_name: String,
+	pub authors: String,
 }
 
 pub fn create(
@@ -236,8 +247,9 @@ struct Lobby
 	player_visiontypes: HashMap<Keycode, VisionType>,
 	bot_visiontypes: HashMap<Botslot, VisionType>,
 
-	ai_pool: Vec<String>,
+	ai_pool: Vec<(String, Option<BotAuthorsMetadata>)>,
 	ai_name_blockers: Vec<String>,
+	connected_ais: Vec<ConnectedAi>,
 	map_pool: Vec<(String, map::Metadata)>,
 	map_name: String,
 	ruleset_name: String,
@@ -302,6 +314,8 @@ async fn initialize(
 	rating_database_for_games: mpsc::Sender<rating::Update>,
 ) -> Result<Lobby, Error>
 {
+	let ai_pool = ai::load_pool().into_iter().map(|x| (x, None)).collect();
+
 	let map_pool = map::load_pool_with_metadata().await?;
 
 	let defaultmap = map_pool.get(0).ok_or(Error::EmptyMapPool)?;
@@ -324,8 +338,9 @@ async fn initialize(
 		bot_colors: HashMap::new(),
 		player_visiontypes: HashMap::new(),
 		bot_visiontypes: HashMap::new(),
-		ai_pool: ai::load_pool(),
+		ai_pool,
 		ai_name_blockers: Vec::new(),
+		connected_ais: Vec::new(),
 		map_pool,
 		map_name,
 		ruleset_name: ruleset::current(),
@@ -452,6 +467,12 @@ async fn handle_sub(
 		} =>
 		{
 			rename_lobby(lobby, lobby_name, &mut general_chat).await?;
+			Ok(None)
+		}
+
+		Sub::ListConnectedAi(ai) =>
+		{
+			add_ai_to_list(lobby, clients, ai).await;
 			Ok(None)
 		}
 
@@ -841,10 +862,11 @@ fn do_join(
 	if lobby.lobby_type != LobbyType::Replay
 	{
 		// Tell the newcomer the AI pool.
-		for name in &lobby.ai_pool
+		for (name, metadata) in &lobby.ai_pool
 		{
 			newcomer.handle.send(Message::ListAi {
 				ai_name: name.clone(),
+				metadata: metadata.clone(),
 			});
 		}
 	}
@@ -1414,7 +1436,9 @@ fn change_ai(
 		}
 	};
 
-	if !ai::exists(&ai_name)
+	let connected = lobby.connected_ais.iter().find(|x| x.ai_name == ai_name);
+
+	if connected.is_none() && !ai::exists(&ai_name)
 	{
 		warn!("Cannot set AI to non-existing '{}'.", ai_name);
 		for client in clients.into_iter()
@@ -1442,14 +1466,19 @@ fn change_ai(
 		return;
 	}
 
-	if lobby.ai_pool.iter().find(|&x| x == &ai_name).is_none()
+	if lobby.ai_pool.iter().find(|&(x, _)| x == &ai_name).is_none()
 	{
-		lobby.ai_pool.push(ai_name.clone());
+		let metadata = connected.map(|ai| BotAuthorsMetadata {
+			authors: ai.authors.clone(),
+		});
+
+		lobby.ai_pool.push((ai_name.clone(), metadata.clone()));
 
 		for client in clients.into_iter()
 		{
 			client.handle.send(Message::ListAi {
 				ai_name: ai_name.clone(),
+				metadata: metadata.clone(),
 			});
 		}
 	}
@@ -1560,7 +1589,7 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 
 	let ai_name = match lobby.ai_pool.first()
 	{
-		Some(name) => name.clone(),
+		Some((name, _metadata)) => name.clone(),
 		None => "Dummy".to_string(),
 	};
 	let bot = Bot {
@@ -2295,9 +2324,13 @@ fn block_ai(lobby: &mut Lobby, clients: &mut Vec<Client>, blocker: String)
 {
 	if !lobby.ai_name_blockers.contains(&blocker)
 	{
+		lobby.ai_pool.retain(|(ainame, _metadata)| {
+			!ainame.to_lowercase().contains(&blocker)
+		});
+
 		lobby
-			.ai_pool
-			.retain(|ainame| !ainame.to_lowercase().contains(&blocker));
+			.connected_ais
+			.retain(|x| !x.ai_name.to_lowercase().contains(&blocker));
 
 		let to_be_changed: Vec<Botslot> = lobby
 			.bots
@@ -2314,6 +2347,37 @@ fn block_ai(lobby: &mut Lobby, clients: &mut Vec<Client>, blocker: String)
 
 		lobby.ai_name_blockers.push(blocker);
 	}
+}
+
+async fn add_ai_to_list(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	ai: ConnectedAi,
+)
+{
+	if lobby.ai_name_blockers.contains(&ai.ai_name)
+	{
+		return;
+	}
+	else if lobby
+		.ai_pool
+		.iter()
+		.any(|(ainame, _metadata)| ainame == &ai.ai_name)
+	{
+		return;
+	}
+
+	for client in clients.into_iter()
+	{
+		client.handle.send(Message::ListAi {
+			ai_name: ai.ai_name.clone(),
+			metadata: Some(BotAuthorsMetadata {
+				authors: ai.authors.clone(),
+			}),
+		});
+	}
+
+	lobby.connected_ais.push(ai);
 }
 
 async fn handle_ruleset_confirmation(
