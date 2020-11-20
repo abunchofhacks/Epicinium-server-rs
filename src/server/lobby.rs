@@ -154,13 +154,6 @@ pub enum Sub
 		ruleset_name: String,
 		general_chat: mpsc::Sender<chat::Update>,
 	},
-	BotConfirmRuleset
-	{
-		client_id: Keycode,
-		slot: Botslot,
-		ruleset_name: String,
-		general_chat: mpsc::Sender<chat::Update>,
-	},
 
 	Start
 	{
@@ -564,17 +557,6 @@ async fn handle_sub(
 			.await
 		}
 
-		Sub::BotConfirmRuleset {
-			client_id,
-			slot,
-			ruleset_name,
-			mut general_chat,
-		} =>
-		{
-			// TODO
-			unimplemented!()
-		}
-
 		Sub::Start { mut general_chat } =>
 		{
 			try_start(lobby, clients, &mut general_chat).await
@@ -915,7 +897,7 @@ fn do_join(
 
 		newcomer.handle.send(Message::ListRuleset {
 			ruleset_name: lobby.ruleset_name.clone(),
-			connected_bot: None,
+			metadata: Some(ListRulesetMetadata { lobby_id: lobby.id }),
 		});
 		newcomer.handle.send(Message::PickRuleset {
 			ruleset_name: lobby.ruleset_name.clone(),
@@ -2286,7 +2268,7 @@ async fn pick_ruleset(
 	// reconfirm the ruleset every time it is picked, just once it is listed.
 	let listmessage = Message::ListRuleset {
 		ruleset_name: lobby.ruleset_name.clone(),
-		connected_bot: None,
+		metadata: Some(ListRulesetMetadata { lobby_id: lobby.id }),
 	};
 	let pickmessage = Message::PickRuleset {
 		ruleset_name: lobby.ruleset_name.clone(),
@@ -2492,8 +2474,11 @@ async fn try_start(
 		}
 	}
 
+	let connected_bots = Vec::new();
+	// TODO connected_bots
+
 	// Assign colors and roles to bots.
-	let mut bots = Vec::new();
+	let mut local_bots = Vec::new();
 	for bot in lobby.bots.iter()
 	{
 		let color = match lobby.bot_colors.get(&bot.slot)
@@ -2530,7 +2515,7 @@ async fn try_start(
 			Err(error) => return Err(Error::AiAllocationError { error }),
 		};
 
-		bots.push(game::Bot {
+		local_bots.push(game::LocalBot {
 			slot: bot.slot,
 			ai,
 
@@ -2551,7 +2536,7 @@ async fn try_start(
 		// List the new ruleset to trigger additional confirmations.
 		let message = Message::ListRuleset {
 			ruleset_name: lobby.ruleset_name.clone(),
-			connected_bot: None,
+			metadata: Some(ListRulesetMetadata { lobby_id: lobby.id }),
 		};
 		for client in clients.iter_mut()
 		{
@@ -2580,7 +2565,8 @@ async fn try_start(
 		lobby_name: lobby.name.clone(),
 		lobby_description_metadata: make_description_metadata(lobby),
 		players: player_clients,
-		bots,
+		connected_bots,
+		local_bots,
 		watchers: watcher_clients,
 		map_name,
 		map_metadata,

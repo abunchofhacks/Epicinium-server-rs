@@ -190,8 +190,7 @@ pub enum Message
 		ruleset_name: String,
 
 		#[serde(default, skip_serializing_if = "Option::is_none")]
-		#[serde(rename = "metadata")]
-		connected_bot: Option<ConnectedBotMetadata>,
+		metadata: Option<ListRulesetMetadata>,
 	},
 	EnableCustomMaps,
 	AssignColor
@@ -488,6 +487,12 @@ pub struct ConnectedBotMetadata
 {
 	pub lobby_id: Keycode,
 	pub slot: Botslot,
+}
+
+#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
+pub struct ListRulesetMetadata
+{
+	pub lobby_id: Keycode,
 }
 
 #[derive(

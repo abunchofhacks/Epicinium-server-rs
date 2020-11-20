@@ -1433,7 +1433,7 @@ async fn handle_message(
 		},
 		Message::ListRuleset {
 			ruleset_name,
-			connected_bot: Some(ConnectedBotMetadata { lobby_id, slot }),
+			metadata: Some(ListRulesetMetadata { lobby_id }),
 		} if client.is_bot() =>
 		{
 			if let Some(lobby) = client.bot_lobbies.get_mut(&lobby_id)
@@ -1449,9 +1449,8 @@ async fn handle_message(
 				};
 
 				let update =
-					lobby::Update::ForSetup(lobby::Sub::BotConfirmRuleset {
+					lobby::Update::ForSetup(lobby::Sub::ConfirmRuleset {
 						client_id: client.id,
-						slot,
 						general_chat,
 						ruleset_name,
 					});
@@ -1464,7 +1463,7 @@ async fn handle_message(
 		}
 		Message::ListRuleset {
 			ruleset_name,
-			connected_bot: _,
+			metadata: _,
 		} => match client.lobby
 		{
 			Some(ref mut lobby) =>

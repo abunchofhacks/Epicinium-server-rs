@@ -60,7 +60,40 @@ impl PlayerClient
 }
 
 #[derive(Debug)]
-pub struct Bot
+pub struct BotClient
+{
+	pub slot: Botslot,
+	pub descriptive_name: String,
+	pub ai_metadata: ai::Metadata,
+
+	pub id: Keycode,
+	pub user_id: UserId,
+	pub handle: client::Handle,
+	pub rating_callback: Option<mpsc::Sender<rating::Update>>,
+
+	pub color: PlayerColor,
+	pub vision: VisionType,
+
+	pub is_defeated: bool,
+	pub has_synced: bool,
+	pub submitted_orders: Option<Vec<Order>>,
+}
+
+impl BotClient
+{
+	fn is_connected(&self) -> bool
+	{
+		!self.handle.is_disconnected()
+	}
+
+	fn is_retired(&self) -> bool
+	{
+		self.rating_callback.is_none()
+	}
+}
+
+#[derive(Debug)]
+pub struct LocalBot
 {
 	pub slot: Botslot,
 	pub ai: ai::Commander,
@@ -100,7 +133,8 @@ pub struct Setup
 	pub lobby_description_metadata: LobbyMetadata,
 
 	pub players: Vec<PlayerClient>,
-	pub bots: Vec<Bot>,
+	pub connected_bots: Vec<BotClient>,
+	pub local_bots: Vec<LocalBot>,
 	pub watchers: Vec<WatcherClient>,
 	pub map_name: String,
 	pub map_metadata: map::Metadata,
@@ -122,7 +156,8 @@ pub async fn run(
 		lobby_name,
 		lobby_description_metadata,
 		mut players,
-		mut bots,
+		mut connected_bots,
+		mut local_bots,
 		mut watchers,
 		map_name,
 		map_metadata,
@@ -138,7 +173,11 @@ pub async fn run(
 	{
 		playercolors.push(player.color);
 	}
-	for bot in &bots
+	for bot in &connected_bots
+	{
+		playercolors.push(bot.color);
+	}
+	for bot in &local_bots
 	{
 		playercolors.push(bot.color);
 	}
@@ -154,7 +193,15 @@ pub async fn run(
 			VisionType::Global => automaton.grant_global_vision(player.color),
 		}
 	}
-	for bot in &bots
+	for bot in &connected_bots
+	{
+		match bot.vision
+		{
+			VisionType::Normal => (),
+			VisionType::Global => automaton.grant_global_vision(bot.color),
+		}
+	}
+	for bot in &local_bots
 	{
 		match bot.vision
 		{
@@ -186,6 +233,17 @@ pub async fn run(
 		}
 	}
 
+	for client in &mut connected_bots
+	{
+		// TODO add bot slot
+		client.handle.send(Message::Game {
+			role: Some(Role::Player),
+			player: Some(client.color),
+			ruleset_name: Some(ruleset_name.clone()),
+			timer_in_seconds: planning_time_in_seconds,
+		});
+	}
+
 	for client in &mut watchers
 	{
 		client.handle.send(Message::Game {
@@ -205,7 +263,15 @@ pub async fn run(
 			name: player.username.clone(),
 		});
 	}
-	for bot in &mut bots
+	for bot in &mut connected_bots
+	{
+		let descriptive_name = bot.descriptive_name.clone();
+		initial_messages.push(Message::AssignColor {
+			color: bot.color,
+			name: descriptive_name,
+		});
+	}
+	for bot in &mut local_bots
 	{
 		let descriptive_name = bot.ai.descriptive_name()?;
 		initial_messages.push(Message::AssignColor {
@@ -267,7 +333,16 @@ pub async fn run(
 		});
 	}
 	let mut metadata_bots = Vec::new();
-	for bot in &mut bots
+	for bot in &mut connected_bots
+	{
+		let ai_metadata = bot.ai_metadata.clone();
+		metadata_bots.push(automaton::BotMetadata {
+			color: bot.color,
+			ai_metadata,
+		});
+	}
+	let mut metadata_bots = Vec::new();
+	for bot in &mut local_bots
 	{
 		let ai_metadata = bot.ai.metadata()?;
 		metadata_bots.push(automaton::BotMetadata {
@@ -321,7 +396,9 @@ pub async fn run(
 		MatchType::Competitive
 	}
 	// Is this a friendly 1v1 match with two humans?
-	else if players.len() == 2 && bots.len() == 0
+	else if players.len() == 2
+		&& connected_bots.len() == 0
+		&& local_bots.len() == 0
 	{
 		MatchType::FriendlyOneVsOne
 	}
@@ -344,7 +421,9 @@ pub async fn run(
 	};
 
 	// Is this a (rated or unrated) 1v1 match between two humans?
-	let should_mention_on_discord = players.len() == 2 && bots.len() == 0;
+	let should_mention_on_discord = players.len() == 2
+		&& connected_bots.len() == 0
+		&& local_bots.len() == 0;
 	if should_mention_on_discord
 	{
 		let post = discord_api::Post::GameStarted {
@@ -367,7 +446,7 @@ pub async fn run(
 		match_type,
 		challenge,
 		should_mention_on_discord,
-		num_bots: bots.len(),
+		num_bots: connected_bots.len() + local_bots.len(),
 		map_name,
 		map_metadata,
 		ruleset_name,
@@ -381,7 +460,8 @@ pub async fn run(
 			&lobby_info,
 			&mut automaton,
 			&mut players,
-			&mut bots,
+			// TODO &mut connected_bots,
+			&mut local_bots,
 			&mut watchers,
 			&mut updates,
 			planning_time_in_seconds,
@@ -416,7 +496,10 @@ pub async fn run(
 		retire(&lobby_info, &mut automaton, client).await?;
 	}
 
+	// TODO retire connected bot if this is a Human-vs-Hard match?
+
 	debug!("Game has finished in lobby {}; lingering...", lobby_id);
+	// TODO &mut connected_bots
 	linger(&lobby_info, &mut players, &mut watchers, &mut updates).await?;
 
 	Ok(())
@@ -483,7 +566,7 @@ async fn iterate(
 	lobby: &LobbyInfo,
 	automaton: &mut Automaton,
 	players: &mut Vec<PlayerClient>,
-	bots: &mut Vec<Bot>,
+	bots: &mut Vec<LocalBot>,
 	watchers: &mut Vec<WatcherClient>,
 	updates: &mut mpsc::Receiver<Update>,
 	planning_time_in_seconds: Option<u32>,
@@ -587,7 +670,7 @@ async fn iterate(
 
 fn broadcast(
 	players: &mut Vec<PlayerClient>,
-	bots: &mut Vec<Bot>,
+	bots: &mut Vec<LocalBot>,
 	watchers: &mut Vec<WatcherClient>,
 	cset: ChangeSet,
 ) -> Result<(), Error>
