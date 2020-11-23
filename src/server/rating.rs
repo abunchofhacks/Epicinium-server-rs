@@ -117,7 +117,12 @@ impl Database
 
 		if result.is_rated
 		{
-			let result = adjust(data.rating, result.score, result.match_type);
+			let result = adjust(
+				data.rating,
+				result.score,
+				result.is_victorious,
+				result.match_type,
+			);
 			if let Some(new_rating) = result
 			{
 				data.rating = new_rating;
@@ -186,7 +191,12 @@ impl Database
 	}
 }
 
-fn adjust(rating: f64, score: i32, match_type: MatchType) -> Option<f64>
+fn adjust(
+	rating: f64,
+	score: i32,
+	is_victorious: bool,
+	match_type: MatchType,
+) -> Option<f64>
 {
 	let (mut gain_percentage, loss_percentage) = match match_type
 	{
@@ -224,7 +234,7 @@ fn adjust(rating: f64, score: i32, match_type: MatchType) -> Option<f64>
 		std::cmp::max(0, std::cmp::min(ratingtenths + gaintenths, 1000))
 	}
 	// ... or increase by a minimal amount because they were victorious ...
-	else if score > 0
+	else if is_victorious
 	{
 		let gaintenths = 1;
 		// Increase the rating by the gain.

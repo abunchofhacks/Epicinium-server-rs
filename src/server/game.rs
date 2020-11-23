@@ -1695,6 +1695,7 @@ async fn retire(
 		user_id: client.user_id,
 		username: client.username.clone(),
 		is_rated,
+		is_victorious: !automaton.is_defeated(client.color),
 		score: automaton.score(client.color),
 		awarded_stars: automaton.award(client.color),
 		match_type: lobby.match_type,
@@ -1859,6 +1860,7 @@ pub struct PlayerResult
 	pub user_id: UserId,
 	pub username: String,
 	pub is_rated: bool,
+	pub is_victorious: bool,
 	pub score: i32,
 	pub awarded_stars: i32,
 
