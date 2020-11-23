@@ -1498,12 +1498,42 @@ async fn handle_message(
 		{
 			Some(ref mut general_chat) =>
 			{
-				let update = chat::Update::ListBot {
+				if ai_name.len() < 3
+					|| ai_name.len() > 16
+					|| ai_name.chars().any(|x| {
+						!x.is_ascii_alphanumeric()
+							&& x != '_' && x != '.' && x != '-'
+					})
+				{
+					error!("Invalid AI name from bot");
+					return Err(Error::Invalid);
+				}
+				else if authors.len() < 3
+					|| authors.len() > 30
+					|| authors.chars().any(|x| x.is_control())
+				{
+					error!("Invalid 'authors' metadata from bot");
+					return Err(Error::Invalid);
+				}
+
+				let user_id = match client.user_id
+				{
+					Some(user_id) => user_id,
+					None =>
+					{
+						error!("Expected user_id");
+						return Err(Error::Unexpected);
+					}
+				};
+				let bot = lobby::ConnectedAi {
 					client_id: client.id,
+					client_user_id: user_id,
+					client_username: client.username.clone(),
 					handle: client.handle.clone(),
 					ai_name,
 					authors,
 				};
+				let update = chat::Update::ListBot { bot };
 				general_chat.send(update).await?;
 			}
 			None =>

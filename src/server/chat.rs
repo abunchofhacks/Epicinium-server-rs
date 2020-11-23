@@ -45,10 +45,7 @@ pub enum Update
 
 	ListBot
 	{
-		client_id: Keycode,
-		ai_name: String,
-		authors: String,
-		handle: client::Handle,
+		bot: lobby::ConnectedAi,
 	},
 	UnlistBot
 	{
@@ -169,19 +166,8 @@ fn handle_update(
 			handle_leave(client_id, clients, ghostbusters, listed_bots)
 		}
 
-		Update::ListBot {
-			client_id,
-			handle,
-			ai_name,
-			authors,
-		} =>
+		Update::ListBot { bot } =>
 		{
-			let bot = lobby::ConnectedAi {
-				client_id,
-				handle,
-				ai_name,
-				authors,
-			};
 			let lobby_ids: Vec<Keycode> =
 				lobbies.iter().map(|x| x.id).collect();
 			for lobby_id in lobby_ids

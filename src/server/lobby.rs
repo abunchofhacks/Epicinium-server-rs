@@ -37,6 +37,7 @@ use log::*;
 use rand::Rng;
 
 use serde_derive::{Deserialize, Serialize};
+use serde_json::json;
 
 use tokio::sync::mpsc;
 use tokio::sync::watch;
@@ -187,6 +188,8 @@ impl Default for LobbyType
 pub struct ConnectedAi
 {
 	pub client_id: Keycode,
+	pub client_user_id: UserId,
+	pub client_username: String,
 	pub handle: client::Handle,
 	pub ai_name: String,
 	pub authors: String,
@@ -2538,10 +2541,8 @@ async fn try_start(
 		}
 	}
 
-	let connected_bots = Vec::new();
-	// TODO connected_bots
-
 	// Assign colors and roles to bots.
+	let mut connected_bots = Vec::new();
 	let mut local_bots = Vec::new();
 	for bot in lobby.bots.iter()
 	{
@@ -2566,28 +2567,87 @@ async fn try_start(
 
 		let character = bot.slot.get_character();
 
-		let allocated_ai = ai::Commander::create(
-			&bot.ai_name,
-			color,
-			bot.difficulty,
-			&lobby.ruleset_name,
-			character,
-		);
-		let ai = match allocated_ai
+		if let Some(connected_ai) = lobby
+			.connected_ais
+			.iter()
+			.find(|ai| ai.ai_name == bot.ai_name)
 		{
-			Ok(ai) => ai,
-			Err(error) => return Err(Error::AiAllocationError { error }),
-		};
+			let difficulty_str = match bot.difficulty
+			{
+				Difficulty::None => "Easy",
+				Difficulty::Easy => "Easy",
+				Difficulty::Medium => "Medium",
+				Difficulty::Hard => "Hard",
+			};
+			let descriptive_name = format!(
+				"{} ({} {})",
+				bot.slot.get_display_name(),
+				difficulty_str,
+				bot.ai_name
+			);
+			let ai_metadata_json = json!({
+				"difficulty": bot.difficulty,
+				"character": bot.slot.get_character(),
+				"displayname": bot.slot.get_display_name(),
+				"ainame": bot.ai_name,
+				"authors": connected_ai.authors,
+				"connected_user_id": connected_ai.client_user_id,
+				"connected_username": connected_ai.client_username,
+			});
+			let ai_metadata: ai::Metadata =
+				match serde_json::from_value(ai_metadata_json)
+				{
+					Ok(metadata) => metadata,
+					Err(error) => return Err(Error::AiMetadataParsing(error)),
+				};
+			let connected_bot_metadata = ConnectedBotMetadata {
+				lobby_id: lobby.id,
+				slot: bot.slot,
+			};
 
-		local_bots.push(game::LocalBot {
-			slot: bot.slot,
-			ai,
+			connected_bots.push(game::BotClient {
+				slot: bot.slot,
+				descriptive_name,
+				ai_metadata,
+				connected_bot_metadata,
 
-			color,
-			vision,
+				id: connected_ai.client_id,
+				user_id: connected_ai.client_user_id,
+				handle: connected_ai.handle.clone(),
+				rating_callback: None,
 
-			is_defeated: false,
-		});
+				color,
+				vision,
+
+				is_defeated: false,
+				submitted_orders: None,
+			});
+		}
+		else
+		{
+			let allocated_ai = ai::Commander::create(
+				&bot.ai_name,
+				color,
+				bot.difficulty,
+				&lobby.ruleset_name,
+				character,
+			);
+			let ai = match allocated_ai
+			{
+				Ok(ai) => ai,
+				Err(error) => return Err(Error::AiAllocationError { error }),
+			};
+
+			local_bots.push(game::LocalBot {
+				slot: bot.slot,
+				ai,
+
+				color,
+				vision,
+
+				is_defeated: false,
+			});
+		}
 	}
 
 	// TODO if (_replay && _replayname.empty()) return false;
@@ -2690,6 +2750,7 @@ enum Error
 	{
 		error: ai::InterfaceError,
 	},
+	AiMetadataParsing(serde_json::error::Error),
 }
 
 impl From<io::Error> for Error
@@ -2741,6 +2802,7 @@ impl fmt::Display for Error
 			{
 				write!(f, "Error while allocating AI: {}", error)
 			}
+			Error::AiMetadataParsing(error) => error.fmt(f),
 		}
 	}
 }
