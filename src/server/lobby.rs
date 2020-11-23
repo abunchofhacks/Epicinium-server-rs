@@ -156,11 +156,13 @@ pub enum Sub
 		client_id: Keycode,
 		ruleset_name: String,
 		general_chat: mpsc::Sender<chat::Update>,
+		lobby_sendbuffer: mpsc::Sender<Update>,
 	},
 
 	Start
 	{
 		general_chat: mpsc::Sender<chat::Update>,
+		lobby_sendbuffer: mpsc::Sender<Update>,
 	},
 }
 
@@ -253,6 +255,7 @@ struct Lobby
 	ai_pool: Vec<(String, Option<BotAuthorsMetadata>)>,
 	ai_name_blockers: Vec<String>,
 	connected_ais: Vec<ConnectedAi>,
+	staged_connected_ais: Vec<ConnectedAi>,
 	map_pool: Vec<(String, map::Metadata)>,
 	map_name: String,
 	ruleset_name: String,
@@ -344,6 +347,7 @@ async fn initialize(
 		ai_pool,
 		ai_name_blockers: Vec::new(),
 		connected_ais: Vec::new(),
+		staged_connected_ais: Vec::new(),
 		map_pool,
 		map_name,
 		ruleset_name: ruleset::current(),
@@ -569,6 +573,7 @@ async fn handle_sub(
 			client_id,
 			ruleset_name,
 			mut general_chat,
+			lobby_sendbuffer,
 		} =>
 		{
 			handle_ruleset_confirmation(
@@ -577,13 +582,17 @@ async fn handle_sub(
 				client_id,
 				ruleset_name,
 				&mut general_chat,
+				lobby_sendbuffer,
 			)
 			.await
 		}
 
-		Sub::Start { mut general_chat } =>
+		Sub::Start {
+			mut general_chat,
+			lobby_sendbuffer,
+		} =>
 		{
-			try_start(lobby, clients, &mut general_chat).await
+			try_start(lobby, clients, &mut general_chat, lobby_sendbuffer).await
 		}
 	}
 }
@@ -731,20 +740,35 @@ async fn handle_join(
 	};
 	let mut handle_for_listing = client_handle.clone();
 
-	match do_join(
+	let is_invited = if let Some(invite) = invite
+	{
+		if invite.secret().lobby_id != lobby.id
+		{
+			warn!("Client {} has invite for different lobby", client_id);
+			return Ok(());
+		}
+		// Make sure the person that sent the invitation is still present.
+		clients.iter().any(|x| x.handle.verify_invite(&invite))
+	}
+	else
+	{
+		false
+	};
+
+	if !lobby.is_public && !is_invited
+	{
+		return Ok(());
+	}
+
+	do_join(
 		lobby,
 		client_id,
 		client_user_id,
 		client_username.clone(),
 		client_handle,
 		lobby_sendbuffer,
-		invite,
 		clients,
-	)
-	{
-		Ok(()) => (),
-		Err(()) => return Ok(()),
-	}
+	);
 
 	let update = chat::Update::JoinedLobby {
 		client_id,
@@ -797,28 +821,9 @@ fn do_join(
 	client_username: String,
 	client_handle: client::Handle,
 	lobby_sendbuffer: mpsc::Sender<Update>,
-	invite: Option<Invite>,
 	clients: &mut Vec<Client>,
-) -> Result<(), ()>
+)
 {
-	let is_invited = if let Some(invite) = invite
-	{
-		if invite.secret().lobby_id != lobby.id
-		{
-			return Err(());
-		}
-		clients.iter().any(|x| x.handle.verify_invite(&invite))
-	}
-	else
-	{
-		false
-	};
-
-	if !lobby.is_public && !is_invited
-	{
-		return Err(());
-	}
-
 	let mut newcomer = Client {
 		id: client_id,
 		user_id: client_user_id,
@@ -952,8 +957,6 @@ fn do_join(
 	newcomer.handle.notify(update);
 
 	clients.push(newcomer);
-
-	Ok(())
 }
 
 fn send_secrets(
@@ -2389,6 +2392,7 @@ async fn handle_ruleset_confirmation(
 	client_id: Keycode,
 	ruleset_name: String,
 	general_chat: &mut mpsc::Sender<chat::Update>,
+	lobby_sendbuffer: mpsc::Sender<Update>,
 ) -> Result<Option<game::Setup>, Error>
 {
 	if ruleset_name != lobby.ruleset_name
@@ -2412,7 +2416,7 @@ async fn handle_ruleset_confirmation(
 		&& is_ruleset_confirmed(lobby, clients)
 	{
 		// Start the game once everyone has confirmed.
-		try_start(lobby, clients, general_chat).await
+		try_start(lobby, clients, general_chat, lobby_sendbuffer).await
 	}
 	else
 	{
@@ -2429,6 +2433,13 @@ fn is_ruleset_confirmed(lobby: &Lobby, clients: &Vec<Client>) -> bool
 			return false;
 		}
 	}
+	for ai in &lobby.staged_connected_ais
+	{
+		if !lobby.ruleset_confirmations.contains(&ai.client_id)
+		{
+			return false;
+		}
+	}
 	return true;
 }
 
@@ -2436,8 +2447,32 @@ async fn try_start(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
 	general_chat: &mut mpsc::Sender<chat::Update>,
+	lobby_sendbuffer: mpsc::Sender<Update>,
 ) -> Result<Option<game::Setup>, Error>
 {
+	// Add connected bots if necessary.
+	let to_be_added: Vec<ConnectedAi> = lobby
+		.connected_ais
+		.iter()
+		.filter(|ai| {
+			lobby.bots.iter().any(|bot| bot.ai_name == ai.ai_name)
+				&& !lobby
+					.staged_connected_ais
+					.iter()
+					.any(|x| x.client_id == ai.client_id)
+		})
+		.map(|ai| ai.clone())
+		.collect();
+	for mut connected_ai in to_be_added
+	{
+		let update = client::Update::JoinedLobby {
+			lobby_id: lobby.id,
+			lobby: lobby_sendbuffer.clone(),
+		};
+		connected_ai.handle.notify(update);
+		lobby.staged_connected_ais.push(connected_ai);
+	}
+
 	// Make sure all the clients are still valid.
 	let client_count = clients.len();
 	let removed = clients
@@ -2464,6 +2499,52 @@ async fn try_start(
 		return Ok(None);
 	}
 
+	// Check that all clients have access to the ruleset that we will use.
+	if !is_ruleset_confirmed(lobby, clients)
+	{
+		debug!("Delaying start in lobby {}: ruleset unconfirmed.", lobby.id);
+
+		// List the new ruleset to trigger additional confirmations.
+		for client in clients.iter_mut()
+		{
+			if !lobby.ruleset_confirmations.contains(&client.id)
+			{
+				let message = Message::ListRuleset {
+					ruleset_name: lobby.ruleset_name.clone(),
+					metadata: None,
+				};
+				client.handle.send(message);
+			}
+		}
+
+		for ai in lobby.staged_connected_ais.iter_mut()
+		{
+			if !lobby.ruleset_confirmations.contains(&ai.client_id)
+			{
+				let message = Message::ListRuleset {
+					ruleset_name: lobby.ruleset_name.clone(),
+					metadata: Some(ListRulesetMetadata { lobby_id: lobby.id }),
+				};
+				ai.handle.send(message);
+			}
+		}
+
+		// Cannot continue until all player have confirmed the ruleset.
+		lobby.stage = Stage::WaitingForConfirmation;
+		return Ok(None);
+	}
+
+	// We are truly starting.
+	let game = start(lobby, clients, general_chat).await?;
+	Ok(Some(game))
+}
+
+async fn start(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	general_chat: &mut mpsc::Sender<chat::Update>,
+) -> Result<game::Setup, Error>
+{
 	// Create a stack of available colors, with Red on top, then Blue, etcetera.
 	let mut colorstack = lobby.available_colors.clone();
 	colorstack.sort();
@@ -2651,27 +2732,7 @@ async fn try_start(
 		}
 	}
 
-	// TODO if (_replay && _replayname.empty()) return false;
-
-	// Check that all clients have access to the ruleset that we will use.
-	if !is_ruleset_confirmed(lobby, clients)
-	{
-		debug!("Delaying start in lobby {}: ruleset unconfirmed.", lobby.id);
-
-		// List the new ruleset to trigger additional confirmations.
-		let message = Message::ListRuleset {
-			ruleset_name: lobby.ruleset_name.clone(),
-			metadata: Some(ListRulesetMetadata { lobby_id: lobby.id }),
-		};
-		for client in clients.iter_mut()
-		{
-			client.handle.send(message.clone());
-		}
-
-		// Cannot continue until all player have confirmed the ruleset.
-		lobby.stage = Stage::WaitingForConfirmation;
-		return Ok(None);
-	}
+	// TODO if (_replay && _replayname.empty()) return error;
 
 	let map_name = lobby.map_name.clone();
 	let map_metadata = {
@@ -2684,7 +2745,6 @@ async fn try_start(
 
 	let planning_timer = Some(lobby.timer_in_seconds).filter(|&x| x > 0);
 
-	// We are truly starting.
 	let game = game::Setup {
 		lobby_id: lobby.id,
 		lobby_name: lobby.name.clone(),
@@ -2710,6 +2770,7 @@ async fn try_start(
 			None =>
 			{
 				debug_assert!(false, "role should be assigned above");
+				warn!("Missing role for InGame message");
 				continue;
 			}
 		};
@@ -2722,7 +2783,7 @@ async fn try_start(
 		general_chat.send(update).await?;
 	}
 
-	Ok(Some(game))
+	Ok(game)
 }
 
 #[derive(Debug)]

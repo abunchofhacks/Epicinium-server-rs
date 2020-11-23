@@ -1453,6 +1453,7 @@ async fn handle_message(
 						client_id: client.id,
 						general_chat,
 						ruleset_name,
+						lobby_sendbuffer: lobby.clone(),
 					});
 				lobby.send(update).await?;
 			}
@@ -1483,6 +1484,7 @@ async fn handle_message(
 						client_id: client.id,
 						general_chat,
 						ruleset_name,
+						lobby_sendbuffer: lobby.clone(),
 					});
 				lobby.send(update).await?;
 			}
@@ -1662,8 +1664,10 @@ async fn handle_message(
 					}
 				};
 
-				let update =
-					lobby::Update::ForSetup(lobby::Sub::Start { general_chat });
+				let update = lobby::Update::ForSetup(lobby::Sub::Start {
+					general_chat,
+					lobby_sendbuffer: lobby.clone(),
+				});
 				lobby.send(update).await?;
 			}
 			None =>
@@ -1706,7 +1710,7 @@ async fn handle_message(
 			}
 			else
 			{
-				debug!("Ignoring ListRuleset from unlobbied bot");
+				debug!("Ignoring Orders from unlobbied bot");
 			}
 		}
 		Message::Orders {
@@ -1724,7 +1728,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				debug!("Ignoring Sync from unlobbied client");
+				debug!("Ignoring Orders from unlobbied client");
 			}
 		},
 		Message::Sync {
