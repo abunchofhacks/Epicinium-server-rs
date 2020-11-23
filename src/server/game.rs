@@ -7,6 +7,7 @@ use crate::logic::automaton::Automaton;
 use crate::logic::challenge;
 use crate::logic::challenge::ChallengeId;
 use crate::logic::change::ChangeSet;
+use crate::logic::difficulty::Difficulty;
 use crate::logic::map;
 use crate::logic::order::Order;
 use crate::logic::player::PlayerColor;
@@ -63,6 +64,7 @@ impl PlayerClient
 pub struct BotClient
 {
 	pub slot: Botslot,
+	pub difficulty: Difficulty,
 	pub descriptive_name: String,
 	pub ai_metadata: ai::Metadata,
 	pub connected_bot_metadata: ConnectedBotMetadata,
@@ -229,18 +231,21 @@ pub async fn run(
 				player: Some(client.color),
 				ruleset_name: Some(ruleset_name.clone()),
 				timer_in_seconds: planning_time_in_seconds,
+				difficulty: None,
+				connected_bot: None,
 			});
 		}
 	}
 
 	for client in &mut connected_bots
 	{
-		// TODO add bot slot
 		client.handle.send(Message::Game {
 			role: Some(Role::Player),
 			player: Some(client.color),
 			ruleset_name: Some(ruleset_name.clone()),
 			timer_in_seconds: planning_time_in_seconds,
+			difficulty: Some(client.difficulty),
+			connected_bot: Some(client.connected_bot_metadata),
 		});
 	}
 
@@ -251,6 +256,8 @@ pub async fn run(
 			player: None,
 			ruleset_name: Some(ruleset_name.clone()),
 			timer_in_seconds: planning_time_in_seconds,
+			difficulty: None,
+			connected_bot: None,
 		});
 	}
 
@@ -1533,6 +1540,8 @@ fn do_join(
 			player: Some(color),
 			ruleset_name: Some(lobby.ruleset_name.clone()),
 			timer_in_seconds: lobby.planning_time_in_seconds,
+			difficulty: None,
+			connected_bot: None,
 		});
 	}
 	else
@@ -1542,6 +1551,8 @@ fn do_join(
 			player: None,
 			ruleset_name: Some(lobby.ruleset_name.clone()),
 			timer_in_seconds: lobby.planning_time_in_seconds,
+			difficulty: None,
+			connected_bot: None,
 		});
 	}
 

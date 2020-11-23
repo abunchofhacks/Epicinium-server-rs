@@ -2607,6 +2607,7 @@ async fn try_start(
 
 			connected_bots.push(game::BotClient {
 				slot: bot.slot,
+				difficulty: bot.difficulty,
 				descriptive_name,
 				ai_metadata,
 				connected_bot_metadata,

@@ -254,6 +254,13 @@ pub enum Message
 
 		#[serde(default, skip_serializing_if = "is_zero", rename = "time")]
 		timer_in_seconds: Option<u32>,
+
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		difficulty: Option<Difficulty>,
+
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		#[serde(rename = "metadata")]
+		connected_bot: Option<ConnectedBotMetadata>,
 	},
 	Tutorial
 	{
@@ -295,17 +302,8 @@ pub enum Message
 		#[serde(rename = "metadata")]
 		connected_bot: Option<ConnectedBotMetadata>,
 	},
-	#[serde(rename = "order_old")]
-	OrdersOld
-	{
-		orders: Vec<Order>,
-
-		#[serde(default, skip_serializing_if = "Option::is_none")]
-		#[serde(rename = "metadata")]
-		connected_bot: Option<ConnectedBotMetadata>,
-	},
 	#[serde(rename = "order_new")]
-	OrdersNew
+	Orders
 	{
 		orders: Vec<Order>,
 

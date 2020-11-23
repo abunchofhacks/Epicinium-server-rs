@@ -1690,7 +1690,7 @@ async fn handle_message(
 			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
-		Message::OrdersNew {
+		Message::Orders {
 			orders,
 			connected_bot: Some(ConnectedBotMetadata { lobby_id, slot }),
 		} if client.is_bot() =>
@@ -1709,7 +1709,7 @@ async fn handle_message(
 				debug!("Ignoring ListRuleset from unlobbied bot");
 			}
 		}
-		Message::OrdersNew {
+		Message::Orders {
 			orders,
 			connected_bot: _,
 		} => match client.lobby
@@ -1836,7 +1836,6 @@ async fn handle_message(
 		| Message::Briefing { .. }
 		| Message::ReplayWithAnimations { .. }
 		| Message::Changes { .. }
-		| Message::OrdersOld { .. }
 		| Message::RatingAndStars { .. }
 		| Message::UpdatedRating { .. }
 		| Message::RecentStars { .. }
