@@ -2314,15 +2314,6 @@ async fn pick_ruleset(
 		client.handle.send(pickmessage.clone());
 	}
 
-	// AIHungryHippo uses hardcoded unit and tile types, so it cannot handle
-	// non-default rulesets.
-	if lobby.ruleset_name != ruleset::current()
-	{
-		// Lowercase because we also want to block aihungryhippo.so.
-		let blocker = "hungryhippo".to_string();
-		block_ai(lobby, clients, blocker);
-	}
-
 	Ok(())
 }
 
