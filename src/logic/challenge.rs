@@ -1,5 +1,6 @@
 /* Challenge */
 
+pub use epicinium_lib::error::InterfaceError;
 pub use epicinium_lib::ChallengeId;
 
 use crate::logic::difficulty::Difficulty;
@@ -33,16 +34,16 @@ pub fn get_current_key() -> String
 	epicinium_lib::challenge_key(epicinium_lib::current_challenge_id())
 }
 
-pub fn load_current() -> Challenge
+pub fn load_current() -> Result<Challenge, InterfaceError>
 {
 	let id = epicinium_lib::current_challenge_id();
 	let key = epicinium_lib::challenge_key(id);
-	let display_name = epicinium_lib::challenge_display_name(id);
+	let display_name = epicinium_lib::challenge_display_name(id)?;
 	let panel_picture_name = epicinium_lib::challenge_panel_picture_name(id);
 	let discord_image_key = epicinium_lib::challenge_discord_image_key(id);
 	let steam_short_key = epicinium_lib::challenge_steam_short_key(id);
 
-	Challenge {
+	Ok(Challenge {
 		key,
 		metadata: Metadata {
 			display_name,
@@ -50,7 +51,7 @@ pub fn load_current() -> Challenge
 			discord_image_key,
 			steam_short_key,
 		},
-	}
+	})
 }
 
 pub fn num_bots(id: ChallengeId) -> usize
@@ -81,7 +82,9 @@ pub fn ruleset_name(id: ChallengeId) -> Option<String>
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MissionBriefing(serde_json::Value);
 
-pub fn load_briefing(id: ChallengeId) -> MissionBriefing
+pub fn load_briefing(id: ChallengeId)
+	-> Result<MissionBriefing, InterfaceError>
 {
-	MissionBriefing(epicinium_lib::challenge_mission_briefing(id))
+	let briefing = epicinium_lib::challenge_mission_briefing(id)?;
+	Ok(MissionBriefing(briefing))
 }

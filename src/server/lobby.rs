@@ -2651,16 +2651,15 @@ async fn start(
 				Difficulty::Medium => "Medium",
 				Difficulty::Hard => "Hard",
 			};
+			let display_name = bot.slot.get_display_name();
 			let descriptive_name = format!(
 				"{} ({} {})",
-				bot.slot.get_display_name(),
-				difficulty_str,
-				bot.ai_name
+				display_name, difficulty_str, bot.ai_name
 			);
 			let ai_metadata_json = json!({
 				"difficulty": bot.difficulty,
-				"character": bot.slot.get_character(),
-				"displayname": bot.slot.get_display_name(),
+				"character": character.to_string(),
+				"displayname": display_name,
 				"ainame": bot.ai_name,
 				"authors": connected_ai.authors,
 				"connected_user_id": connected_ai.client_user_id,
@@ -2687,7 +2686,6 @@ async fn start(
 				id: connected_ai.client_id,
 				user_id: connected_ai.client_user_id,
 				handle: connected_ai.handle.clone(),
-				rating_callback: None,
 
 				color,
 				vision,

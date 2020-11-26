@@ -169,13 +169,13 @@ dependencies = [
 
 [[package]]
 name = "epicinium"
-version = "1.0.4"
+version = "1.0.9"
 dependencies = [
  "anyhow 1.0.32 (registry+https://github.com/rust-lang/crates.io-index)",
  "chrono 0.4.11 (registry+https://github.com/rust-lang/crates.io-index)",
  "docopt 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "enumset 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "epicinium_lib 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "epicinium_lib 1.0.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "fern 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -200,7 +200,7 @@ dependencies = [
 
 [[package]]
 name = "epicinium_lib"
-version = "1.0.4"
+version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "libc 0.2.65 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1370,7 +1370,7 @@ dependencies = [
 "checksum encoding_rs 0.8.20 (registry+https://github.com/rust-lang/crates.io-index)" = "87240518927716f79692c2ed85bfe6e98196d18c6401ec75355760233a7e12e9"
 "checksum enumset 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "3691ce759534316ad900d57dd8e688e2c4263f9750c0f7c1e9b9a4516d4ca241"
 "checksum enumset_derive 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)" = "74bef436ac71820c5cf768d7af9ba33121246b09a00e09a55d94ef8095a875ac"
-"checksum epicinium_lib 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)" = "444686c72f4899c14563f5432fe35760dade975303033c0b1c61aedfed861f73"
+"checksum epicinium_lib 1.0.9 (registry+https://github.com/rust-lang/crates.io-index)" = "89581f3dc902eb59432421f0d50870da881407d2950c96aacb7cb645cb5b4ba6"
 "checksum fern 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)" = "8c9a4820f0ccc8a7afd67c39a0f1a0f4b07ca1725164271a64939d7aeb9af065"
 "checksum fnv 1.0.6 (registry+https://github.com/rust-lang/crates.io-index)" = "2fad85553e09a6f881f739c29f0b00b0f01357c743266d478b68951ce23285f3"
 "checksum foreign-types 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)" = "f6f339eb8adc052cd2ca78910fda869aefa38d22d5cb648e6485e4d3fc06f3b1"

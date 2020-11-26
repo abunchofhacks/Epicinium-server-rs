@@ -2,6 +2,7 @@
 
 use crate::common::coredump::enable_coredumps;
 use crate::common::keycode::*;
+use crate::logic::challenge;
 use crate::logic::ruleset;
 use crate::server::chat;
 use crate::server::client;
@@ -47,6 +48,7 @@ pub struct Server
 	slack_setup: slack_api::Setup,
 	discord_setup: discord_api::Setup,
 	rating_database: rating::Database,
+	current_challenge: challenge::Challenge,
 	ip_address: String,
 }
 
@@ -76,6 +78,7 @@ pub fn setup_server(
 		slack_setup: slack_api::setup(settings)?,
 		discord_setup: discord_api::setup(settings)?,
 		rating_database: rating::initialize(settings)?,
+		current_challenge: challenge::load_current()?,
 		ip_address,
 	};
 	Ok(server)
@@ -92,6 +95,7 @@ pub async fn run_server(server: Server)
 		slack_setup,
 		discord_setup,
 		rating_database,
+		current_challenge,
 		ip_address,
 	} = server;
 
@@ -111,7 +115,8 @@ pub async fn run_server(server: Server)
 		wait_for_close(general_canary_out, client_canary_out, state_in);
 
 	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
-	let chat_task = chat::run(general_out, general_canary_in);
+	let chat_task =
+		chat::run(general_out, general_canary_in, current_challenge);
 
 	let logrotate_task =
 		logrotate::run(log_setup, state_out.clone(), slack_in.clone());

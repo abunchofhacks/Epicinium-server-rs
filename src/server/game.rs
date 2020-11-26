@@ -72,7 +72,6 @@ pub struct BotClient
 	pub id: Keycode,
 	pub user_id: UserId,
 	pub handle: client::Handle,
-	pub rating_callback: Option<mpsc::Sender<rating::Update>>,
 
 	pub color: PlayerColor,
 	pub vision: VisionType,
@@ -90,7 +89,7 @@ impl BotClient
 
 	fn is_retired(&self) -> bool
 	{
-		self.rating_callback.is_none()
+		false
 	}
 }
 
@@ -302,9 +301,8 @@ pub async fn run(
 		};
 		automaton.set_challenge(challenge_id)?;
 
-		initial_messages.push(Message::Briefing {
-			briefing: challenge::load_briefing(challenge_id),
-		});
+		let briefing = challenge::load_briefing(challenge_id)?;
+		initial_messages.push(Message::Briefing { briefing });
 	}
 
 	// Send the initial messages.
@@ -348,7 +346,6 @@ pub async fn run(
 			ai_metadata,
 		});
 	}
-	let mut metadata_bots = Vec::new();
 	for bot in &mut local_bots
 	{
 		let ai_metadata = bot.ai.metadata()?;
@@ -488,6 +485,7 @@ pub async fn run(
 		{
 			State::InProgress => (),
 			State::Finished => break,
+			State::Abandoned => break,
 		}
 	}
 
@@ -584,6 +582,7 @@ enum State
 {
 	InProgress,
 	Finished,
+	Abandoned,
 }
 
 async fn iterate(
@@ -635,6 +634,11 @@ async fn iterate(
 	if automaton.is_gameover()
 	{
 		return Ok(State::Finished);
+	}
+	else if all_players_and_watchers_have_disconnected(players, watchers)
+	{
+		debug!("Abandoning game in lobby {} without clients...", lobby.id);
+		return Ok(State::Abandoned);
 	}
 
 	// If all live players are disconnected during the resting phase,
@@ -757,6 +761,15 @@ fn broadcast(
 	}
 
 	Ok(())
+}
+
+fn all_players_and_watchers_have_disconnected(
+	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
+) -> bool
+{
+	players.iter().find(|x| x.is_connected()).is_none()
+		&& watchers.iter().find(|x| x.is_connected()).is_none()
 }
 
 async fn rest(
@@ -1037,6 +1050,13 @@ async fn sleep(
 	};
 	let end = start + duration;
 
+	// Wait for 1 second at the start of the planning phase, to prevent
+	// blasting through the game in the time between the last human client
+	// disconnecting and the lobby being detected as abandoned.
+	// This does not affect the planning timer because `end` is already set
+	// and we use `timeout_at` later on.
+	timer::delay_for(Duration::from_secs(1)).await;
+
 	// Start staging when either the timer runs out or all non-defeated
 	// players are ready, or when all players except one are defeated
 	// or have retired. Players and watchers can reconnect in the
@@ -1083,6 +1103,7 @@ async fn sleep(
 						break;
 					}
 				}
+				warn!("No match for bot client {} in slot {}", client_id, slot);
 			}
 			Update::ForGame(Sub::Sync { client_id }) =>
 			{
@@ -1209,6 +1230,7 @@ async fn stage(
 	// There is a 10 second grace period for anyone whose orders we
 	// haven't received; they might have sent their orders before
 	// receiving the staging announcement.
+	// In particular this includes connected bots.
 	while !all_players_have_submitted_orders(players, connected_bots)
 	{
 		trace!("Waiting until all players have staged orders...");

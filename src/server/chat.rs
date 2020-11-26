@@ -2,7 +2,6 @@
 
 use crate::common::keycode::*;
 use crate::logic::challenge;
-use crate::logic::challenge::Challenge;
 use crate::server::client;
 use crate::server::lobby;
 use crate::server::login::Unlock;
@@ -96,9 +95,12 @@ pub enum Update
 	Msg(Message),
 }
 
-pub async fn run(mut updates: mpsc::Receiver<Update>, canary: mpsc::Sender<()>)
+pub async fn run(
+	mut updates: mpsc::Receiver<Update>,
+	canary: mpsc::Sender<()>,
+	current_challenge: challenge::Challenge,
+)
 {
-	let current_challenge = challenge::load_current();
 	let mut clients: Vec<Client> = Vec::new();
 	let mut ghostbusters: HashMap<Keycode, Ghostbuster> = HashMap::new();
 	let mut lobbies: Vec<Lobby> = Vec::new();
@@ -131,7 +133,7 @@ fn handle_update(
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
 	lobbies: &mut Vec<Lobby>,
 	listed_bots: &mut Vec<lobby::ConnectedAi>,
-	current_challenge: &Challenge,
+	current_challenge: &challenge::Challenge,
 )
 {
 	match update
@@ -335,7 +337,7 @@ fn handle_join(
 	clients: &mut Vec<Client>,
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
 	lobbies: &Vec<Lobby>,
-	current_challenge: &Challenge,
+	current_challenge: &challenge::Challenge,
 )
 {
 	// Prevent a user being online with multiple connections simultaneously.
@@ -476,7 +478,7 @@ fn do_init(
 	handle: &mut client::Handle,
 	clients: &Vec<Client>,
 	lobbies: &Vec<Lobby>,
-	current_challenge: &Challenge,
+	current_challenge: &challenge::Challenge,
 )
 {
 	// Let the client know which lobbies there are.
