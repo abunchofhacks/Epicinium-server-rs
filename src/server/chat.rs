@@ -1,6 +1,7 @@
 /* Server::Chat */
 
 use crate::common::keycode::*;
+use crate::logic::ai;
 use crate::logic::challenge;
 use crate::server::client;
 use crate::server::lobby;
@@ -153,6 +154,7 @@ fn handle_update(
 			clients,
 			ghostbusters,
 			lobbies,
+			listed_bots,
 			current_challenge,
 		),
 		Update::RatingAndStars { client_id } =>
@@ -337,6 +339,7 @@ fn handle_join(
 	clients: &mut Vec<Client>,
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
 	lobbies: &Vec<Lobby>,
+	listed_bots: &mut Vec<lobby::ConnectedAi>,
 	current_challenge: &challenge::Challenge,
 )
 {
@@ -407,7 +410,13 @@ fn handle_join(
 	// FUTURE this is weird (#1411)
 	newcomer.handle.send(message);
 
-	do_init(&mut newcomer.handle, clients, lobbies, current_challenge);
+	do_init(
+		&mut newcomer.handle,
+		clients,
+		lobbies,
+		listed_bots,
+		current_challenge,
+	);
 
 	// Tell everyone the rating and stars of the newcomer.
 	// Let the newcomer know how many stars they have for the current challenge.
@@ -478,9 +487,29 @@ fn do_init(
 	handle: &mut client::Handle,
 	clients: &Vec<Client>,
 	lobbies: &Vec<Lobby>,
+	listed_bots: &mut Vec<lobby::ConnectedAi>,
 	current_challenge: &challenge::Challenge,
 )
 {
+	// This is a stupid hack that is necessary because clients <1.0.8
+	// do not handle LIST_AI messages sent after the lobby is created.
+	for name in ai::load_pool()
+	{
+		handle.send(Message::ListAi {
+			ai_name: name.clone(),
+			metadata: None,
+		});
+	}
+	for ai in listed_bots
+	{
+		handle.send(Message::ListAi {
+			ai_name: ai.ai_name.clone(),
+			metadata: Some(BotAuthorsMetadata {
+				authors: ai.authors.clone(),
+			}),
+		});
+	}
+
 	// Let the client know which lobbies there are.
 	for lobby in lobbies.iter()
 	{

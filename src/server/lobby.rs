@@ -1045,6 +1045,25 @@ async fn handle_removed(
 		{
 			lobby.num_players -= 1;
 		}
+
+		// This is a stupid hack that is necessary because clients <1.0.8
+		// do not handle LIST_AI messages sent after the lobby is created.
+		for (name, metadata) in &lobby.ai_pool
+		{
+			handle.send(Message::ListAi {
+				ai_name: name.clone(),
+				metadata: metadata.clone(),
+			});
+		}
+		for ai in &lobby.connected_ais
+		{
+			handle.send(Message::ListAi {
+				ai_name: ai.ai_name.clone(),
+				metadata: Some(BotAuthorsMetadata {
+					authors: ai.authors.clone(),
+				}),
+			});
+		}
 	}
 
 	Ok(())
