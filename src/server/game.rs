@@ -1080,13 +1080,14 @@ async fn sleep(
 		{
 			Update::ForGame(Sub::Orders { client_id, orders }) =>
 			{
-				for client in players.iter_mut()
+				if let Some(client) =
+					players.iter_mut().find(|client| client.id == client_id)
 				{
-					if client.id == client_id
-					{
-						client.submitted_orders = Some(orders);
-						break;
-					}
+					client.submitted_orders = Some(orders);
+				}
+				else
+				{
+					warn!("Missing client {}", client_id);
 				}
 			}
 			Update::ForGame(Sub::BotOrders {
@@ -1095,15 +1096,16 @@ async fn sleep(
 				orders,
 			}) =>
 			{
-				for client in connected_bots.iter_mut()
+				if let Some(client) = connected_bots.iter_mut().find(|client| {
+					client.id == client_id && client.slot == slot
+				})
 				{
-					if client.id == client_id && client.slot == slot
-					{
-						client.submitted_orders = Some(orders);
-						break;
-					}
+					client.submitted_orders = Some(orders);
 				}
-				warn!("No match for bot client {} in slot {}", client_id, slot);
+				else
+				{
+					warn!("Missing bot client {}, slot {}", client_id, slot);
+				}
 			}
 			Update::ForGame(Sub::Sync { client_id }) =>
 			{
