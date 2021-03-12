@@ -1687,7 +1687,12 @@ async fn pick_map(
 	// map_pool in the code below, but then a block occurred when that happened.
 	let is_neural_newt_compatible = match found
 	{
-		Some((_, metadata)) => metadata.playercount == 2,
+		Some((_, metadata)) =>
+		{
+			metadata.playercount == 2
+				&& metadata.cols <= 20
+				&& metadata.rows <= 13
+		}
 		None => map_name == "1v1",
 	};
 
