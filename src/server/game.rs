@@ -1463,14 +1463,7 @@ fn do_join(
 		if let Some(player) =
 			players.iter_mut().find(|x| x.user_id == client_user_id)
 		{
-			if !player.is_defeated && !player.is_retired()
-			{
-				(Some(Role::Player), Some(player.color))
-			}
-			else
-			{
-				(Some(Role::Observer), None)
-			}
+			(Some(Role::Player), Some(player.color))
 		}
 		else if let Some(watcher) =
 			watchers.iter_mut().find(|x| x.user_id == client_user_id)
