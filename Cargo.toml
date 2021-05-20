@@ -1,6 +1,6 @@
 [package]
 name = "epicinium"
-version = "1.0.12"
+version = "1.1.0"
 authors = ["Sander in 't Veld <sanderintveld@hotmail.com>"]
 edition = "2018"
 publish = false
