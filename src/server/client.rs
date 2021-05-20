@@ -1279,6 +1279,36 @@ async fn handle_message(
 				debug!("Ignoring NameLobby message from unlobbied client");
 			}
 		},
+		Message::ClaimHost { username: None } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						error!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update = lobby::Update::ForSetup(lobby::Sub::ClaimHost {
+					general_chat,
+					username: client.username.clone(),
+				});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring ClaimHost from unlobbied client");
+			}
+		},
+		Message::ClaimHost { .. } =>
+		{
+			warn!("Invalid message from client: {:?}", message);
+			return Err(Error::Invalid);
+		}
 		Message::ClaimRole { username, role } => match client.lobby
 		{
 			Some(ref mut lobby) =>

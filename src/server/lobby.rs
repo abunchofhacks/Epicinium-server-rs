@@ -99,6 +99,11 @@ pub enum Sub
 
 	ListConnectedAi(ConnectedAi),
 
+	ClaimHost
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+		username: String,
+	},
 	ClaimRole
 	{
 		general_chat: mpsc::Sender<chat::Update>,
@@ -483,6 +488,15 @@ async fn handle_sub(
 			Ok(None)
 		}
 
+		Sub::ClaimHost {
+			mut general_chat,
+			username,
+		} =>
+		{
+			handle_claim_host(lobby, clients, username)?;
+			describe_lobby(lobby, &mut general_chat).await?;
+			Ok(None)
+		}
 		Sub::ClaimRole {
 			mut general_chat,
 			username,
@@ -1066,6 +1080,29 @@ async fn handle_removed(
 		}
 	}
 
+	Ok(())
+}
+
+fn handle_claim_host(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	username: String,
+) -> Result<(), Error>
+{
+	// Find any client based on the username supplied by the sender.
+	let client = match clients.into_iter().find(|x| x.username == username)
+	{
+		Some(client) => client,
+		None =>
+		{
+			// Client not found.
+			// FUTURE let the sender know somehow?
+			return Ok(());
+		}
+	};
+	let subject_client_id = client.id;
+
+	// TODO become host
 	Ok(())
 }
 

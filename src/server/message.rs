@@ -97,6 +97,11 @@ pub enum Message
 
 		metadata: LobbyMetadata,
 	},
+	ClaimHost
+	{
+		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
+		username: Option<String>,
+	},
 	ClaimRole
 	{
 		#[serde(rename = "sender")]
@@ -450,7 +455,9 @@ pub struct TagMetadata
 	pub supporter: bool,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug)]
+#[derive(
+	PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default, Debug,
+)]
 pub struct LobbyMetadata
 {
 	#[serde(default, skip_serializing_if = "is_zero")]
