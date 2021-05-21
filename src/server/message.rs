@@ -265,7 +265,7 @@ pub enum Message
 
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		#[serde(rename = "metadata")]
-		connected_bot: Option<ConnectedBotMetadata>,
+		forwarding: Option<ForwardingMetadata>,
 	},
 	Tutorial
 	{
@@ -298,6 +298,11 @@ pub enum Message
 		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
 		username: Option<String>,
 	},
+	HostSync
+	{
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		metadata: Option<HostSyncMetadata>,
+	},
 	#[serde(rename = "change")]
 	Changes
 	{
@@ -305,7 +310,7 @@ pub enum Message
 
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		#[serde(rename = "metadata")]
-		connected_bot: Option<ConnectedBotMetadata>,
+		forwarding: Option<ForwardingMetadata>,
 	},
 	#[serde(rename = "order_new")]
 	Orders
@@ -313,12 +318,8 @@ pub enum Message
 		orders: Vec<Order>,
 
 		#[serde(default, skip_serializing_if = "Option::is_none")]
-		#[serde(rename = "sender")]
-		forwarded_from_username: Option<String>,
-
-		#[serde(default, skip_serializing_if = "Option::is_none")]
 		#[serde(rename = "metadata")]
-		connected_bot: Option<ConnectedBotMetadata>,
+		forwarding: Option<ForwardingMetadata>,
 	},
 	Sync
 	{
@@ -492,11 +493,18 @@ pub struct BotAuthorsMetadata
 	pub authors: String,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
-pub struct ConnectedBotMetadata
+#[derive(PartialEq, Eq, Clone, Copy, Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum ForwardingMetadata
 {
-	pub lobby_id: Keycode,
-	pub slot: Botslot,
+	ConnectedBot
+	{
+		lobby_id: Keycode, slot: Botslot
+	},
+	ClientHosted
+	{
+		player: PlayerColor
+	},
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
@@ -539,4 +547,13 @@ pub enum OnOrOff
 {
 	Off = 0,
 	On = 1,
+}
+
+#[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
+pub struct HostSyncMetadata
+{
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub defeated_players: Vec<PlayerColor>,
+
+	pub game_over: bool,
 }

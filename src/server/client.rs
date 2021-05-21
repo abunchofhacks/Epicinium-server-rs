@@ -1724,10 +1724,49 @@ async fn handle_message(
 			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
+		Message::HostSync { metadata } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = lobby::Update::FromHost(game::FromHost::Sync {
+					client_id: client.id,
+					metadata,
+				});
+				lobby.send(update).await?
+			}
+			None =>
+			{
+				debug!("Ignoring PlayerDefeated from unlobbied client");
+			}
+		},
+		Message::Changes {
+			changes,
+			forwarding: Some(ForwardingMetadata::ClientHosted { player }),
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = lobby::Update::FromHost(game::FromHost::Changes {
+					client_id: client.id,
+					changes,
+					vision: player,
+				});
+				lobby.send(update).await?
+			}
+			None =>
+			{
+				debug!("Ignoring ClientedHosted Changes from unlobbied client");
+			}
+		},
+		Message::Changes { .. } =>
+		{
+			warn!("Invalid message from client: {:?}", message);
+			return Err(Error::Invalid);
+		}
 		Message::Orders {
 			orders,
-			forwarded_from_username: None,
-			connected_bot: Some(ConnectedBotMetadata { lobby_id, slot }),
+			forwarding:
+				Some(ForwardingMetadata::ConnectedBot { lobby_id, slot }),
 		} if client.is_bot() =>
 		{
 			if let Some(lobby) = client.bot_lobbies.get_mut(&lobby_id)
@@ -1746,8 +1785,7 @@ async fn handle_message(
 		}
 		Message::Orders {
 			orders,
-			forwarded_from_username: None,
-			connected_bot: _,
+			forwarding: None,
 		} => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -1876,7 +1914,6 @@ async fn handle_message(
 		| Message::Challenge { .. }
 		| Message::Briefing { .. }
 		| Message::ReplayWithAnimations { .. }
-		| Message::Changes { .. }
 		| Message::RatingAndStars { .. }
 		| Message::UpdatedRating { .. }
 		| Message::RecentStars { .. }

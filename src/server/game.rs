@@ -6,6 +6,7 @@ use crate::logic::automaton;
 use crate::logic::automaton::Automaton;
 use crate::logic::challenge;
 use crate::logic::challenge::ChallengeId;
+use crate::logic::change::Change;
 use crate::logic::change::ChangeSet;
 use crate::logic::difficulty::Difficulty;
 use crate::logic::map;
@@ -86,7 +87,7 @@ pub struct BotClient
 	pub difficulty: Difficulty,
 	pub descriptive_name: String,
 	pub ai_metadata: ai::Metadata,
-	pub connected_bot_metadata: ConnectedBotMetadata,
+	pub forwarding_metadata: ForwardingMetadata,
 
 	pub id: Keycode,
 	pub user_id: UserId,
@@ -125,6 +126,13 @@ pub struct LocalBot
 }
 
 #[derive(Debug)]
+pub struct HostedBot
+{
+	pub descriptive_name: String,
+	pub color: PlayerColor,
+}
+
+#[derive(Debug)]
 pub struct WatcherClient
 {
 	pub id: Keycode,
@@ -156,6 +164,7 @@ pub struct Setup
 	pub players: Vec<PlayerClient>,
 	pub connected_bots: Vec<BotClient>,
 	pub local_bots: Vec<LocalBot>,
+	pub hosted_bots: Vec<HostedBot>,
 	pub watchers: Vec<WatcherClient>,
 	pub map_name: String,
 	pub map_metadata: map::Metadata,
@@ -188,6 +197,11 @@ pub async fn run_server_game(
 	mut updates: mpsc::Receiver<Update>,
 ) -> Result<(), Error>
 {
+	if !setup.hosted_bots.is_empty()
+	{
+		return Err(Error::InvalidSetup);
+	}
+
 	let Setup {
 		lobby_id,
 		lobby_name,
@@ -196,6 +210,7 @@ pub async fn run_server_game(
 		mut players,
 		mut connected_bots,
 		mut local_bots,
+		hosted_bots: _,
 		mut watchers,
 		map_name,
 		map_metadata,
@@ -268,7 +283,7 @@ pub async fn run_server_game(
 				ruleset_name: Some(ruleset_name.clone()),
 				timer_in_seconds: planning_time_in_seconds,
 				difficulty: None,
-				connected_bot: None,
+				forwarding: None,
 			});
 		}
 	}
@@ -281,7 +296,7 @@ pub async fn run_server_game(
 			ruleset_name: Some(ruleset_name.clone()),
 			timer_in_seconds: planning_time_in_seconds,
 			difficulty: Some(client.difficulty),
-			connected_bot: Some(client.connected_bot_metadata),
+			forwarding: Some(client.forwarding_metadata),
 		});
 	}
 
@@ -293,7 +308,7 @@ pub async fn run_server_game(
 			ruleset_name: Some(ruleset_name.clone()),
 			timer_in_seconds: planning_time_in_seconds,
 			difficulty: None,
-			connected_bot: None,
+			forwarding: None,
 		});
 	}
 
@@ -570,31 +585,32 @@ pub async fn run_client_hosted_game(
 	mut updates: mpsc::Receiver<Update>,
 ) -> Result<(), Error>
 {
+	if setup.lobby_type != LobbyType::Custom
+		|| !setup.connected_bots.is_empty()
+		|| !setup.local_bots.is_empty()
+	{
+		return Err(Error::InvalidSetup);
+	}
+
 	let Setup {
 		lobby_id,
 		lobby_name,
 		lobby_description_metadata,
 		host,
 		mut players,
-		mut connected_bots,
-		mut local_bots,
+		connected_bots: _,
+		local_bots: _,
+		hosted_bots,
 		mut watchers,
 		map_name,
 		map_metadata,
 		ruleset_name,
 		planning_time_in_seconds,
-		lobby_type,
+		lobby_type: _,
 		challenge,
 		is_public,
 	} = setup;
 	let mut host = host.ok_or(Error::InvalidSetup)?;
-
-	if lobby_type != LobbyType::Custom
-	{
-		return Err(Error::InvalidSetup);
-	}
-
-	// TODO HostedGame: what to do with bots?
 
 	// Tell everyone that the game is starting.
 	for client in &mut players
@@ -605,19 +621,7 @@ pub async fn run_client_hosted_game(
 			ruleset_name: Some(ruleset_name.clone()),
 			timer_in_seconds: planning_time_in_seconds,
 			difficulty: None,
-			connected_bot: None,
-		});
-	}
-
-	for client in &mut connected_bots
-	{
-		client.handle.send(Message::Game {
-			role: Some(Role::Player),
-			player: Some(client.color),
-			ruleset_name: Some(ruleset_name.clone()),
-			timer_in_seconds: planning_time_in_seconds,
-			difficulty: Some(client.difficulty),
-			connected_bot: Some(client.connected_bot_metadata),
+			forwarding: None,
 		});
 	}
 
@@ -629,7 +633,7 @@ pub async fn run_client_hosted_game(
 			ruleset_name: Some(ruleset_name.clone()),
 			timer_in_seconds: planning_time_in_seconds,
 			difficulty: None,
-			connected_bot: None,
+			forwarding: None,
 		});
 	}
 
@@ -642,20 +646,11 @@ pub async fn run_client_hosted_game(
 			name: player.username.clone(),
 		});
 	}
-	for bot in &mut connected_bots
+	for bot in &hosted_bots
 	{
-		let descriptive_name = bot.descriptive_name.clone();
 		initial_messages.push(Message::AssignColor {
 			color: bot.color,
-			name: descriptive_name,
-		});
-	}
-	for bot in &mut local_bots
-	{
-		let descriptive_name = bot.ai.descriptive_name()?;
-		initial_messages.push(Message::AssignColor {
-			color: bot.color,
-			name: descriptive_name,
+			name: bot.descriptive_name.clone(),
 		});
 	}
 
@@ -687,7 +682,7 @@ pub async fn run_client_hosted_game(
 		is_public,
 		match_type: MatchType::Unrated,
 		challenge,
-		num_bots: connected_bots.len() + local_bots.len(),
+		num_bots: hosted_bots.len(),
 		map_name,
 		map_metadata,
 		ruleset_name,
@@ -725,7 +720,7 @@ pub async fn run_client_hosted_game(
 	linger(
 		&lobby_info,
 		&mut players,
-		&mut connected_bots,
+		&mut Vec::new(),
 		&mut watchers,
 		&mut updates,
 	)
@@ -755,6 +750,22 @@ pub enum Sub
 		client_id: Keycode,
 		slot: Botslot,
 		orders: Vec<Order>,
+	},
+}
+
+#[derive(Debug)]
+pub enum FromHost
+{
+	Sync
+	{
+		client_id: Keycode,
+		metadata: Option<HostSyncMetadata>,
+	},
+	Changes
+	{
+		client_id: Keycode,
+		vision: PlayerColor,
+		changes: Vec<Change>,
 	},
 }
 
@@ -931,18 +942,7 @@ async fn iterate_client_hosted_game(
 	planning_time_in_seconds: Option<u32>,
 ) -> Result<State, Error>
 {
-	//while automaton.is_active()
-	{
-		// TODO HostedGame: wait for host to send changesets
-		//let cset = automaton.act()?;
-		//broadcast(players, connected_bots, local_bots, watchers, cset)?;
-	}
-
-	// If players or bots are defeated, we no longer wait for them in the
-	// planning phase.
-	// TODO HostedGame: set players, bot and connected bots as defeated
-
-	//rest(lobby, host, players, watchers, updates).await?;
+	sync_host(lobby, host, players, watchers, updates).await?;
 
 	// If the game has ended, we are done.
 	// We waited with this check until all players have finished animating,
@@ -979,14 +979,14 @@ async fn iterate_client_hosted_game(
 		client.handle.send(message.clone());
 	}
 
-	// TODO HostedGame: hibernate
-	//let cset = automaton.hibernate()?;
-	//broadcast(players, connected_bots, local_bots, watchers, cset)?;
+	sync_host(lobby, host, players, watchers, updates).await?;
+
+	// TODO HostedGame:
 	//sleep(lobby, host, players, watchers, updates).await?;
 
-	// TODO HostedGame: awake
-	//let cset = automaton.awake()?;
-	//broadcast(players, connected_bots, local_bots, watchers, cset)?;
+	sync_host(lobby, host, players, watchers, updates).await?;
+
+	// TODO HostedGame:
 	//stage(lobby, host, players, watchers, updates).await?;
 
 	// Forward submitted orders.
@@ -995,16 +995,13 @@ async fn iterate_client_hosted_game(
 		if let Some(orders) = player.submitted_orders.take()
 		{
 			host.handle.send(Message::Orders {
-				forwarded_from_username: Some(player.username.clone()),
 				orders,
-				connected_bot: None,
+				forwarding: Some(ForwardingMetadata::ClientHosted {
+					player: player.color,
+				}),
 			});
 		}
 	}
-
-	// TODO HostedGame: prepare
-	//let cset = automaton.prepare()?;
-	//broadcast(players, connected_bots, local_bots, watchers, cset)?;
 
 	Ok(State::InProgress)
 }
@@ -1022,7 +1019,7 @@ fn broadcast(
 		let changes = cset.get(client.color);
 		let message = Message::Changes {
 			changes,
-			connected_bot: None,
+			forwarding: None,
 		};
 		client.handle.send(message);
 	}
@@ -1032,7 +1029,7 @@ fn broadcast(
 		let changes = cset.get(client.color);
 		let message = Message::Changes {
 			changes,
-			connected_bot: Some(client.connected_bot_metadata.clone()),
+			forwarding: Some(client.forwarding_metadata),
 		};
 		client.handle.send(message);
 	}
@@ -1048,7 +1045,7 @@ fn broadcast(
 		let changes = cset.get(client.vision_level);
 		let message = Message::Changes {
 			changes,
-			connected_bot: None,
+			forwarding: None,
 		};
 		client.handle.send(message);
 	}
@@ -1166,6 +1163,10 @@ async fn rest(
 			}
 			Update::ForSetup(..) =>
 			{}
+			Update::FromHost(..) =>
+			{
+				return Err(Error::InvalidUpdate);
+			}
 			Update::Msg(message) =>
 			{
 				for client in players.iter_mut()
@@ -1292,6 +1293,10 @@ async fn ensure_live_players(
 			}
 			Update::ForSetup(..) =>
 			{}
+			Update::FromHost(..) =>
+			{
+				return Err(Error::InvalidUpdate);
+			}
 			Update::Msg(message) =>
 			{
 				for client in players.iter_mut()
@@ -1463,6 +1468,10 @@ async fn sleep(
 			}
 			Update::ForSetup(..) =>
 			{}
+			Update::FromHost(..) =>
+			{
+				return Err(Error::InvalidUpdate);
+			}
 			Update::Msg(message) =>
 			{
 				for client in players.iter_mut()
@@ -1622,6 +1631,10 @@ async fn stage(
 			}
 			Update::ForSetup(..) =>
 			{}
+			Update::FromHost(..) =>
+			{
+				return Err(Error::InvalidUpdate);
+			}
 			Update::Msg(message) =>
 			{
 				for client in players.iter_mut()
@@ -1639,6 +1652,160 @@ async fn stage(
 	}
 
 	Ok(())
+}
+
+async fn sync_host(
+	lobby: &LobbyInfo,
+	host: &mut HostClient,
+	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
+	updates: &mut mpsc::Receiver<Update>,
+) -> Result<(), Error>
+{
+	host.handle.send(Message::HostSync { metadata: None });
+
+	let mut synced = false;
+	while !synced
+	{
+		trace!("Waiting for host sync...");
+
+		let update = match updates.recv().await
+		{
+			Some(update) => update,
+			None => return Err(Error::Abandoned),
+		};
+
+		match update
+		{
+			Update::FromHost(FromHost::Sync {
+				client_id,
+				metadata,
+			}) =>
+			{
+				if client_id == host.id
+				{
+					synced = true;
+
+					if let Some(metadata) = metadata
+					{
+						host.is_gameover = metadata.game_over;
+						for client in players.iter_mut()
+						{
+							if metadata.defeated_players.contains(&client.color)
+							{
+								client.is_defeated = true;
+							}
+						}
+					}
+				}
+				else
+				{
+					debug!("Ignoring sync from non-host client {}", client_id);
+				}
+			}
+			Update::FromHost(FromHost::Changes {
+				client_id,
+				vision,
+				changes,
+			}) =>
+			{
+				if client_id == host.id
+				{
+					forward_changes(players, watchers, vision, changes);
+				}
+				else
+				{
+					debug!("Ignoring sync from non-host client {}", client_id);
+				}
+			}
+			Update::ForGame(Sub::Orders { client_id, .. }) =>
+			{
+				debug!("Ignoring orders from {} while hostsyncing", client_id);
+			}
+			Update::ForGame(Sub::BotOrders { client_id, .. }) =>
+			{
+				debug!("Ignoring orders from {} while hostsyncing", client_id);
+			}
+			Update::ForGame(Sub::Sync { client_id }) =>
+			{
+				debug!("Ignoring sync from {} while hostsyncing", client_id);
+			}
+			Update::ForGame(Sub::Resign { client_id }) =>
+			{
+				let username = players
+					.iter()
+					.find(|x| x.id == client_id)
+					.map(|x| x.username.clone());
+				if username.is_some()
+				{
+					host.handle.send(Message::Resign { username });
+				}
+			}
+			Update::Leave {
+				client_id,
+				mut general_chat,
+			} =>
+			{
+				handle_leave(
+					lobby.id,
+					players,
+					&mut Vec::new(),
+					watchers,
+					client_id,
+					&mut general_chat,
+				)
+				.await?;
+			}
+			Update::Join { .. } =>
+			{
+				// TODO HostedGame: handle rejoin
+			}
+			Update::ForSetup(..) =>
+			{}
+			Update::Msg(message) =>
+			{
+				for client in players.iter_mut()
+				{
+					client.handle.send(message.clone());
+				}
+				for client in watchers.iter_mut()
+				{
+					client.handle.send(message.clone());
+				}
+			}
+			Update::Pulse =>
+			{}
+		}
+	}
+
+	Ok(())
+}
+
+fn forward_changes(
+	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
+	vision: PlayerColor,
+	changes: Vec<Change>,
+)
+{
+	for client in watchers.iter_mut()
+	{
+		if client.vision_level == vision
+		{
+			client.handle.send(Message::Changes {
+				changes: changes.clone(),
+				forwarding: None,
+			});
+		}
+	}
+
+	if let Some(client) = players.iter_mut().find(|x| x.color == vision)
+	{
+		client.handle.send(Message::Changes {
+			changes,
+			forwarding: None,
+		});
+	}
 }
 
 async fn linger(
@@ -1675,6 +1842,8 @@ async fn linger(
 			Update::ForSetup(..) =>
 			{}
 			Update::ForGame(..) =>
+			{}
+			Update::FromHost(..) =>
 			{}
 			Update::Msg(message) =>
 			{
@@ -1858,7 +2027,7 @@ fn do_join(
 			ruleset_name: Some(lobby.ruleset_name.clone()),
 			timer_in_seconds: lobby.planning_time_in_seconds,
 			difficulty: None,
-			connected_bot: None,
+			forwarding: None,
 		});
 	}
 	else
@@ -1869,7 +2038,7 @@ fn do_join(
 			ruleset_name: Some(lobby.ruleset_name.clone()),
 			timer_in_seconds: lobby.planning_time_in_seconds,
 			difficulty: None,
-			connected_bot: None,
+			forwarding: None,
 		});
 	}
 
@@ -1892,7 +2061,7 @@ fn do_join(
 	});
 	client_handle.send(Message::Changes {
 		changes,
-		connected_bot: None,
+		forwarding: None,
 	});
 	client_handle.send(Message::ReplayWithAnimations {
 		on_or_off: OnOrOff::On,
@@ -2101,6 +2270,7 @@ pub enum Error
 {
 	Abandoned,
 	InvalidSetup,
+	InvalidUpdate,
 	MissingChallengeId,
 	ClientGone
 	{
@@ -2161,6 +2331,7 @@ impl fmt::Display for Error
 		{
 			Error::Abandoned => write!(f, "{:#?}", &self),
 			Error::InvalidSetup => write!(f, "{:#?}", &self),
+			Error::InvalidUpdate => write!(f, "{:#?}", &self),
 			Error::MissingChallengeId => write!(f, "{:#?}", &self),
 			Error::ClientGone { .. } => write!(f, "{:#?}", &self),
 			Error::ResultDropped { .. } => write!(f, "{:#?}", &self),

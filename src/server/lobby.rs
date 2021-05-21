@@ -69,6 +69,7 @@ pub enum Update
 	ForSetup(Sub),
 
 	ForGame(game::Sub),
+	FromHost(game::FromHost),
 
 	Msg(Message),
 }
@@ -437,6 +438,7 @@ async fn handle_update(
 		Update::ForSetup(sub) => handle_sub(sub, lobby, clients).await,
 
 		Update::ForGame(_) => Ok(None),
+		Update::FromHost(_) => Ok(None),
 
 		Update::Msg(message) =>
 		{
@@ -2756,6 +2758,7 @@ async fn start(
 	// Assign colors and roles to bots.
 	let mut connected_bots = Vec::new();
 	let mut local_bots = Vec::new();
+	let mut hosted_bots = Vec::new();
 	for bot in lobby.bots.iter()
 	{
 		let color = match lobby.bot_colors.get(&bot.slot)
@@ -2779,7 +2782,16 @@ async fn start(
 
 		let character = bot.slot.get_character();
 
-		if let Some(connected_ai) = lobby
+		if host_client.is_some()
+		{
+			// TODO HostedGame: get this name from the host?
+			let descriptive_name = bot.slot.get_display_name().to_string();
+			hosted_bots.push(game::HostedBot {
+				descriptive_name,
+				color,
+			});
+		}
+		else if let Some(connected_ai) = lobby
 			.connected_ais
 			.iter()
 			.find(|ai| ai.ai_name == bot.ai_name)
@@ -2811,7 +2823,7 @@ async fn start(
 					Ok(metadata) => metadata,
 					Err(error) => return Err(Error::AiMetadataParsing(error)),
 				};
-			let connected_bot_metadata = ConnectedBotMetadata {
+			let forwarding_metadata = ForwardingMetadata::ConnectedBot {
 				lobby_id: lobby.id,
 				slot: bot.slot,
 			};
@@ -2821,7 +2833,7 @@ async fn start(
 				difficulty: bot.difficulty,
 				descriptive_name,
 				ai_metadata,
-				connected_bot_metadata,
+				forwarding_metadata,
 
 				id: connected_ai.client_id,
 				user_id: connected_ai.client_user_id,
@@ -2882,6 +2894,7 @@ async fn start(
 		players: player_clients,
 		connected_bots,
 		local_bots,
+		hosted_bots,
 		watchers: watcher_clients,
 		map_name,
 		map_metadata,
