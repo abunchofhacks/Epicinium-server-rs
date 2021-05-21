@@ -1117,6 +1117,7 @@ async fn rest(
 			{
 				handle_leave(
 					lobby.id,
+					None,
 					players,
 					bots,
 					watchers,
@@ -1156,7 +1157,7 @@ async fn rest(
 			{}
 			Update::FromHost(..) =>
 			{
-				return Err(Error::InvalidUpdate);
+				debug!("Ignoring FromHost while not hostsyncing");
 			}
 			Update::Msg(message) =>
 			{
@@ -1247,6 +1248,7 @@ async fn check(
 			{
 				handle_leave(
 					lobby.id,
+					None,
 					players,
 					bots,
 					watchers,
@@ -1286,7 +1288,7 @@ async fn check(
 			{}
 			Update::FromHost(..) =>
 			{
-				return Err(Error::InvalidUpdate);
+				debug!("Ignoring FromHost while not hostsyncing");
 			}
 			Update::Msg(message) =>
 			{
@@ -1417,6 +1419,7 @@ async fn sleep(
 			{
 				handle_leave(
 					lobby.id,
+					None,
 					players,
 					connected_bots,
 					watchers,
@@ -1461,7 +1464,7 @@ async fn sleep(
 			{}
 			Update::FromHost(..) =>
 			{
-				return Err(Error::InvalidUpdate);
+				debug!("Ignoring FromHost while not hostsyncing");
 			}
 			Update::Msg(message) =>
 			{
@@ -1585,6 +1588,7 @@ async fn stage(
 			{
 				handle_leave(
 					lobby.id,
+					None,
 					players,
 					connected_bots,
 					watchers,
@@ -1624,7 +1628,7 @@ async fn stage(
 			{}
 			Update::FromHost(..) =>
 			{
-				return Err(Error::InvalidUpdate);
+				debug!("Ignoring FromHost while not hostsyncing");
 			}
 			Update::Msg(message) =>
 			{
@@ -1655,10 +1659,18 @@ async fn sync_host(
 {
 	host.handle.send(Message::HostSync { metadata: None });
 
-	let mut synced = false;
-	while !synced
+	let mut has_synced = false;
+	while !has_synced
 	{
 		trace!("Waiting for host sync...");
+
+		// We only check this here, but if the host disconnected before,
+		// sending the HostSync at the start of this function should (?)
+		// have let us know that it is disconnected.
+		if !host.is_connected()
+		{
+			return Err(Error::HostDisconnected);
+		}
 
 		let update = match updates.recv().await
 		{
@@ -1675,7 +1687,7 @@ async fn sync_host(
 			{
 				if client_id == host.id
 				{
-					synced = true;
+					has_synced = true;
 
 					if let Some(metadata) = metadata
 					{
@@ -1735,6 +1747,7 @@ async fn sync_host(
 			{
 				handle_leave(
 					lobby.id,
+					Some(host),
 					players,
 					&mut Vec::new(),
 					watchers,
@@ -1837,6 +1850,7 @@ async fn linger(
 			{
 				handle_leave(
 					lobby.id,
+					None,
 					players,
 					bots,
 					watchers,
@@ -2286,6 +2300,7 @@ impl RejoinAndResignHandler for HostClient
 
 async fn handle_leave(
 	lobby_id: Keycode,
+	host: Option<&mut HostClient>,
 	players: &mut Vec<PlayerClient>,
 	bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -2293,6 +2308,14 @@ async fn handle_leave(
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
+	if let Some(host) = host
+	{
+		if host.id == client_id
+		{
+			host.handle.take();
+		}
+	}
+
 	let mut was_bot = false;
 	for bot in bots
 	{
@@ -2361,8 +2384,8 @@ async fn handle_leave(
 pub enum Error
 {
 	Abandoned,
+	HostDisconnected,
 	InvalidSetup,
-	InvalidUpdate,
 	MissingChallengeId,
 	ClientGone
 	{
@@ -2423,7 +2446,7 @@ impl fmt::Display for Error
 		{
 			Error::Abandoned => write!(f, "{:#?}", &self),
 			Error::InvalidSetup => write!(f, "{:#?}", &self),
-			Error::InvalidUpdate => write!(f, "{:#?}", &self),
+			Error::HostDisconnected => write!(f, "{:#?}", &self),
 			Error::MissingChallengeId => write!(f, "{:#?}", &self),
 			Error::ClientGone { .. } => write!(f, "{:#?}", &self),
 			Error::ResultDropped { .. } => write!(f, "{:#?}", &self),

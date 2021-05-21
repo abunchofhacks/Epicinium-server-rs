@@ -1013,9 +1013,22 @@ async fn handle_leave(
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
-	let removed: Vec<Client> = clients
-		.e_drain_where(|client| client.id == client_id)
-		.collect();
+	let host_left = lobby
+		.host
+		.as_ref()
+		.map(|x| x.id == client_id)
+		.unwrap_or(false);
+	let removed: Vec<Client> = if host_left
+	{
+		// When the host leaves, the lobby is disbanded.
+		clients.drain(0..).collect()
+	}
+	else
+	{
+		clients
+			.e_drain_where(|client| client.id == client_id)
+			.collect()
+	};
 
 	handle_removed(lobby, clients, removed).await?;
 
@@ -2784,8 +2797,18 @@ async fn start(
 
 		if host_client.is_some()
 		{
-			// TODO HostedGame: get this name from the host?
-			let descriptive_name = bot.slot.get_display_name().to_string();
+			let difficulty_str = match bot.difficulty
+			{
+				Difficulty::None => "Easy",
+				Difficulty::Easy => "Easy",
+				Difficulty::Medium => "Medium",
+				Difficulty::Hard => "Hard",
+			};
+			let display_name = bot.slot.get_display_name();
+			let descriptive_name = format!(
+				"{} ({} {})",
+				display_name, difficulty_str, bot.ai_name
+			);
 			hosted_bots.push(game::HostedBot {
 				descriptive_name,
 				color,
