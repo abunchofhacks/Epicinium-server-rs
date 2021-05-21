@@ -1726,6 +1726,7 @@ async fn handle_message(
 		}
 		Message::Orders {
 			orders,
+			forwarded_from_username: None,
 			connected_bot: Some(ConnectedBotMetadata { lobby_id, slot }),
 		} if client.is_bot() =>
 		{
@@ -1745,6 +1746,7 @@ async fn handle_message(
 		}
 		Message::Orders {
 			orders,
+			forwarded_from_username: None,
 			connected_bot: _,
 		} => match client.lobby
 		{
@@ -1761,6 +1763,11 @@ async fn handle_message(
 				debug!("Ignoring Orders from unlobbied client");
 			}
 		},
+		Message::Orders { .. } =>
+		{
+			warn!("Invalid message from client: {:?}", message);
+			return Err(Error::Invalid);
+		}
 		Message::Sync {
 			time_remaining_in_seconds: None,
 		} => match client.lobby

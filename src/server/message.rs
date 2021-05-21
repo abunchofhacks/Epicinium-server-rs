@@ -313,6 +313,10 @@ pub enum Message
 		orders: Vec<Order>,
 
 		#[serde(default, skip_serializing_if = "Option::is_none")]
+		#[serde(rename = "sender")]
+		forwarded_from_username: Option<String>,
+
+		#[serde(default, skip_serializing_if = "Option::is_none")]
 		#[serde(rename = "metadata")]
 		connected_bot: Option<ConnectedBotMetadata>,
 	},

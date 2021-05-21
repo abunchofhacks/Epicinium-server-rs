@@ -31,6 +31,25 @@ use tokio::time as timer;
 use tokio::time::{Duration, Instant};
 
 #[derive(Debug)]
+pub struct HostClient
+{
+	pub id: Keycode,
+	pub user_id: UserId,
+	pub username: String,
+	pub handle: client::Handle,
+
+	pub is_gameover: bool,
+}
+
+impl HostClient
+{
+	fn is_connected(&self) -> bool
+	{
+		!self.handle.is_disconnected()
+	}
+}
+
+#[derive(Debug)]
 pub struct PlayerClient
 {
 	pub id: Keycode,
@@ -133,6 +152,7 @@ pub struct Setup
 	pub lobby_name: String,
 	pub lobby_description_metadata: LobbyMetadata,
 
+	pub host: Option<HostClient>,
 	pub players: Vec<PlayerClient>,
 	pub connected_bots: Vec<BotClient>,
 	pub local_bots: Vec<LocalBot>,
@@ -148,6 +168,22 @@ pub struct Setup
 
 pub async fn run(
 	setup: Setup,
+	discord_api: mpsc::Sender<discord_api::Post>,
+	updates: mpsc::Receiver<Update>,
+) -> Result<(), Error>
+{
+	if setup.host.is_some()
+	{
+		run_client_hosted_game(setup, updates).await
+	}
+	else
+	{
+		run_server_game(setup, discord_api, updates).await
+	}
+}
+
+pub async fn run_server_game(
+	setup: Setup,
 	mut discord_api: mpsc::Sender<discord_api::Post>,
 	mut updates: mpsc::Receiver<Update>,
 ) -> Result<(), Error>
@@ -156,6 +192,7 @@ pub async fn run(
 		lobby_id,
 		lobby_name,
 		lobby_description_metadata,
+		host: _,
 		mut players,
 		mut connected_bots,
 		mut local_bots,
@@ -528,6 +565,175 @@ pub async fn run(
 	Ok(())
 }
 
+pub async fn run_client_hosted_game(
+	setup: Setup,
+	mut updates: mpsc::Receiver<Update>,
+) -> Result<(), Error>
+{
+	let Setup {
+		lobby_id,
+		lobby_name,
+		lobby_description_metadata,
+		host,
+		mut players,
+		mut connected_bots,
+		mut local_bots,
+		mut watchers,
+		map_name,
+		map_metadata,
+		ruleset_name,
+		planning_time_in_seconds,
+		lobby_type,
+		challenge,
+		is_public,
+	} = setup;
+	let mut host = host.ok_or(Error::InvalidSetup)?;
+
+	if lobby_type != LobbyType::Custom
+	{
+		return Err(Error::InvalidSetup);
+	}
+
+	// TODO HostedGame: what to do with bots?
+
+	// Tell everyone that the game is starting.
+	for client in &mut players
+	{
+		client.handle.send(Message::Game {
+			role: Some(Role::Player),
+			player: Some(client.color),
+			ruleset_name: Some(ruleset_name.clone()),
+			timer_in_seconds: planning_time_in_seconds,
+			difficulty: None,
+			connected_bot: None,
+		});
+	}
+
+	for client in &mut connected_bots
+	{
+		client.handle.send(Message::Game {
+			role: Some(Role::Player),
+			player: Some(client.color),
+			ruleset_name: Some(ruleset_name.clone()),
+			timer_in_seconds: planning_time_in_seconds,
+			difficulty: Some(client.difficulty),
+			connected_bot: Some(client.connected_bot_metadata),
+		});
+	}
+
+	for client in &mut watchers
+	{
+		client.handle.send(Message::Game {
+			role: Some(Role::Observer),
+			player: None,
+			ruleset_name: Some(ruleset_name.clone()),
+			timer_in_seconds: planning_time_in_seconds,
+			difficulty: None,
+			connected_bot: None,
+		});
+	}
+
+	// Tell everyone who is playing as which color.
+	let mut initial_messages = Vec::new();
+	for player in &players
+	{
+		initial_messages.push(Message::AssignColor {
+			color: player.color,
+			name: player.username.clone(),
+		});
+	}
+	for bot in &mut connected_bots
+	{
+		let descriptive_name = bot.descriptive_name.clone();
+		initial_messages.push(Message::AssignColor {
+			color: bot.color,
+			name: descriptive_name,
+		});
+	}
+	for bot in &mut local_bots
+	{
+		let descriptive_name = bot.ai.descriptive_name()?;
+		initial_messages.push(Message::AssignColor {
+			color: bot.color,
+			name: descriptive_name,
+		});
+	}
+
+	// Tell everyone which skins are being used.
+	initial_messages.push(Message::Skins {
+		metadata: map_metadata.clone(),
+	});
+
+	// Send the initial messages.
+	for client in &mut players
+	{
+		for message in &initial_messages
+		{
+			client.handle.send(message.clone());
+		}
+	}
+	for client in &mut watchers
+	{
+		for message in &initial_messages
+		{
+			client.handle.send(message.clone());
+		}
+	}
+
+	let lobby_info = LobbyInfo {
+		id: lobby_id,
+		name: lobby_name,
+		description_metadata: lobby_description_metadata,
+		is_public,
+		match_type: MatchType::Unrated,
+		challenge,
+		num_bots: connected_bots.len() + local_bots.len(),
+		map_name,
+		map_metadata,
+		ruleset_name,
+		planning_time_in_seconds,
+		initial_messages,
+	};
+
+	loop
+	{
+		let state = iterate_client_hosted_game(
+			&lobby_info,
+			&mut host,
+			&mut players,
+			&mut watchers,
+			&mut updates,
+			planning_time_in_seconds,
+		)
+		.await?;
+
+		match state
+		{
+			State::InProgress => (),
+			State::Finished => break,
+			State::Abandoned => break,
+		}
+	}
+
+	// Drop rating callbacks in order to treat players as retired.
+	for client in players.iter_mut()
+	{
+		client.rating_callback.take();
+	}
+
+	debug!("Game has finished in lobby {}; lingering...", lobby_id);
+	linger(
+		&lobby_info,
+		&mut players,
+		&mut connected_bots,
+		&mut watchers,
+		&mut updates,
+	)
+	.await?;
+
+	Ok(())
+}
+
 #[derive(Debug)]
 pub enum Sub
 {
@@ -712,6 +918,93 @@ async fn iterate(
 
 	let cset = automaton.prepare()?;
 	broadcast(players, connected_bots, local_bots, watchers, cset)?;
+
+	Ok(State::InProgress)
+}
+
+async fn iterate_client_hosted_game(
+	lobby: &LobbyInfo,
+	host: &mut HostClient,
+	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
+	updates: &mut mpsc::Receiver<Update>,
+	planning_time_in_seconds: Option<u32>,
+) -> Result<State, Error>
+{
+	//while automaton.is_active()
+	{
+		// TODO HostedGame: wait for host to send changesets
+		//let cset = automaton.act()?;
+		//broadcast(players, connected_bots, local_bots, watchers, cset)?;
+	}
+
+	// If players or bots are defeated, we no longer wait for them in the
+	// planning phase.
+	// TODO HostedGame: set players, bot and connected bots as defeated
+
+	//rest(lobby, host, players, watchers, updates).await?;
+
+	// If the game has ended, we are done.
+	// We waited with this check until all players have finished animating,
+	// to avoid spoiling the outcome by changing ratings or posting to Discord.
+	if host.is_gameover
+	{
+		return Ok(State::Finished);
+	}
+	else if all_players_and_watchers_have_disconnected(players, watchers)
+	{
+		debug!("Abandoning game in lobby {} without clients...", lobby.id);
+		return Ok(State::Abandoned);
+	}
+	else if !at_least_one_live_player(players)
+	{
+		// If all undefeated players are disconnected, the game cannot continue
+		// because it would play the entire match without them in one second.
+		// To simplify client hosted games, abandon the lobby altogether.
+		warn!("Abandoning game in lobby {} without players...", lobby.id);
+		return Err(Error::Abandoned);
+	}
+
+	let message = Message::Sync {
+		time_remaining_in_seconds: planning_time_in_seconds,
+	};
+	for client in players.into_iter()
+	{
+		client.has_synced = false;
+		client.handle.send(message.clone());
+	}
+	for client in watchers.into_iter()
+	{
+		client.has_synced = false;
+		client.handle.send(message.clone());
+	}
+
+	// TODO HostedGame: hibernate
+	//let cset = automaton.hibernate()?;
+	//broadcast(players, connected_bots, local_bots, watchers, cset)?;
+	//sleep(lobby, host, players, watchers, updates).await?;
+
+	// TODO HostedGame: awake
+	//let cset = automaton.awake()?;
+	//broadcast(players, connected_bots, local_bots, watchers, cset)?;
+	//stage(lobby, host, players, watchers, updates).await?;
+
+	// Forward submitted orders.
+	for player in players.into_iter()
+	{
+		if let Some(orders) = player.submitted_orders.take()
+		{
+			host.handle.send(Message::Orders {
+				forwarded_from_username: Some(player.username.clone()),
+				orders,
+				connected_bot: None,
+			});
+		}
+	}
+
+	// TODO HostedGame: prepare
+	//let cset = automaton.prepare()?;
+	//broadcast(players, connected_bots, local_bots, watchers, cset)?;
 
 	Ok(State::InProgress)
 }
@@ -1807,6 +2100,7 @@ async fn handle_leave(
 pub enum Error
 {
 	Abandoned,
+	InvalidSetup,
 	MissingChallengeId,
 	ClientGone
 	{
@@ -1866,6 +2160,7 @@ impl fmt::Display for Error
 		match self
 		{
 			Error::Abandoned => write!(f, "{:#?}", &self),
+			Error::InvalidSetup => write!(f, "{:#?}", &self),
 			Error::MissingChallengeId => write!(f, "{:#?}", &self),
 			Error::ClientGone { .. } => write!(f, "{:#?}", &self),
 			Error::ResultDropped { .. } => write!(f, "{:#?}", &self),

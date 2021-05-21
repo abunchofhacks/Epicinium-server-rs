@@ -2541,6 +2541,18 @@ async fn try_start(
 	lobby_sendbuffer: mpsc::Sender<Update>,
 ) -> Result<Option<game::Setup>, Error>
 {
+	// FUTURE check if host
+
+	if let Some(host) = &lobby.host
+	{
+		// Make sure the host is present when the game starts.
+		if !clients.iter().any(|x| x.id == host.id)
+		{
+			debug!("Cannot start lobby {}: host missing.", lobby.id);
+			return Ok(None);
+		}
+	}
+
 	// Add connected bots if necessary.
 	let to_be_added: Vec<ConnectedAi> = lobby
 		.connected_ais
@@ -2636,6 +2648,34 @@ async fn start(
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<game::Setup, Error>
 {
+	// If this is a client-hosted game, prepare the host client.
+	let host_client = if let Some(host) = &lobby.host
+	{
+		if lobby.lobby_type != LobbyType::Custom
+		{
+			None
+		}
+		else if let Some(client) = clients.iter().find(|x| x.id == host.id)
+		{
+			Some(game::HostClient {
+				id: client.id,
+				user_id: client.user_id,
+				username: client.username.clone(),
+				handle: client.handle.clone(),
+
+				is_gameover: false,
+			})
+		}
+		else
+		{
+			return Err(Error::StartGameHostMissing);
+		}
+	}
+	else
+	{
+		None
+	};
+
 	// Create a stack of available colors, with Red on top, then Blue, etcetera.
 	let mut colorstack = lobby.available_colors.clone();
 	colorstack.sort();
@@ -2838,6 +2878,7 @@ async fn start(
 		lobby_id: lobby.id,
 		lobby_name: lobby.name.clone(),
 		lobby_description_metadata: make_description_metadata(lobby),
+		host: host_client,
 		players: player_clients,
 		connected_bots,
 		local_bots,
@@ -2880,6 +2921,7 @@ enum Error
 {
 	EmptyMapPool,
 	ClientMissing,
+	StartGameHostMissing,
 	StartGameNotEnoughColors,
 	Io
 	{
@@ -2944,6 +2986,7 @@ impl fmt::Display for Error
 		{
 			Error::EmptyMapPool => write!(f, "{:#?}", self),
 			Error::ClientMissing => write!(f, "{:#?}", self),
+			Error::StartGameHostMissing => write!(f, "{:#?}", self),
 			Error::StartGameNotEnoughColors => write!(f, "{:#?}", self),
 			Error::Io { error } => error.fmt(f),
 			Error::GeneralChat { error } => error.fmt(f),
