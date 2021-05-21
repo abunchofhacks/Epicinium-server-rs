@@ -861,15 +861,7 @@ async fn iterate(
 	// If all live players are disconnected during the resting phase,
 	// the game cannot continue until at least one player reconnects
 	// and has finished rejoining.
-	ensure_live_players(
-		lobby,
-		automaton,
-		players,
-		connected_bots,
-		watchers,
-		updates,
-	)
-	.await?;
+	check(lobby, automaton, players, connected_bots, watchers, updates).await?;
 
 	let message = Message::Sync {
 		time_remaining_in_seconds: planning_time_in_seconds,
@@ -942,7 +934,11 @@ async fn iterate_client_hosted_game(
 	planning_time_in_seconds: Option<u32>,
 ) -> Result<State, Error>
 {
+	// Wait for host to finish action phase.
 	sync_host(lobby, host, players, watchers, updates).await?;
+
+	// Resting phase.
+	rest(lobby, host, players, &mut Vec::new(), watchers, updates).await?;
 
 	// If the game has ended, we are done.
 	// We waited with this check until all players have finished animating,
@@ -956,14 +952,11 @@ async fn iterate_client_hosted_game(
 		debug!("Abandoning game in lobby {} without clients...", lobby.id);
 		return Ok(State::Abandoned);
 	}
-	else if !at_least_one_live_player(players)
-	{
-		// If all undefeated players are disconnected, the game cannot continue
-		// because it would play the entire match without them in one second.
-		// To simplify client hosted games, abandon the lobby altogether.
-		warn!("Abandoning game in lobby {} without players...", lobby.id);
-		return Err(Error::Abandoned);
-	}
+
+	// If all live players are disconnected during the resting phase,
+	// the game cannot continue until at least one player reconnects
+	// and has finished rejoining.
+	check(lobby, host, players, &mut Vec::new(), watchers, updates).await?;
 
 	let message = Message::Sync {
 		time_remaining_in_seconds: planning_time_in_seconds,
@@ -979,15 +972,13 @@ async fn iterate_client_hosted_game(
 		client.handle.send(message.clone());
 	}
 
+	// Planning phase.
 	sync_host(lobby, host, players, watchers, updates).await?;
+	sleep(lobby, host, players, &mut Vec::new(), watchers, updates).await?;
 
-	// TODO HostedGame:
-	//sleep(lobby, host, players, watchers, updates).await?;
-
+	// Staging phase.
 	sync_host(lobby, host, players, watchers, updates).await?;
-
-	// TODO HostedGame:
-	//stage(lobby, host, players, watchers, updates).await?;
+	stage(lobby, host, players, &mut Vec::new(), watchers, updates).await?;
 
 	// Forward submitted orders.
 	for player in players.into_iter()
@@ -1064,7 +1055,7 @@ fn all_players_and_watchers_have_disconnected(
 
 async fn rest(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	players: &mut Vec<PlayerClient>,
 	bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -1117,7 +1108,7 @@ async fn rest(
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
-				handle_resign(lobby, automaton, players, client_id).await?;
+				handle_resign(lobby, handler, players, client_id).await?;
 			}
 			Update::Leave {
 				client_id,
@@ -1147,7 +1138,7 @@ async fn rest(
 			{
 				handle_join(
 					lobby,
-					automaton,
+					handler,
 					players,
 					watchers,
 					RejoinPhase::Other,
@@ -1207,9 +1198,9 @@ fn all_players_or_watchers_have_synced(
 	}
 }
 
-async fn ensure_live_players(
+async fn check(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	players: &mut Vec<PlayerClient>,
 	bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -1247,7 +1238,7 @@ async fn ensure_live_players(
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
-				handle_resign(lobby, automaton, players, client_id).await?;
+				handle_resign(lobby, handler, players, client_id).await?;
 			}
 			Update::Leave {
 				client_id,
@@ -1277,7 +1268,7 @@ async fn ensure_live_players(
 			{
 				handle_join(
 					lobby,
-					automaton,
+					handler,
 					players,
 					watchers,
 					RejoinPhase::Other,
@@ -1326,7 +1317,7 @@ fn at_least_one_live_player(players: &mut Vec<PlayerClient>) -> bool
 
 async fn sleep(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	players: &mut Vec<PlayerClient>,
 	connected_bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -1411,7 +1402,7 @@ async fn sleep(
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
-				handle_resign(lobby, automaton, players, client_id).await?;
+				handle_resign(lobby, handler, players, client_id).await?;
 
 				if too_few_potential_winners(players, num_bots)
 				{
@@ -1450,7 +1441,7 @@ async fn sleep(
 					.map(|timer| timer - start.elapsed().as_secs() as u32);
 				handle_join(
 					lobby,
-					automaton,
+					handler,
 					players,
 					watchers,
 					RejoinPhase::Planning {
@@ -1521,7 +1512,7 @@ fn all_players_have_submitted_orders(
 
 async fn stage(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	players: &mut Vec<PlayerClient>,
 	connected_bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -1585,7 +1576,7 @@ async fn stage(
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
-				handle_resign(lobby, automaton, players, client_id).await?;
+				handle_resign(lobby, handler, players, client_id).await?;
 			}
 			Update::Leave {
 				client_id,
@@ -1615,7 +1606,7 @@ async fn stage(
 			{
 				handle_join(
 					lobby,
-					automaton,
+					handler,
 					players,
 					watchers,
 					RejoinPhase::Other,
@@ -1732,13 +1723,9 @@ async fn sync_host(
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
-				let username = players
-					.iter()
-					.find(|x| x.id == client_id)
-					.map(|x| x.username.clone());
-				if username.is_some()
+				if let Some(client) = players.iter().find(|x| x.id == client_id)
 				{
-					host.handle.send(Message::Resign { username });
+					host.handle_resign(client);
 				}
 			}
 			Update::Leave {
@@ -1756,9 +1743,32 @@ async fn sync_host(
 				)
 				.await?;
 			}
-			Update::Join { .. } =>
+			Update::Join {
+				client_id,
+				client_user_id,
+				client_username,
+				client_handle,
+				lobby_sendbuffer,
+				mut general_chat,
+				desired_metadata: _,
+				invite,
+			} =>
 			{
-				// TODO HostedGame: handle rejoin
+				handle_join(
+					lobby,
+					host,
+					players,
+					watchers,
+					RejoinPhase::Other,
+					client_id,
+					client_user_id,
+					client_username,
+					client_handle,
+					lobby_sendbuffer,
+					&mut general_chat,
+					invite,
+				)
+				.await?;
 			}
 			Update::ForSetup(..) =>
 			{}
@@ -1866,7 +1876,7 @@ async fn linger(
 
 async fn handle_join(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	players: &mut Vec<PlayerClient>,
 	watchers: &mut Vec<WatcherClient>,
 	rejoin_phase: RejoinPhase,
@@ -1881,7 +1891,7 @@ async fn handle_join(
 {
 	match do_join(
 		lobby,
-		automaton,
+		handler,
 		players,
 		watchers,
 		rejoin_phase,
@@ -1909,7 +1919,7 @@ async fn handle_join(
 
 fn do_join(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	players: &mut Vec<PlayerClient>,
 	watchers: &mut Vec<WatcherClient>,
 	rejoin_phase: RejoinPhase,
@@ -2053,32 +2063,7 @@ fn do_join(
 		Some(color) => color,
 		None => role.vision_level(),
 	};
-	let cset = automaton.rejoin(vision)?;
-	let changes = cset.get(vision);
-
-	client_handle.send(Message::ReplayWithAnimations {
-		on_or_off: OnOrOff::Off,
-	});
-	client_handle.send(Message::Changes {
-		changes,
-		forwarding: None,
-	});
-	client_handle.send(Message::ReplayWithAnimations {
-		on_or_off: OnOrOff::On,
-	});
-	match rejoin_phase
-	{
-		RejoinPhase::Planning {
-			time_remaining_in_seconds,
-		} =>
-		{
-			client_handle.send(Message::Sync {
-				time_remaining_in_seconds,
-			});
-		}
-		RejoinPhase::Other =>
-		{}
-	}
+	handler.handle_rejoin(&mut client_handle, rejoin_phase, vision)?;
 
 	let update = client::Update::JoinedLobby {
 		lobby_id: lobby.id,
@@ -2142,7 +2127,7 @@ enum RejoinResult
 
 async fn handle_resign(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	players: &mut Vec<PlayerClient>,
 	client_id: Keycode,
 ) -> Result<(), Error>
@@ -2153,14 +2138,14 @@ async fn handle_resign(
 		None => return Err(Error::ClientGone { client_id }),
 	};
 
-	automaton.resign(client.color);
+	handler.handle_resign(client);
 
-	retire(lobby, automaton, client).await
+	retire(lobby, handler, client).await
 }
 
 async fn retire(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	client: &mut PlayerClient,
 ) -> Result<(), Error>
 {
@@ -2170,26 +2155,133 @@ async fn retire(
 		None => return Ok(()),
 	};
 
-	// Because players may resign immediately after starting the game,
-	// e.g. due to lobby mishaps or deciding not to play on a certain map,
-	// the game is not rated until the game reaches the third action phase,
-	// which is when the Automaton updates its _round variable.
-	// Note that this means it is possible for someone to resign while unrated
-	// even though their opponent keeps playing a rated game.
-	let is_rated = automaton.current_round() >= 3;
-	let result = PlayerResult {
-		user_id: client.user_id,
-		username: client.username.clone(),
-		is_rated,
-		is_victorious: !automaton.is_defeated(client.color),
-		score: automaton.score(client.color),
-		awarded_stars: automaton.award(client.color),
-		match_type: lobby.match_type,
-		challenge: lobby.challenge,
-	};
-	let update = rating::Update::GameResult(result);
-	callback.send(update).await?;
+	if let Some(player_result) = handler.handle_retire(lobby, client)
+	{
+		let update = rating::Update::GameResult(player_result);
+		callback.send(update).await?;
+	}
 	Ok(())
+}
+
+trait RejoinAndResignHandler: Send
+{
+	fn handle_rejoin(
+		&mut self,
+		client_handle: &mut client::Handle,
+		rejoin_phase: RejoinPhase,
+		vision: PlayerColor,
+	) -> Result<(), Error>;
+
+	fn handle_resign(&mut self, client: &PlayerClient);
+
+	fn handle_retire(
+		&mut self,
+		lobby: &LobbyInfo,
+		client: &PlayerClient,
+	) -> Option<PlayerResult>;
+}
+
+impl RejoinAndResignHandler for Automaton
+{
+	fn handle_rejoin(
+		&mut self,
+		client_handle: &mut client::Handle,
+		rejoin_phase: RejoinPhase,
+		vision: PlayerColor,
+	) -> Result<(), Error>
+	{
+		let cset = self.rejoin(vision)?;
+		let changes = cset.get(vision);
+
+		client_handle.send(Message::ReplayWithAnimations {
+			on_or_off: OnOrOff::Off,
+		});
+		client_handle.send(Message::Changes {
+			changes,
+			forwarding: None,
+		});
+		client_handle.send(Message::ReplayWithAnimations {
+			on_or_off: OnOrOff::On,
+		});
+		match rejoin_phase
+		{
+			RejoinPhase::Planning {
+				time_remaining_in_seconds,
+			} =>
+			{
+				client_handle.send(Message::Sync {
+					time_remaining_in_seconds,
+				});
+			}
+			RejoinPhase::Other =>
+			{}
+		}
+		Ok(())
+	}
+
+	fn handle_resign(&mut self, client: &PlayerClient)
+	{
+		self.resign(client.color);
+	}
+
+	fn handle_retire(
+		&mut self,
+		lobby: &LobbyInfo,
+		client: &PlayerClient,
+	) -> Option<PlayerResult>
+	{
+		// Because players may resign immediately after starting the game,
+		// e.g. due to lobby mishaps or deciding not to play on a certain map,
+		// the game is not rated until the game reaches the third action phase,
+		// which is when the Automaton updates its _round variable.
+		// Note that this means it is possible for someone to resign while
+		// unrated even though their opponent keeps playing a rated game.
+		let is_rated = self.current_round() >= 3;
+		let result = PlayerResult {
+			user_id: client.user_id,
+			username: client.username.clone(),
+			is_rated,
+			is_victorious: !self.is_defeated(client.color),
+			score: self.score(client.color),
+			awarded_stars: self.award(client.color),
+			match_type: lobby.match_type,
+			challenge: lobby.challenge,
+		};
+		Some(result)
+	}
+}
+
+impl RejoinAndResignHandler for HostClient
+{
+	fn handle_rejoin(
+		&mut self,
+		client_handle: &mut client::Handle,
+		_rejoin_phase: RejoinPhase,
+		_vision: PlayerColor,
+	) -> Result<(), Error>
+	{
+		client_handle.send(Message::ReplayWithAnimations {
+			on_or_off: OnOrOff::Off,
+		});
+		// TODO HostedGame: remember that this client is rejoining
+		Ok(())
+	}
+
+	fn handle_resign(&mut self, client: &PlayerClient)
+	{
+		self.handle.send(Message::Resign {
+			username: Some(client.username.clone()),
+		});
+	}
+
+	fn handle_retire(
+		&mut self,
+		_: &LobbyInfo,
+		_: &PlayerClient,
+	) -> std::option::Option<PlayerResult>
+	{
+		None
+	}
 }
 
 async fn handle_leave(
