@@ -237,6 +237,13 @@ struct Listing
 }
 
 #[derive(Debug)]
+struct Host
+{
+	id: Keycode,
+	username: String,
+}
+
+#[derive(Debug)]
 struct Lobby
 {
 	id: Keycode,
@@ -257,6 +264,7 @@ struct Lobby
 	player_visiontypes: HashMap<Keycode, VisionType>,
 	bot_visiontypes: HashMap<Botslot, VisionType>,
 
+	host: Option<Host>,
 	ai_pool: Vec<(String, Option<BotAuthorsMetadata>)>,
 	ai_name_blockers: Vec<String>,
 	connected_ais: Vec<ConnectedAi>,
@@ -349,6 +357,7 @@ async fn initialize(
 		bot_colors: HashMap::new(),
 		player_visiontypes: HashMap::new(),
 		bot_visiontypes: HashMap::new(),
+		host: None,
 		ai_pool,
 		ai_name_blockers: Vec::new(),
 		connected_ais: Vec::new(),
@@ -881,6 +890,14 @@ fn do_join(
 		}
 	}
 
+	if let Some(host) = &lobby.host
+	{
+		// Tell the newcomer who is host.
+		newcomer.handle.send(Message::ClaimHost {
+			username: Some(host.username.clone()),
+		});
+	}
+
 	if lobby.lobby_type != LobbyType::Replay
 	{
 		// Tell the newcomer the AI pool.
@@ -1100,9 +1117,31 @@ fn handle_claim_host(
 			return Ok(());
 		}
 	};
-	let subject_client_id = client.id;
 
-	// TODO become host
+	if let Some(host) = &lobby.host
+	{
+		// Claim failed. Remind the claimant of the actual host.
+		client.handle.send(Message::ClaimHost {
+			username: Some(host.username.clone()),
+		});
+		return Ok(());
+	}
+
+	// Claim successful.
+	lobby.host = Some(Host {
+		id: client.id,
+		username: username.clone(),
+	});
+
+	// Announce the new host.
+	let message = Message::ClaimHost {
+		username: Some(username),
+	};
+	for client in clients.iter_mut()
+	{
+		client.handle.send(message.clone());
+	}
+
 	Ok(())
 }
 
