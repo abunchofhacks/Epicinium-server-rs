@@ -1736,7 +1736,28 @@ async fn handle_message(
 			}
 			None =>
 			{
-				debug!("Ignoring PlayerDefeated from unlobbied client");
+				debug!("Ignoring HostSync from unlobbied client");
+			}
+		},
+		Message::HostRejoinChanges {
+			changes,
+			username,
+			player,
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = lobby::Update::FromHost(game::FromHost::Rejoin {
+					client_id: client.id,
+					changes,
+					rejoining_username: username,
+					rejoining_player: player,
+				});
+				lobby.send(update).await?
+			}
+			None =>
+			{
+				debug!("Ignoring client-hosted rejoin from unlobbied client");
 			}
 		},
 		Message::Changes {
@@ -1755,7 +1776,7 @@ async fn handle_message(
 			}
 			None =>
 			{
-				debug!("Ignoring ClientedHosted Changes from unlobbied client");
+				debug!("Ignoring client-hosted Changes from unlobbied client");
 			}
 		},
 		Message::Changes { .. } =>
@@ -1914,6 +1935,7 @@ async fn handle_message(
 		| Message::Challenge { .. }
 		| Message::Briefing { .. }
 		| Message::ReplayWithAnimations { .. }
+		| Message::HostRejoinRequest { .. }
 		| Message::RatingAndStars { .. }
 		| Message::UpdatedRating { .. }
 		| Message::RecentStars { .. }

@@ -767,6 +767,13 @@ pub enum FromHost
 		vision: PlayerColor,
 		changes: Vec<Change>,
 	},
+	Rejoin
+	{
+		client_id: Keycode,
+		changes: Vec<Change>,
+		rejoining_username: String,
+		rejoining_player: PlayerColor,
+	},
 }
 
 #[derive(Debug)]
@@ -1156,6 +1163,20 @@ async fn rest(
 				)
 				.await?;
 			}
+			Update::FromHost(FromHost::Rejoin {
+				client_id,
+				changes,
+				rejoining_username,
+				rejoining_player: _,
+			}) => handle_rejoin_changes(
+				handler,
+				players,
+				watchers,
+				client_id,
+				rejoining_username,
+				RejoinPhase::Other,
+				changes,
+			),
 			Update::ForSetup(..) =>
 			{}
 			Update::FromHost(..) =>
@@ -1287,6 +1308,20 @@ async fn check(
 				)
 				.await?;
 			}
+			Update::FromHost(FromHost::Rejoin {
+				client_id,
+				changes,
+				rejoining_username,
+				rejoining_player: _,
+			}) => handle_rejoin_changes(
+				handler,
+				players,
+				watchers,
+				client_id,
+				rejoining_username,
+				RejoinPhase::Other,
+				changes,
+			),
 			Update::ForSetup(..) =>
 			{}
 			Update::FromHost(..) =>
@@ -1463,6 +1498,28 @@ async fn sleep(
 				)
 				.await?;
 			}
+			Update::FromHost(FromHost::Rejoin {
+				client_id,
+				changes,
+				rejoining_username,
+				rejoining_player: _,
+			}) =>
+			{
+				let time_remaining_in_seconds = lobby
+					.planning_time_in_seconds
+					.map(|timer| timer - start.elapsed().as_secs() as u32);
+				handle_rejoin_changes(
+					handler,
+					players,
+					watchers,
+					client_id,
+					rejoining_username,
+					RejoinPhase::Planning {
+						time_remaining_in_seconds,
+					},
+					changes,
+				);
+			}
 			Update::ForSetup(..) =>
 			{}
 			Update::FromHost(..) =>
@@ -1627,6 +1684,20 @@ async fn stage(
 				)
 				.await?;
 			}
+			Update::FromHost(FromHost::Rejoin {
+				client_id,
+				changes,
+				rejoining_username,
+				rejoining_player: _,
+			}) => handle_rejoin_changes(
+				handler,
+				players,
+				watchers,
+				client_id,
+				rejoining_username,
+				RejoinPhase::Other,
+				changes,
+			),
 			Update::ForSetup(..) =>
 			{}
 			Update::FromHost(..) =>
@@ -1785,6 +1856,34 @@ async fn sync_host(
 					invite,
 				)
 				.await?;
+			}
+			Update::FromHost(FromHost::Rejoin {
+				client_id,
+				changes: _,
+				rejoining_username,
+				rejoining_player,
+			}) =>
+			{
+				// The host should not send HostRejoinChanges during syncing,
+				// as it would be confusing whether these changes should be
+				// received by the rejoining client before or after any changes
+				// that the host is sending while syncing.
+				// If the host receives a HostRejoinRequest while syncing,
+				// it must wait until it's done to send the HostRejoinChanges,
+				// but those changes might arrive after we have sent another
+				// HostSync message.
+				// In this case, we ask them for another set of changes.
+				if client_id == host.id
+				{
+					host.handle.send(Message::HostRejoinRequest {
+						username: rejoining_username,
+						player: rejoining_player,
+					});
+				}
+				else
+				{
+					debug!("Ignoring non-host client {}", client_id);
+				}
 			}
 			Update::ForSetup(..) =>
 			{}
@@ -2080,7 +2179,12 @@ fn do_join(
 		Some(color) => color,
 		None => role.vision_level(),
 	};
-	handler.handle_rejoin(&mut client_handle, rejoin_phase, vision)?;
+	handler.handle_rejoin(
+		&mut client_handle,
+		&client_username,
+		rejoin_phase,
+		vision,
+	)?;
 
 	let update = client::Update::JoinedLobby {
 		lobby_id: lobby.id,
@@ -2142,6 +2246,67 @@ enum RejoinResult
 	AccessDenied,
 }
 
+fn handle_rejoin_changes(
+	handler: &mut dyn RejoinAndResignHandler,
+	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
+	host_client_id: Keycode,
+	rejoining_username: String,
+	rejoin_phase: RejoinPhase,
+	changes: Vec<Change>,
+)
+{
+	if !handler.confirm_identity(host_client_id)
+	{
+		debug!("Ignoring non-host client {}", host_client_id);
+		return;
+	}
+
+	if let Some(client) = players
+		.iter_mut()
+		.find(|x| x.username == rejoining_username)
+	{
+		send_rejoin_changes(&mut client.handle, rejoin_phase, changes);
+	}
+	else if let Some(client) = watchers
+		.iter_mut()
+		.find(|x| x.username == rejoining_username)
+	{
+		send_rejoin_changes(&mut client.handle, rejoin_phase, changes);
+	}
+}
+
+fn send_rejoin_changes(
+	client_handle: &mut client::Handle,
+	rejoin_phase: RejoinPhase,
+	changes: Vec<Change>,
+)
+{
+	client_handle.send(Message::ReplayWithAnimations {
+		on_or_off: OnOrOff::Off,
+	});
+	client_handle.send(Message::Changes {
+		changes,
+		forwarding: None,
+	});
+	client_handle.send(Message::ReplayWithAnimations {
+		on_or_off: OnOrOff::On,
+	});
+	match rejoin_phase
+	{
+		RejoinPhase::Planning {
+			time_remaining_in_seconds,
+		} =>
+		{
+			client_handle.send(Message::Sync {
+				time_remaining_in_seconds,
+			});
+		}
+		RejoinPhase::Other =>
+		{}
+	}
+}
+
 async fn handle_resign(
 	lobby: &LobbyInfo,
 	handler: &mut dyn RejoinAndResignHandler,
@@ -2182,9 +2347,12 @@ async fn retire(
 
 trait RejoinAndResignHandler: Send
 {
+	fn confirm_identity(&self, id: Keycode) -> bool;
+
 	fn handle_rejoin(
 		&mut self,
 		client_handle: &mut client::Handle,
+		client_username: &str,
 		rejoin_phase: RejoinPhase,
 		vision: PlayerColor,
 	) -> Result<(), Error>;
@@ -2200,9 +2368,15 @@ trait RejoinAndResignHandler: Send
 
 impl RejoinAndResignHandler for Automaton
 {
+	fn confirm_identity(&self, _id: Keycode) -> bool
+	{
+		false
+	}
+
 	fn handle_rejoin(
 		&mut self,
 		client_handle: &mut client::Handle,
+		_client_username: &str,
 		rejoin_phase: RejoinPhase,
 		vision: PlayerColor,
 	) -> Result<(), Error>
@@ -2210,29 +2384,8 @@ impl RejoinAndResignHandler for Automaton
 		let cset = self.rejoin(vision)?;
 		let changes = cset.get(vision);
 
-		client_handle.send(Message::ReplayWithAnimations {
-			on_or_off: OnOrOff::Off,
-		});
-		client_handle.send(Message::Changes {
-			changes,
-			forwarding: None,
-		});
-		client_handle.send(Message::ReplayWithAnimations {
-			on_or_off: OnOrOff::On,
-		});
-		match rejoin_phase
-		{
-			RejoinPhase::Planning {
-				time_remaining_in_seconds,
-			} =>
-			{
-				client_handle.send(Message::Sync {
-					time_remaining_in_seconds,
-				});
-			}
-			RejoinPhase::Other =>
-			{}
-		}
+		send_rejoin_changes(client_handle, rejoin_phase, changes);
+
 		Ok(())
 	}
 
@@ -2270,17 +2423,26 @@ impl RejoinAndResignHandler for Automaton
 
 impl RejoinAndResignHandler for HostClient
 {
+	fn confirm_identity(&self, id: Keycode) -> bool
+	{
+		id == self.id
+	}
+
 	fn handle_rejoin(
 		&mut self,
 		client_handle: &mut client::Handle,
+		client_username: &str,
 		_rejoin_phase: RejoinPhase,
-		_vision: PlayerColor,
+		vision: PlayerColor,
 	) -> Result<(), Error>
 	{
 		client_handle.send(Message::ReplayWithAnimations {
 			on_or_off: OnOrOff::Off,
 		});
-		// TODO HostedGame: remember that this client is rejoining
+		self.handle.send(Message::HostRejoinRequest {
+			player: vision,
+			username: client_username.to_string(),
+		});
 		Ok(())
 	}
 

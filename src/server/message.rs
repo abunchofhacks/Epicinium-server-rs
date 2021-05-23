@@ -303,6 +303,22 @@ pub enum Message
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		metadata: Option<HostSyncMetadata>,
 	},
+	HostRejoinRequest
+	{
+		player: PlayerColor,
+
+		#[serde(rename = "content")]
+		username: String,
+	},
+	HostRejoinChanges
+	{
+		player: PlayerColor,
+
+		#[serde(rename = "content")]
+		username: String,
+
+		changes: Vec<Change>,
+	},
 	#[serde(rename = "change")]
 	Changes
 	{
