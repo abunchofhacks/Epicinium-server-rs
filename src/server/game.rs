@@ -994,6 +994,9 @@ async fn iterate_client_hosted_game(
 		}
 	}
 
+	// Let the host know we have finished sending orders.
+	sync_host(lobby, host, players, watchers, updates).await?;
+
 	Ok(State::InProgress)
 }
 
