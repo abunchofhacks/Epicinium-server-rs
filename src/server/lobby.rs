@@ -2664,7 +2664,7 @@ async fn start(
 ) -> Result<game::Setup, Error>
 {
 	// If this is a client-hosted game, prepare the host client.
-	let host_client = if let Some(host) = &lobby.host
+	let mut host_client = if let Some(host) = &lobby.host
 	{
 		if lobby.lobby_type != LobbyType::Custom
 		{
@@ -2728,6 +2728,19 @@ async fn start(
 					},
 				};
 
+				// If there is a host, tell them who is playing as which color.
+				// We also send this information to players, but then using descriptive
+				// names instead of botslots, so we need to send it here as well.
+				if let Some(host) = &mut host_client
+				{
+					host.handle.send(Message::ClaimColor {
+						color,
+						username_or_slot: UsernameOrSlot::Username(
+							client.username.clone(),
+						),
+					});
+				}
+
 				let vision = match lobby.player_visiontypes.get(&client.id)
 				{
 					Some(&vision) => vision,
@@ -2786,6 +2799,17 @@ async fn start(
 				}
 			},
 		};
+
+		// If there is a host, tell them who is playing as which color.
+		// We also send this information to players, but then using descriptive
+		// names instead of botslots, so we need to send it here as well.
+		if let Some(host) = &mut host_client
+		{
+			host.handle.send(Message::ClaimColor {
+				username_or_slot: UsernameOrSlot::Slot(bot.slot),
+				color,
+			});
+		}
 
 		let vision = match lobby.bot_visiontypes.get(&bot.slot)
 		{
