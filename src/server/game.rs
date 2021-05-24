@@ -538,6 +538,7 @@ pub async fn run_server_game(
 			State::InProgress => (),
 			State::Finished => break,
 			State::Abandoned => break,
+			State::AbandonedByHost => break,
 		}
 	}
 
@@ -707,6 +708,23 @@ pub async fn run_client_hosted_game(
 			State::InProgress => (),
 			State::Finished => break,
 			State::Abandoned => break,
+			State::AbandonedByHost =>
+			{
+				let message = Message::Chat {
+					content: "Game interrupted: host left.".to_string(),
+					sender: Some("server".to_string()),
+					target: ChatTarget::Lobby,
+				};
+				for client in players.iter_mut()
+				{
+					client.handle.send(message.clone());
+				}
+				for client in watchers.iter_mut()
+				{
+					client.handle.send(message.clone());
+				}
+				break;
+			}
 		}
 	}
 
@@ -807,6 +825,7 @@ enum State
 	InProgress,
 	Finished,
 	Abandoned,
+	AbandonedByHost,
 }
 
 async fn iterate(
@@ -943,6 +962,11 @@ async fn iterate_client_hosted_game(
 {
 	// Wait for host to finish action phase.
 	sync_host(lobby, host, players, watchers, updates).await?;
+	if !host.is_connected()
+	{
+		debug!("Abandoning game in lobby {} without host...", lobby.id);
+		return Ok(State::AbandonedByHost);
+	}
 
 	// Resting phase.
 	rest(lobby, host, players, &mut Vec::new(), watchers, updates).await?;
@@ -981,10 +1005,20 @@ async fn iterate_client_hosted_game(
 
 	// Planning phase.
 	sync_host(lobby, host, players, watchers, updates).await?;
+	if !host.is_connected()
+	{
+		debug!("Abandoning game in lobby {} without host...", lobby.id);
+		return Ok(State::AbandonedByHost);
+	}
 	sleep(lobby, host, players, &mut Vec::new(), watchers, updates).await?;
 
 	// Staging phase.
 	sync_host(lobby, host, players, watchers, updates).await?;
+	if !host.is_connected()
+	{
+		debug!("Abandoning game in lobby {} without host...", lobby.id);
+		return Ok(State::AbandonedByHost);
+	}
 	stage(lobby, host, players, &mut Vec::new(), watchers, updates).await?;
 
 	// Forward submitted orders.
@@ -1003,6 +1037,11 @@ async fn iterate_client_hosted_game(
 
 	// Let the host know we have finished sending orders.
 	sync_host(lobby, host, players, watchers, updates).await?;
+	if !host.is_connected()
+	{
+		debug!("Abandoning game in lobby {} without host...", lobby.id);
+		return Ok(State::AbandonedByHost);
+	}
 
 	Ok(State::InProgress)
 }
@@ -1743,7 +1782,7 @@ async fn sync_host(
 		// have let us know that it is disconnected.
 		if !host.is_connected()
 		{
-			return Err(Error::HostDisconnected);
+			return Ok(());
 		}
 
 		let update = match updates.recv().await
@@ -2549,7 +2588,6 @@ async fn handle_leave(
 pub enum Error
 {
 	Abandoned,
-	HostDisconnected,
 	InvalidSetup,
 	MissingChallengeId,
 	ClientGone
@@ -2611,7 +2649,6 @@ impl fmt::Display for Error
 		{
 			Error::Abandoned => write!(f, "{:#?}", &self),
 			Error::InvalidSetup => write!(f, "{:#?}", &self),
-			Error::HostDisconnected => write!(f, "{:#?}", &self),
 			Error::MissingChallengeId => write!(f, "{:#?}", &self),
 			Error::ClientGone { .. } => write!(f, "{:#?}", &self),
 			Error::ResultDropped { .. } => write!(f, "{:#?}", &self),
