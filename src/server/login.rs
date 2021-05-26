@@ -163,7 +163,6 @@ struct Connection
 
 	validate_session_url: http::Url,
 	confirm_steam_user_url: http::Url,
-	current_challenge_key: String,
 
 	steam_api_config: SteamApiConfig,
 	steam_ticket_url: http::Url,
@@ -239,7 +238,6 @@ impl Connection
 			http,
 			validate_session_url,
 			confirm_steam_user_url,
-			current_challenge_key: challenge::get_current_key(),
 			steam_api_config,
 			steam_ticket_url,
 			steam_player_summaries_url,
@@ -277,10 +275,11 @@ impl Connection
 			return Err(ResponseStatus::RequestMalformed);
 		}
 
+		// TODO #1086 challenge_keys met een s?
 		let payload = ValidateSessionPayload {
 			session_token: request.token,
 			account_id_as_string: request.account_identifier,
-			challenge_key: self.current_challenge_key.clone(),
+			challenge_key: None,
 		};
 
 		let response: LoginResponse = self
@@ -552,11 +551,12 @@ impl Connection
 		merge_token: Option<String>,
 	) -> Result<LoginData, ResponseStatus>
 	{
+		// TODO #1086 challenge_keys met een s?
 		let payload = ConfirmSteamUserPayload {
 			steam_id,
 			desired_username,
 			merge_token,
-			challenge_key: self.current_challenge_key.clone(),
+			challenge_key: None,
 		};
 
 		let response: LoginResponse = self
@@ -606,7 +606,8 @@ struct ValidateSessionPayload
 	#[serde(rename = "id")]
 	account_id_as_string: String,
 
-	challenge_key: String,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	challenge_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -619,7 +620,8 @@ struct ConfirmSteamUserPayload
 
 	merge_token: Option<String>,
 
-	challenge_key: String,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	challenge_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

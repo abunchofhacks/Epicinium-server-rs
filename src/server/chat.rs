@@ -99,7 +99,7 @@ pub enum Update
 pub async fn run(
 	mut updates: mpsc::Receiver<Update>,
 	canary: mpsc::Sender<()>,
-	current_challenge: challenge::Challenge,
+	challenge_pool: &[challenge::Challenge],
 )
 {
 	let mut clients: Vec<Client> = Vec::new();
@@ -115,7 +115,7 @@ pub async fn run(
 			&mut ghostbusters,
 			&mut lobbies,
 			&mut bots,
-			&current_challenge,
+			challenge_pool,
 		);
 
 		let removed = clients
@@ -134,7 +134,7 @@ fn handle_update(
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
 	lobbies: &mut Vec<Lobby>,
 	listed_bots: &mut Vec<lobby::ConnectedAi>,
-	current_challenge: &challenge::Challenge,
+	challenge_pool: &[challenge::Challenge],
 )
 {
 	match update
@@ -155,7 +155,7 @@ fn handle_update(
 			ghostbusters,
 			lobbies,
 			listed_bots,
-			current_challenge,
+			challenge_pool,
 		),
 		Update::RatingAndStars { client_id } =>
 		{
@@ -340,7 +340,7 @@ fn handle_join(
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
 	lobbies: &Vec<Lobby>,
 	listed_bots: &mut Vec<lobby::ConnectedAi>,
-	current_challenge: &challenge::Challenge,
+	challenge_pool: &[challenge::Challenge],
 )
 {
 	// Prevent a user being online with multiple connections simultaneously.
@@ -415,7 +415,7 @@ fn handle_join(
 		clients,
 		lobbies,
 		listed_bots,
-		current_challenge,
+		challenge_pool,
 	);
 
 	// Tell everyone the rating and stars of the newcomer.
@@ -488,7 +488,7 @@ fn do_init(
 	clients: &Vec<Client>,
 	lobbies: &Vec<Lobby>,
 	listed_bots: &mut Vec<lobby::ConnectedAi>,
-	current_challenge: &challenge::Challenge,
+	challenge_pool: &[challenge::Challenge],
 )
 {
 	// This is a stupid hack that is necessary because clients <1.0.8
@@ -575,10 +575,13 @@ fn do_init(
 	}
 
 	// Let the client know what the current challenge is called.
-	handle.send(Message::ListChallenge {
-		key: current_challenge.key.clone(),
-		metadata: current_challenge.metadata.clone(),
-	});
+	for challenge in challenge_pool
+	{
+		handle.send(Message::ListChallenge {
+			key: challenge.key.clone(),
+			metadata: challenge.metadata.clone(),
+		});
+	}
 
 	// Let the client know we are done initializing.
 	handle.send(Message::Init)

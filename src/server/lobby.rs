@@ -2233,8 +2233,13 @@ async fn become_challenge_lobby(
 		return Ok(());
 	}
 
-	let id = challenge::current_id();
-	let challenge_key = challenge::get_current_key();
+	let id: challenge::ChallengeId = {
+		// TODO #1086 get from client request
+		let pool = challenge::load_pool().unwrap();
+		let challenge = pool.first().unwrap();
+		challenge.id
+	};
+	let challenge_key = challenge::key(id);
 
 	lobby.challenge_id = Some(id);
 

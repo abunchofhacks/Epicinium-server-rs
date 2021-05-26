@@ -146,8 +146,10 @@ impl Database
 			}
 		}
 
-		if result.challenge == Some(challenge::current_id())
-			&& result.awarded_stars > data.recent_stars
+		// TODO #1086 change recent_stars with stars per key
+		if let Some(challenge_id) = result
+			.challenge
+			.filter(|id| result.awarded_stars > data.recent_stars)
 		{
 			let diff = result.awarded_stars - data.recent_stars;
 			data.stars += diff;
@@ -155,7 +157,10 @@ impl Database
 
 			if let Some(connection) = &mut self.connection
 			{
-				match connection.award_stars(user_id, data.recent_stars).await
+				let challenge_key = challenge::key(challenge_id);
+				match connection
+					.award_stars(user_id, challenge_key, data.recent_stars)
+					.await
 				{
 					Ok(()) => (),
 					Err(error) =>
@@ -288,7 +293,6 @@ struct Connection
 	http: http::Client,
 	update_rating_url: http::Url,
 	award_stars_url: http::Url,
-	current_challenge_key: String,
 }
 
 impl Connection
@@ -321,7 +325,6 @@ impl Connection
 			http,
 			update_rating_url,
 			award_stars_url,
-			current_challenge_key: challenge::get_current_key(),
 		})
 	}
 
@@ -353,12 +356,13 @@ impl Connection
 	async fn award_stars(
 		&self,
 		user_id: UserId,
+		challenge_key: String,
 		stars_for_current_challenge: i32,
 	) -> Result<(), anyhow::Error>
 	{
 		let payload = json!({
 			"user_id": user_id,
-			"key": self.current_challenge_key.clone(),
+			"key": challenge_key,
 			"stars": stars_for_current_challenge,
 		});
 

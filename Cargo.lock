@@ -223,9 +223,7 @@ dependencies = [
 
 [[package]]
 name = "epicinium_lib"
-version = "1.0.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a449c53dd9713993294c49fae8b74554d935bf63918b2cc81b573938efb57054"
+version = "1.1.0"
 dependencies = [
  "libc",
  "log",

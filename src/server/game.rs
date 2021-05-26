@@ -2167,10 +2167,9 @@ fn do_join(
 		map_name: lobby.map_name.clone(),
 	});
 	// TODO tell them the recording if this is a replay lobby
-	if let Some(_id) = lobby.challenge
+	if let Some(id) = lobby.challenge
 	{
-		// FUTURE this should be the challenge key of _id
-		let challenge_key = challenge::get_current_key();
+		let challenge_key = challenge::key(id);
 		client_handle.send(Message::PickChallenge { challenge_key });
 	}
 
