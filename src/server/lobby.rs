@@ -2953,7 +2953,7 @@ async fn start(
 		ruleset_name: lobby.ruleset_name.clone(),
 		planning_time_in_seconds: planning_timer,
 		lobby_type: lobby.lobby_type,
-		challenge: lobby.challenge_id,
+		challenge: lobby.challenge_id.map(|id| (id, challenge::key(id))),
 		is_public: lobby.is_public,
 	};
 

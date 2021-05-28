@@ -362,6 +362,9 @@ pub enum Message
 	},
 	RecentStars
 	{
+		#[serde(rename = "content")]
+		challenge_key: String,
+
 		#[serde(default, skip_serializing_if = "is_zero", rename = "time")]
 		stars: i32,
 	},

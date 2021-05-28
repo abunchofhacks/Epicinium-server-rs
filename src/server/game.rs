@@ -171,7 +171,7 @@ pub struct Setup
 	pub ruleset_name: String,
 	pub planning_time_in_seconds: Option<u32>,
 	pub lobby_type: LobbyType,
-	pub challenge: Option<ChallengeId>,
+	pub challenge: Option<(ChallengeId, String)>,
 	pub is_public: bool,
 }
 
@@ -348,7 +348,7 @@ pub async fn run_server_game(
 	{
 		let challenge_id = match challenge
 		{
-			Some(challenge_id) => challenge_id,
+			Some((challenge_id, ref _key)) => challenge_id,
 			None => return Err(Error::MissingChallengeId),
 		};
 		automaton.set_challenge(challenge_id)?;
@@ -510,7 +510,7 @@ pub async fn run_server_game(
 		description_metadata: lobby_description_metadata,
 		is_public,
 		match_type,
-		challenge,
+		challenge: challenge.map(|(_id, key)| key),
 		num_bots: connected_bots.len() + local_bots.len(),
 		map_name,
 		map_metadata,
@@ -608,9 +608,10 @@ pub async fn run_client_hosted_game(
 		ruleset_name,
 		planning_time_in_seconds,
 		lobby_type: _,
-		challenge,
+		challenge: _,
 		is_public,
 	} = setup;
+	let challenge = None;
 	let mut host = host.ok_or(Error::InvalidSetup)?;
 
 	// Tell everyone that the game is starting.
@@ -801,7 +802,7 @@ struct LobbyInfo
 	name: String,
 	is_public: bool,
 	match_type: MatchType,
-	challenge: Option<ChallengeId>,
+	challenge: Option<String>,
 	num_bots: usize,
 	map_name: String,
 	map_metadata: map::Metadata,
@@ -2167,9 +2168,8 @@ fn do_join(
 		map_name: lobby.map_name.clone(),
 	});
 	// TODO tell them the recording if this is a replay lobby
-	if let Some(id) = lobby.challenge
+	if let Some(challenge_key) = lobby.challenge.to_owned()
 	{
-		let challenge_key = challenge::key(id);
 		client_handle.send(Message::PickChallenge { challenge_key });
 	}
 
@@ -2453,7 +2453,7 @@ impl RejoinAndResignHandler for Automaton
 			score: self.score(client.color),
 			awarded_stars: self.award(client.color),
 			match_type: lobby.match_type,
-			challenge: lobby.challenge,
+			challenge: lobby.challenge.clone(),
 		};
 		Some(result)
 	}
@@ -2671,7 +2671,7 @@ pub struct PlayerResult
 	pub awarded_stars: i32,
 
 	pub match_type: MatchType,
-	pub challenge: Option<ChallengeId>,
+	pub challenge: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]

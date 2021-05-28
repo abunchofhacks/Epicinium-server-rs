@@ -59,7 +59,8 @@ struct Client
 	general_chat_reserve: Option<mpsc::Sender<chat::Update>>,
 	general_chat: Option<mpsc::Sender<chat::Update>>,
 	rating_database: mpsc::Sender<rating::Update>,
-	data_for_rating: Option<(rating::Data, watch::Sender<rating::Data>)>,
+	data_for_rating:
+		Option<(rating::Data, watch::Sender<rating::RatingAndStars>)>,
 	canary_for_lobbies: mpsc::Sender<()>,
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
 	lobby: Option<mpsc::Sender<lobby::Update>>,
@@ -712,8 +713,9 @@ async fn handle_update(
 			client.username = username;
 			client.unlocks = unlocks;
 
-			let (rating_in, rating_out) = watch::channel(rating_data);
-			client.data_for_rating = Some((rating_data, rating_in));
+			let (rating_in, rating_out) =
+				watch::channel(rating_data.rating_and_stars());
+			client.data_for_rating = Some((rating_data.clone(), rating_in));
 
 			match &mut client.general_chat_reserve
 			{
@@ -723,7 +725,8 @@ async fn handle_update(
 						client_id: client.id,
 						username: client.username.clone(),
 						unlocks: client.unlocks.clone(),
-						rating_data: rating_out,
+						rating_data,
+						rating_and_stars: rating_out,
 						handle: client.handle.clone(),
 					};
 					match chat.try_send(request)

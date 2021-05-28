@@ -149,7 +149,7 @@ impl Server
 			rating_data: rating::Data {
 				rating: 0.0,
 				stars: 0,
-				recent_stars: 0,
+				stars_per_challenge: std::collections::HashMap::new(),
 			},
 		};
 

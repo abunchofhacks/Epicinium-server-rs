@@ -27,7 +27,8 @@ pub enum Update
 		client_id: Keycode,
 		username: String,
 		unlocks: EnumSet<Unlock>,
-		rating_data: watch::Receiver<rating::Data>,
+		rating_data: rating::Data,
+		rating_and_stars: watch::Receiver<rating::RatingAndStars>,
 		handle: client::Handle,
 	},
 	RatingAndStars
@@ -144,12 +145,14 @@ fn handle_update(
 			username,
 			unlocks,
 			rating_data,
+			rating_and_stars,
 			handle,
 		} => handle_join(
 			client_id,
 			username,
 			unlocks,
 			rating_data,
+			rating_and_stars,
 			handle,
 			clients,
 			ghostbusters,
@@ -262,7 +265,7 @@ struct Client
 	username: String,
 	join_metadata: JoinMetadataOrTagMetadata,
 	handle: client::Handle,
-	rating_data: watch::Receiver<rating::Data>,
+	rating_and_stars: watch::Receiver<rating::RatingAndStars>,
 	availability_status: AvailabilityStatus,
 	hidden: bool,
 }
@@ -334,7 +337,8 @@ fn handle_join(
 	id: Keycode,
 	username: String,
 	unlocks: EnumSet<Unlock>,
-	rating_data: watch::Receiver<rating::Data>,
+	rating_data: rating::Data,
+	rating_and_stars: watch::Receiver<rating::RatingAndStars>,
 	handle: client::Handle,
 	clients: &mut Vec<Client>,
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
@@ -383,7 +387,7 @@ fn handle_join(
 		username,
 		join_metadata,
 		handle,
-		rating_data,
+		rating_and_stars,
 		availability_status: AvailabilityStatus::Available,
 		hidden: hidden,
 	};
@@ -419,10 +423,8 @@ fn handle_join(
 	);
 
 	// Tell everyone the rating and stars of the newcomer.
-	// Let the newcomer know how many stars they have for the current challenge.
 	if !newcomer.hidden
 	{
-		let rating_data: rating::Data = *newcomer.rating_data.borrow();
 		let message = Message::RatingAndStars {
 			username: newcomer.username.clone(),
 			rating: rating_data.rating,
@@ -433,9 +435,14 @@ fn handle_join(
 			other.handle.send(message.clone());
 		}
 		newcomer.handle.send(message);
+	}
 
+	// Let the newcomer know how many stars they have for the current challenge.
+	for (challenge_key, stars) in rating_data.stars_per_challenge
+	{
 		let message = Message::RecentStars {
-			stars: rating_data.recent_stars,
+			challenge_key,
+			stars,
 		};
 		newcomer.handle.send(message);
 	}
@@ -533,7 +540,8 @@ fn do_init(
 				metadata: client.join_metadata.clone(),
 			});
 
-			let rating_data: rating::Data = *client.rating_data.borrow();
+			let rating_data: rating::RatingAndStars =
+				*client.rating_and_stars.borrow();
 			let message = Message::RatingAndStars {
 				username: client.username.clone(),
 				rating: rating_data.rating,
@@ -598,7 +606,7 @@ fn handle_rating_and_stars(client_id: Keycode, clients: &mut Vec<Client>)
 			return;
 		}
 	};
-	let rating_data: rating::Data = *client.rating_data.borrow();
+	let rating_data: rating::RatingAndStars = *client.rating_and_stars.borrow();
 	let message = Message::RatingAndStars {
 		username: client.username.clone(),
 		rating: rating_data.rating,
@@ -637,7 +645,7 @@ fn handle_removed(
 			username,
 			join_metadata: _,
 			mut handle,
-			rating_data: _,
+			rating_and_stars: _,
 			availability_status: _,
 			hidden,
 		} = removed_client;
