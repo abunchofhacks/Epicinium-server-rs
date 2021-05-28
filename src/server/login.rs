@@ -3,7 +3,6 @@
 use crate::common::keycode::*;
 use crate::common::platform::*;
 use crate::common::version::*;
-use crate::logic::challenge;
 use crate::server::message::*;
 use crate::server::rating;
 use crate::server::settings::*;
@@ -275,11 +274,9 @@ impl Connection
 			return Err(ResponseStatus::RequestMalformed);
 		}
 
-		// TODO #1086 challenge_keys met een s?
 		let payload = ValidateSessionPayload {
 			session_token: request.token,
 			account_id_as_string: request.account_identifier,
-			challenge_key: None,
 		};
 
 		let response: LoginResponse = self
@@ -551,12 +548,10 @@ impl Connection
 		merge_token: Option<String>,
 	) -> Result<LoginData, ResponseStatus>
 	{
-		// TODO #1086 challenge_keys met een s?
 		let payload = ConfirmSteamUserPayload {
 			steam_id,
 			desired_username,
 			merge_token,
-			challenge_key: None,
 		};
 
 		let response: LoginResponse = self
@@ -605,9 +600,6 @@ struct ValidateSessionPayload
 
 	#[serde(rename = "id")]
 	account_id_as_string: String,
-
-	#[serde(skip_serializing_if = "Option::is_none")]
-	challenge_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -619,9 +611,6 @@ struct ConfirmSteamUserPayload
 	desired_username: Option<String>,
 
 	merge_token: Option<String>,
-
-	#[serde(skip_serializing_if = "Option::is_none")]
-	challenge_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -1437,6 +1437,32 @@ async fn handle_message(
 				debug!("Ignoring PickMap from unlobbied client");
 			}
 		},
+		Message::PickChallenge { challenge_key } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						error!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::PickChallenge {
+						general_chat,
+						challenge_key,
+					});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring PickMap from unlobbied client");
+			}
+		},
 		Message::PickTimer { seconds } => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -1926,7 +1952,6 @@ async fn handle_message(
 		| Message::ListLobby { .. }
 		| Message::ListChallenge { .. }
 		| Message::ListMap { .. }
-		| Message::PickChallenge { .. }
 		| Message::AssignColor { .. }
 		| Message::RulesetData { .. }
 		| Message::RulesetUnknown { .. }

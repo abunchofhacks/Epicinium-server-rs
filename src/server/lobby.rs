@@ -149,6 +149,11 @@ pub enum Sub
 		general_chat: mpsc::Sender<chat::Update>,
 		map_name: String,
 	},
+	PickChallenge
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+		challenge_key: String,
+	},
 	PickTimer
 	{
 		seconds: u32,
@@ -275,6 +280,7 @@ struct Lobby
 	ruleset_name: String,
 	ruleset_confirmations: HashSet<Keycode>,
 	timer_in_seconds: u32,
+	challenge_pool: Vec<challenge::Challenge>,
 	challenge_id: Option<challenge::ChallengeId>,
 
 	stage: Stage,
@@ -342,6 +348,8 @@ async fn initialize(
 	let (name, _) = defaultmap;
 	let map_name = name.to_string();
 
+	let challenge_pool = challenge::load_pool()?;
+
 	Ok(Lobby {
 		id: lobby_id,
 		name: name::generate(),
@@ -368,6 +376,7 @@ async fn initialize(
 		ruleset_name: ruleset::current(),
 		ruleset_confirmations: HashSet::new(),
 		timer_in_seconds: 60,
+		challenge_pool,
 		challenge_id: None,
 		stage: Stage::Setup,
 		rating_database_for_games,
@@ -583,6 +592,15 @@ async fn handle_sub(
 			describe_lobby(lobby, &mut general_chat).await?;
 			Ok(None)
 		}
+		Sub::PickChallenge {
+			mut general_chat,
+			challenge_key,
+		} =>
+		{
+			pick_challenge(lobby, clients, challenge_key).await?;
+			describe_lobby(lobby, &mut general_chat).await?;
+			Ok(None)
+		}
 		Sub::PickTimer { seconds } =>
 		{
 			pick_timer(lobby, clients, seconds).await?;
@@ -697,7 +715,7 @@ fn make_description_metadata(lobby: &Lobby) -> LobbyMetadata
 
 	match lobby.lobby_type
 	{
-		LobbyType::Generic | LobbyType::Custom =>
+		LobbyType::Generic | LobbyType::Custom | LobbyType::Challenge =>
 		{
 			debug_assert!(lobby.max_players > 0);
 		}
@@ -705,7 +723,7 @@ fn make_description_metadata(lobby: &Lobby) -> LobbyMetadata
 		{
 			debug_assert!(lobby.max_players == 2);
 		}
-		LobbyType::Challenge | LobbyType::Tutorial =>
+		LobbyType::Tutorial =>
 		{
 			debug_assert!(lobby.max_players == 2);
 			debug_assert!(num_bot_players == 1);
@@ -2204,6 +2222,23 @@ async fn become_challenge_lobby(
 	clients: &mut Vec<Client>,
 ) -> Result<(), Error>
 {
+	if let Some(challenge_key) =
+		lobby.challenge_pool.first().map(|x| x.key.clone())
+	{
+		pick_challenge(lobby, clients, challenge_key).await
+	}
+	else
+	{
+		Err(Error::EmptyChallengePool)
+	}
+}
+
+async fn pick_challenge(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	challenge_key: String,
+) -> Result<(), Error>
+{
 	// FUTURE check if client is host
 
 	// Is this a game lobby?
@@ -2225,7 +2260,7 @@ async fn become_challenge_lobby(
 	}
 	else if lobby.lobby_type == LobbyType::Challenge
 	{
-		return Ok(());
+		// Continue below.
 	}
 	else
 	{
@@ -2233,14 +2268,12 @@ async fn become_challenge_lobby(
 		return Ok(());
 	}
 
-	let id: challenge::ChallengeId = {
-		// TODO #1086 get from client request
-		let pool = challenge::load_pool().unwrap();
-		let challenge = pool.first().unwrap();
-		challenge.id
-	};
-	let challenge_key = challenge::key(id);
-
+	let id = lobby
+		.challenge_pool
+		.iter()
+		.find(|x| x.key == challenge_key)
+		.map(|x| x.id)
+		.ok_or_else(|| Error::EmptyChallengePool)?;
 	lobby.challenge_id = Some(id);
 
 	for client in clients.iter_mut()
@@ -2985,9 +3018,11 @@ async fn start(
 enum Error
 {
 	EmptyMapPool,
+	EmptyChallengePool,
 	ClientMissing,
 	StartGameHostMissing,
 	StartGameNotEnoughColors,
+	Interface(challenge::InterfaceError),
 	Io
 	{
 		error: io::Error,
@@ -3009,6 +3044,14 @@ enum Error
 		error: ai::InterfaceError,
 	},
 	AiMetadataParsing(serde_json::error::Error),
+}
+
+impl From<challenge::InterfaceError> for Error
+{
+	fn from(error: challenge::InterfaceError) -> Self
+	{
+		Error::Interface(error)
+	}
 }
 
 impl From<io::Error> for Error
@@ -3050,9 +3093,11 @@ impl fmt::Display for Error
 		match self
 		{
 			Error::EmptyMapPool => write!(f, "{:#?}", self),
+			Error::EmptyChallengePool => write!(f, "{:#?}", self),
 			Error::ClientMissing => write!(f, "{:#?}", self),
 			Error::StartGameHostMissing => write!(f, "{:#?}", self),
 			Error::StartGameNotEnoughColors => write!(f, "{:#?}", self),
+			Error::Interface(error) => error.fmt(f),
 			Error::Io { error } => error.fmt(f),
 			Error::GeneralChat { error } => error.fmt(f),
 			Error::NameSend { error } => error.fmt(f),
