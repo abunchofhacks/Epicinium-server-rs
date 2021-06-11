@@ -1,7 +1,6 @@
 /* Server::Chat */
 
 use crate::common::keycode::*;
-use crate::logic::ai;
 use crate::logic::challenge;
 use crate::server::client;
 use crate::server::lobby;
@@ -494,29 +493,10 @@ fn do_init(
 	handle: &mut client::Handle,
 	clients: &Vec<Client>,
 	lobbies: &Vec<Lobby>,
-	listed_bots: &mut Vec<lobby::ConnectedAi>,
+	_listed_bots: &mut Vec<lobby::ConnectedAi>,
 	challenge_pool: &[challenge::Challenge],
 )
 {
-	// This is a stupid hack that is necessary because clients <1.0.8
-	// do not handle LIST_AI messages sent after the lobby is created.
-	for name in ai::load_pool()
-	{
-		handle.send(Message::ListAi {
-			ai_name: name.clone(),
-			metadata: None,
-		});
-	}
-	for ai in listed_bots
-	{
-		handle.send(Message::ListAi {
-			ai_name: ai.ai_name.clone(),
-			metadata: Some(BotAuthorsMetadata {
-				authors: ai.authors.clone(),
-			}),
-		});
-	}
-
 	// Let the client know which lobbies there are.
 	for lobby in lobbies.iter()
 	{

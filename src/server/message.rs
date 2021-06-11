@@ -183,7 +183,7 @@ pub enum Message
 		ai_name: String,
 
 		#[serde(default, skip_serializing_if = "Option::is_none")]
-		metadata: Option<BotAuthorsMetadata>,
+		metadata: Option<ListAiMetadata>,
 	},
 	ListMap
 	{
@@ -526,10 +526,29 @@ pub enum ForwardingMetadata
 	},
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
-pub struct ListRulesetMetadata
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum ListAiMetadata
 {
-	pub lobby_id: Keycode,
+	FromHost
+	{
+		self_hosted: bool,
+	},
+	Authors(BotAuthorsMetadata),
+}
+
+#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum ListRulesetMetadata
+{
+	FromHost
+	{
+		self_hosted: bool
+	},
+	Forwarding
+	{
+		lobby_id: Keycode
+	},
 }
 
 #[derive(

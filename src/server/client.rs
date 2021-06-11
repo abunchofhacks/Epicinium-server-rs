@@ -1490,9 +1490,25 @@ async fn handle_message(
 				debug!("Ignoring PickRuleset from unlobbied client");
 			}
 		},
+		Message::ListMap { map_name, metadata } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = lobby::Update::ForSetup(lobby::Sub::HostListMap {
+					client_id: client.id,
+					map_name,
+					metadata,
+				});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring ListMap from unlobbied client");
+			}
+		},
 		Message::ListRuleset {
 			ruleset_name,
-			metadata: Some(ListRulesetMetadata { lobby_id }),
+			metadata: Some(ListRulesetMetadata::Forwarding { lobby_id }),
 		} if client.is_bot() =>
 		{
 			if let Some(lobby) = client.bot_lobbies.get_mut(&lobby_id)
@@ -1523,7 +1539,26 @@ async fn handle_message(
 		}
 		Message::ListRuleset {
 			ruleset_name,
-			metadata: _,
+			metadata: Some(ListRulesetMetadata::FromHost { self_hosted: true }),
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::HostListRuleset {
+						client_id: client.id,
+						ruleset_name,
+					});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring ListRuleset from unlobbied client");
+			}
+		},
+		Message::ListRuleset {
+			ruleset_name,
+			metadata: None,
 		} => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -1552,9 +1587,15 @@ async fn handle_message(
 				debug!("Ignoring ListRuleset from unlobbied client");
 			}
 		},
+		Message::ListRuleset { .. } =>
+		{
+			warn!("Invalid message from client: {:?}", message);
+			return Err(Error::Invalid);
+		}
 		Message::ListAi {
 			ai_name,
-			metadata: Some(BotAuthorsMetadata { authors }),
+			metadata:
+				Some(ListAiMetadata::Authors(BotAuthorsMetadata { authors })),
 		} if client.is_bot() => match client.general_chat
 		{
 			Some(ref mut general_chat) =>
@@ -1619,6 +1660,24 @@ async fn handle_message(
 			{
 				error!("Invalid message from offline bot");
 				return Err(Error::Invalid);
+			}
+		},
+		Message::ListAi {
+			ai_name,
+			metadata: Some(ListAiMetadata::FromHost { self_hosted: true }),
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = lobby::Update::ForSetup(lobby::Sub::HostListAi {
+					client_id: client.id,
+					ai_name,
+				});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring ListAi from unlobbied client");
 			}
 		},
 		Message::ListAi { .. } =>
@@ -1951,7 +2010,6 @@ async fn handle_message(
 		| Message::DisbandLobby { .. }
 		| Message::ListLobby { .. }
 		| Message::ListChallenge { .. }
-		| Message::ListMap { .. }
 		| Message::AssignColor { .. }
 		| Message::RulesetData { .. }
 		| Message::RulesetUnknown { .. }

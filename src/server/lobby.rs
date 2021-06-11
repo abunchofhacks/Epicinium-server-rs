@@ -100,6 +100,23 @@ pub enum Sub
 
 	ListConnectedAi(ConnectedAi),
 
+	HostListMap
+	{
+		client_id: Keycode,
+		map_name: String,
+		metadata: map::Metadata,
+	},
+	HostListRuleset
+	{
+		client_id: Keycode,
+		ruleset_name: String,
+	},
+	HostListAi
+	{
+		client_id: Keycode,
+		ai_name: String,
+	},
+
 	ClaimHost
 	{
 		general_chat: mpsc::Sender<chat::Update>,
@@ -271,7 +288,8 @@ struct Lobby
 	bot_visiontypes: HashMap<Botslot, VisionType>,
 
 	host: Option<Host>,
-	ai_pool: Vec<(String, Option<BotAuthorsMetadata>)>,
+	is_client_hosted: bool,
+	ai_pool: Vec<(String, Option<ListAiMetadata>)>,
 	ai_name_blockers: Vec<String>,
 	connected_ais: Vec<ConnectedAi>,
 	staged_connected_ais: Vec<ConnectedAi>,
@@ -367,6 +385,7 @@ async fn initialize(
 		player_visiontypes: HashMap::new(),
 		bot_visiontypes: HashMap::new(),
 		host: None,
+		is_client_hosted: false,
 		ai_pool,
 		ai_name_blockers: Vec::new(),
 		connected_ais: Vec::new(),
@@ -504,7 +523,46 @@ async fn handle_sub(
 
 		Sub::ListConnectedAi(ai) =>
 		{
-			add_ai_to_list(lobby, clients, ai).await;
+			add_connected_ai_to_list(lobby, clients, ai).await;
+			Ok(None)
+		}
+
+		Sub::HostListMap {
+			client_id,
+			map_name,
+			metadata,
+		} =>
+		{
+			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
+				&& lobby.lobby_type == LobbyType::Custom
+			{
+				become_client_hosted_lobby(lobby);
+				list_client_hosted_map(lobby, clients, map_name, metadata)
+					.await;
+			}
+			Ok(None)
+		}
+		Sub::HostListRuleset {
+			client_id,
+			ruleset_name,
+		} =>
+		{
+			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
+				&& lobby.lobby_type == LobbyType::Custom
+			{
+				become_client_hosted_lobby(lobby);
+				list_client_hosted_ruleset(lobby, clients, ruleset_name).await;
+			}
+			Ok(None)
+		}
+		Sub::HostListAi { client_id, ai_name } =>
+		{
+			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
+				&& lobby.lobby_type == LobbyType::Custom
+			{
+				become_client_hosted_lobby(lobby);
+				list_client_hosted_ai(lobby, clients, ai_name).await;
+			}
 			Ok(None)
 		}
 
@@ -978,7 +1036,9 @@ fn do_join(
 
 		newcomer.handle.send(Message::ListRuleset {
 			ruleset_name: lobby.ruleset_name.clone(),
-			metadata: Some(ListRulesetMetadata { lobby_id: lobby.id }),
+			metadata: Some(ListRulesetMetadata::Forwarding {
+				lobby_id: lobby.id,
+			}),
 		});
 		newcomer.handle.send(Message::PickRuleset {
 			ruleset_name: lobby.ruleset_name.clone(),
@@ -1108,25 +1168,6 @@ async fn handle_removed(
 		if removed_role == Some(Role::Player)
 		{
 			lobby.num_players -= 1;
-		}
-
-		// This is a stupid hack that is necessary because clients <1.0.8
-		// do not handle LIST_AI messages sent after the lobby is created.
-		for (name, metadata) in &lobby.ai_pool
-		{
-			handle.send(Message::ListAi {
-				ai_name: name.clone(),
-				metadata: metadata.clone(),
-			});
-		}
-		for ai in &lobby.connected_ais
-		{
-			handle.send(Message::ListAi {
-				ai_name: ai.ai_name.clone(),
-				metadata: Some(BotAuthorsMetadata {
-					authors: ai.authors.clone(),
-				}),
-			});
 		}
 	}
 
@@ -1572,7 +1613,11 @@ fn change_ai(
 
 	let connected = lobby.connected_ais.iter().find(|x| x.ai_name == ai_name);
 
-	if connected.is_none() && !ai::exists(&ai_name)
+	if lobby.is_client_hosted
+	{
+		// Checking if it exists is the responsibility of the host.
+	}
+	else if connected.is_none() && !ai::exists(&ai_name)
 	{
 		warn!("Cannot set AI to non-existing '{}'.", ai_name);
 		for client in clients.into_iter()
@@ -1602,8 +1647,10 @@ fn change_ai(
 
 	if lobby.ai_pool.iter().find(|&(x, _)| x == &ai_name).is_none()
 	{
-		let metadata = connected.map(|ai| BotAuthorsMetadata {
-			authors: ai.authors.clone(),
+		let metadata = connected.map(|ai| {
+			ListAiMetadata::Authors(BotAuthorsMetadata {
+				authors: ai.authors.clone(),
+			})
 		});
 
 		lobby.ai_pool.push((ai_name.clone(), metadata.clone()));
@@ -1812,6 +1859,12 @@ async fn pick_map(
 	else if lobby.lobby_type == LobbyType::OneVsOne
 	{
 		warn!("Cannot pick unlisted map in onevsone lobby {}.", lobby.id);
+		None
+	}
+	else if lobby.is_client_hosted
+	{
+		// Checking if it exists is the responsibility of the host.
+		// But the host should have sent a ListMap beforehand.
 		None
 	}
 	// FUTURE check if map in hidden pool or client is developer
@@ -2333,6 +2386,23 @@ async fn become_custom_lobby(
 		return Ok(());
 	}
 
+	if let Some(host) = &lobby.host
+	{
+		// Remind the host that they are the host, because this simplifies
+		// the client-side code.
+		let message = Message::ClaimHost {
+			username: Some(host.username.clone()),
+		};
+		for client in clients.iter_mut()
+		{
+			client.handle.send(message.clone());
+		}
+
+		// No need to load the custom pool because the lobby host will have
+		// their own pool.
+		return Ok(());
+	}
+
 	let loaded_pool = map::load_custom_and_user_pool_with_metadata().await?;
 	for (name, metadata) in loaded_pool
 	{
@@ -2426,6 +2496,10 @@ async fn pick_ruleset(
 	{
 		lobby.ruleset_name = ruleset::current();
 	}
+	else if lobby.is_client_hosted
+	{
+		// Checking if it exists is the responsibility of the host.
+	}
 	else if ruleset::exists(&ruleset_name)
 	{
 		lobby.ruleset_name = ruleset_name;
@@ -2456,7 +2530,7 @@ async fn pick_ruleset(
 	// reconfirm the ruleset every time it is picked, just once it is listed.
 	let listmessage = Message::ListRuleset {
 		ruleset_name: lobby.ruleset_name.clone(),
-		metadata: Some(ListRulesetMetadata { lobby_id: lobby.id }),
+		metadata: Some(ListRulesetMetadata::Forwarding { lobby_id: lobby.id }),
 	};
 	let pickmessage = Message::PickRuleset {
 		ruleset_name: lobby.ruleset_name.clone(),
@@ -2468,6 +2542,21 @@ async fn pick_ruleset(
 	}
 
 	Ok(())
+}
+
+fn become_client_hosted_lobby(lobby: &mut Lobby)
+{
+	if lobby.is_client_hosted
+	{
+		return;
+	}
+
+	lobby.is_client_hosted = true;
+
+	lobby.ai_pool.clear();
+	lobby.map_pool.clear();
+	lobby.connected_ais.clear();
+	lobby.staged_connected_ais.clear();
 }
 
 fn block_ai(lobby: &mut Lobby, clients: &mut Vec<Client>, blocker: String)
@@ -2499,13 +2588,17 @@ fn block_ai(lobby: &mut Lobby, clients: &mut Vec<Client>, blocker: String)
 	}
 }
 
-async fn add_ai_to_list(
+async fn add_connected_ai_to_list(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
 	ai: ConnectedAi,
 )
 {
 	if lobby.ai_name_blockers.contains(&ai.ai_name)
+	{
+		return;
+	}
+	else if lobby.is_client_hosted
 	{
 		return;
 	}
@@ -2521,13 +2614,93 @@ async fn add_ai_to_list(
 	{
 		client.handle.send(Message::ListAi {
 			ai_name: ai.ai_name.clone(),
-			metadata: Some(BotAuthorsMetadata {
+			metadata: Some(ListAiMetadata::Authors(BotAuthorsMetadata {
 				authors: ai.authors.clone(),
-			}),
+			})),
 		});
 	}
 
 	lobby.connected_ais.push(ai);
+}
+
+async fn list_client_hosted_map(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	map_name: String,
+	metadata: map::Metadata,
+)
+{
+	if !lobby.is_client_hosted
+	{
+		return;
+	}
+	else if lobby
+		.map_pool
+		.iter()
+		.any(|(name, _metadata)| name == &map_name)
+	{
+		return;
+	}
+
+	for client in clients.iter_mut()
+	{
+		client.handle.send(Message::ListMap {
+			map_name: map_name.clone(),
+			metadata: metadata.clone(),
+		});
+	}
+
+	lobby.map_pool.push((map_name.clone(), metadata));
+}
+
+async fn list_client_hosted_ruleset(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	ruleset_name: String,
+)
+{
+	if !lobby.is_client_hosted
+	{
+		return;
+	}
+
+	for client in clients.iter_mut()
+	{
+		client.handle.send(Message::ListRuleset {
+			ruleset_name: ruleset_name.clone(),
+			metadata: None,
+		});
+	}
+
+	// See: "in the future we might want to
+	// have an actual ruleset dropdown".
+}
+
+async fn list_client_hosted_ai(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	ai_name: String,
+)
+{
+	if !lobby.is_client_hosted
+	{
+		return;
+	}
+	else if lobby
+		.ai_pool
+		.iter()
+		.any(|(name, _metadata)| name == &ai_name)
+	{
+		return;
+	}
+
+	for client in clients.into_iter()
+	{
+		client.handle.send(Message::ListAi {
+			ai_name: ai_name.clone(),
+			metadata: None,
+		});
+	}
 }
 
 async fn handle_ruleset_confirmation(
@@ -2679,7 +2852,9 @@ async fn try_start(
 			{
 				let message = Message::ListRuleset {
 					ruleset_name: lobby.ruleset_name.clone(),
-					metadata: Some(ListRulesetMetadata { lobby_id: lobby.id }),
+					metadata: Some(ListRulesetMetadata::Forwarding {
+						lobby_id: lobby.id,
+					}),
 				};
 				ai.handle.send(message);
 			}
