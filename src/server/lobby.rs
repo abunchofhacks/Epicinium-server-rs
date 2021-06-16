@@ -116,6 +116,23 @@ pub enum Sub
 		client_id: Keycode,
 		ai_name: String,
 	},
+	HostRulesetData
+	{
+		client_id: Keycode,
+		ruleset_name: String,
+		data: ruleset::Data,
+	},
+	HostRulesetUnknown
+	{
+		client_id: Keycode,
+		ruleset_name: String,
+	},
+
+	RulesetRequest
+	{
+		client_id: Keycode,
+		ruleset_name: String,
+	},
 
 	ClaimHost
 	{
@@ -562,6 +579,72 @@ async fn handle_sub(
 			{
 				become_client_hosted_lobby(lobby);
 				list_client_hosted_ai(lobby, clients, ai_name).await;
+			}
+			Ok(None)
+		}
+		Sub::HostRulesetData {
+			client_id,
+			ruleset_name,
+			data,
+		} =>
+		{
+			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
+				&& lobby.lobby_type == LobbyType::Custom
+			{
+				let message = Message::RulesetData { ruleset_name, data };
+				for client in clients.iter_mut()
+				{
+					client.handle.send(message.clone());
+				}
+			}
+			Ok(None)
+		}
+		Sub::HostRulesetUnknown {
+			client_id,
+			ruleset_name,
+		} =>
+		{
+			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
+				&& lobby.lobby_type == LobbyType::Custom
+			{
+				let message = Message::RulesetUnknown { ruleset_name };
+				for client in clients.iter_mut()
+				{
+					client.handle.send(message.clone());
+				}
+			}
+			Ok(None)
+		}
+
+		Sub::RulesetRequest {
+			client_id,
+			ruleset_name,
+		} =>
+		{
+			if let Some(host_client) = lobby
+				.host
+				.as_ref()
+				.map(|host| host.id)
+				.filter(|_| lobby.lobby_type == LobbyType::Custom)
+				.map(|host_id| clients.iter_mut().find(|x| x.id == host_id))
+				.flatten()
+			{
+				let message = Message::RulesetRequest { ruleset_name };
+				host_client.handle.send(message);
+			}
+			else if let Some(requesting_client) =
+				clients.iter_mut().find(|x| x.id == client_id)
+			{
+				let message = if ruleset::exists(&ruleset_name)
+				{
+					let data = ruleset::load_data(&ruleset_name).await?;
+					Message::RulesetData { ruleset_name, data }
+				}
+				else
+				{
+					Message::RulesetUnknown { ruleset_name }
+				};
+				requesting_client.handle.send(message);
 			}
 			Ok(None)
 		}
@@ -2031,6 +2114,10 @@ async fn pick_map(
 	{
 		pick_ruleset(lobby, clients, ruleset_name).await?;
 	}
+	else if lobby.ruleset_name != ruleset::current()
+	{
+		pick_ruleset(lobby, clients, ruleset::current()).await?;
+	}
 
 	Ok(())
 }
@@ -2499,6 +2586,7 @@ async fn pick_ruleset(
 	else if lobby.is_client_hosted
 	{
 		// Checking if it exists is the responsibility of the host.
+		lobby.ruleset_name = ruleset_name;
 	}
 	else if ruleset::exists(&ruleset_name)
 	{

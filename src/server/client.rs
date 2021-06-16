@@ -13,7 +13,6 @@ pub use handle::Handle;
 
 use crate::common::keycode::Keycode;
 use crate::common::version::*;
-use crate::logic::ruleset;
 use crate::server::chat;
 use crate::server::discord_api;
 use crate::server::game;
@@ -1764,10 +1763,55 @@ async fn handle_message(
 				debug!("Ignoring EnableCustomMaps from unlobbied client");
 			}
 		},
-		Message::RulesetRequest { ruleset_name } =>
+		Message::RulesetRequest { ruleset_name } => match client.lobby
 		{
-			handle_ruleset_request(client, ruleset_name).await?;
-		}
+			Some(ref mut lobby) =>
+			{
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::RulesetRequest {
+						client_id: client.id,
+						ruleset_name,
+					});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring RulesetRequest from unlobbied client");
+			}
+		},
+		Message::RulesetData { ruleset_name, data } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::HostRulesetData {
+						client_id: client.id,
+						ruleset_name,
+						data,
+					});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring RulesetData from unlobbied client");
+			}
+		},
+		Message::RulesetUnknown { ruleset_name } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::HostRulesetUnknown {
+						client_id: client.id,
+						ruleset_name,
+					});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring RulesetUnknown from unlobbied client");
+			}
+		},
 		Message::Start => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -2011,8 +2055,6 @@ async fn handle_message(
 		| Message::ListLobby { .. }
 		| Message::ListChallenge { .. }
 		| Message::AssignColor { .. }
-		| Message::RulesetData { .. }
-		| Message::RulesetUnknown { .. }
 		| Message::Secrets { .. }
 		| Message::Skins { .. }
 		| Message::InGame { .. }
@@ -2111,22 +2153,4 @@ fn joining_server(
 		}
 		Err(error) => Err(error.into()),
 	}
-}
-
-async fn handle_ruleset_request(
-	client: &mut Client,
-	ruleset_name: String,
-) -> Result<(), Error>
-{
-	if !ruleset::exists(&ruleset_name)
-	{
-		let message = Message::RulesetUnknown { ruleset_name };
-		client.sendbuffer.send(message).await?;
-		return Ok(());
-	}
-
-	let data = ruleset::load_data(&ruleset_name).await?;
-	let message = Message::RulesetData { ruleset_name, data };
-	client.sendbuffer.send(message).await?;
-	Ok(())
 }
