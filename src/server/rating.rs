@@ -173,7 +173,7 @@ impl Database
 					data.stars_per_challenge
 						.get(challenge_key)
 						.map(|value| result.awarded_stars - *value)
-						.unwrap_or(0),
+						.unwrap_or(result.awarded_stars),
 				)
 			})
 			.filter(|(_challenge_key, diff)| *diff > 0)

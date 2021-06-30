@@ -594,4 +594,5 @@ pub struct HostSyncMetadata
 	pub defeated_players: Vec<PlayerColor>,
 
 	pub game_over: bool,
+	pub stars: i32,
 }

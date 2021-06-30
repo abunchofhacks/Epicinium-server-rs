@@ -40,6 +40,7 @@ pub struct HostClient
 	pub handle: client::Handle,
 
 	pub is_gameover: bool,
+	pub awarded_stars: i32,
 }
 
 impl HostClient
@@ -594,7 +595,6 @@ pub async fn run_client_hosted_game(
 		return Err(Error::InvalidSetup);
 	}
 
-	// TODO challenge key gebruiken
 	let Setup {
 		lobby_id,
 		lobby_name,
@@ -610,35 +610,38 @@ pub async fn run_client_hosted_game(
 		ruleset_name,
 		planning_time_in_seconds,
 		lobby_type: _,
-		challenge: _,
+		challenge,
 		is_public,
 	} = setup;
-	let challenge = None;
+	let is_fake = challenge.is_some();
 	let mut host = host.ok_or(Error::InvalidSetup)?;
 
-	// Tell everyone that the game is starting.
-	for client in &mut players
+	if !is_fake
 	{
-		client.handle.send(Message::Game {
-			role: Some(Role::Player),
-			player: Some(client.color),
-			ruleset_name: Some(ruleset_name.clone()),
-			timer_in_seconds: planning_time_in_seconds,
-			difficulty: None,
-			forwarding: None,
-		});
-	}
+		// Tell everyone that the game is starting.
+		for client in &mut players
+		{
+			client.handle.send(Message::Game {
+				role: Some(Role::Player),
+				player: Some(client.color),
+				ruleset_name: Some(ruleset_name.clone()),
+				timer_in_seconds: planning_time_in_seconds,
+				difficulty: None,
+				forwarding: None,
+			});
+		}
 
-	for client in &mut watchers
-	{
-		client.handle.send(Message::Game {
-			role: Some(Role::Observer),
-			player: None,
-			ruleset_name: Some(ruleset_name.clone()),
-			timer_in_seconds: planning_time_in_seconds,
-			difficulty: None,
-			forwarding: None,
-		});
+		for client in &mut watchers
+		{
+			client.handle.send(Message::Game {
+				role: Some(Role::Observer),
+				player: None,
+				ruleset_name: Some(ruleset_name.clone()),
+				timer_in_seconds: planning_time_in_seconds,
+				difficulty: None,
+				forwarding: None,
+			});
+		}
 	}
 
 	// Tell everyone who is playing as which color.
@@ -663,19 +666,22 @@ pub async fn run_client_hosted_game(
 		metadata: map_metadata.clone(),
 	});
 
-	// Send the initial messages.
-	for client in &mut players
+	if !is_fake
 	{
-		for message in &initial_messages
+		// Send the initial messages.
+		for client in &mut players
 		{
-			client.handle.send(message.clone());
+			for message in &initial_messages
+			{
+				client.handle.send(message.clone());
+			}
 		}
-	}
-	for client in &mut watchers
-	{
-		for message in &initial_messages
+		for client in &mut watchers
 		{
-			client.handle.send(message.clone());
+			for message in &initial_messages
+			{
+				client.handle.send(message.clone());
+			}
 		}
 	}
 
@@ -685,7 +691,7 @@ pub async fn run_client_hosted_game(
 		description_metadata: lobby_description_metadata,
 		is_public,
 		match_type: MatchType::Unrated,
-		challenge,
+		challenge: challenge.map(|(_id, key)| key),
 		num_bots: hosted_bots.len(),
 		map_name,
 		map_metadata,
@@ -731,10 +737,10 @@ pub async fn run_client_hosted_game(
 		}
 	}
 
-	// Drop rating callbacks in order to treat players as retired.
+	// If there are non-bot non-observer participants, adjust their stars.
 	for client in players.iter_mut()
 	{
-		client.rating_callback.take();
+		retire(&lobby_info, &mut host, client).await?;
 	}
 
 	debug!("Game has finished in lobby {}; lingering...", lobby_id);
@@ -963,6 +969,22 @@ async fn iterate_client_hosted_game(
 	planning_time_in_seconds: Option<u32>,
 ) -> Result<State, Error>
 {
+	if lobby.challenge.is_some()
+	{
+		// This is a fake lobby while the host is playing their own challenge.
+		sync_host(lobby, host, players, watchers, updates).await?;
+		if host.is_gameover
+		{
+			return Ok(State::Finished);
+		}
+		else if !host.is_connected()
+		{
+			debug!("Abandoning game in lobby {} without host...", lobby.id);
+			return Ok(State::AbandonedByHost);
+		}
+		return Ok(State::InProgress);
+	}
+
 	// Wait for host to finish action phase.
 	sync_host(lobby, host, players, watchers, updates).await?;
 	if !host.is_connected()
@@ -1808,6 +1830,7 @@ async fn sync_host(
 					if let Some(metadata) = metadata
 					{
 						host.is_gameover = metadata.game_over;
+						host.awarded_stars = metadata.stars;
 						for client in players.iter_mut()
 						{
 							if metadata.defeated_players.contains(&client.color)
@@ -2377,8 +2400,10 @@ async fn retire(
 		None => return Ok(()),
 	};
 
+	debug!("Retiring client {}", client.id);
 	if let Some(player_result) = handler.handle_retire(lobby, client)
 	{
+		debug!("Client {} retired with {:?}", client.id, player_result);
 		let update = rating::Update::GameResult(player_result);
 		callback.send(update).await?;
 	}
@@ -2495,11 +2520,31 @@ impl RejoinAndResignHandler for HostClient
 
 	fn handle_retire(
 		&mut self,
-		_: &LobbyInfo,
-		_: &PlayerClient,
+		lobby: &LobbyInfo,
+		client: &PlayerClient,
 	) -> std::option::Option<PlayerResult>
 	{
-		None
+		if lobby.challenge.is_some()
+			&& client.id == self.id
+			&& self.awarded_stars > 0
+		{
+			debug!("Awarding host with {} stars", self.awarded_stars);
+			let result = PlayerResult {
+				user_id: client.user_id,
+				username: client.username.clone(),
+				is_rated: false,
+				is_victorious: true,
+				score: 0,
+				awarded_stars: self.awarded_stars,
+				match_type: lobby.match_type,
+				challenge: lobby.challenge.clone(),
+			};
+			Some(result)
+		}
+		else
+		{
+			None
+		}
 	}
 }
 

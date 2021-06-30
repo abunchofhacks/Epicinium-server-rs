@@ -2413,7 +2413,8 @@ async fn pick_challenge(
 
 	if lobby.is_client_hosted
 	{
-		lobby.challenge = Some((None, challenge_key));
+		let sanitized_key = sanitize_challenge_key(&challenge_key);
+		lobby.challenge = Some((None, sanitized_key));
 		return Ok(());
 	}
 
@@ -2989,6 +2990,7 @@ async fn start(
 				handle: client.handle.clone(),
 
 				is_gameover: false,
+				awarded_stars: 0,
 			})
 		}
 		else
@@ -3384,3 +3386,44 @@ impl fmt::Display for Error
 }
 
 impl std::error::Error for Error {}
+
+fn sanitize_challenge_key(raw_key: &str) -> String
+{
+	if let Some(segment) = raw_key.split('@').skip(1).next()
+	{
+		if is_valid_challenge_key(segment)
+		{
+			return segment.to_string();
+		}
+	}
+
+	return "sanitized".to_string();
+}
+
+fn is_valid_challenge_key(key: &str) -> bool
+{
+	key.len() >= 3
+		&& key.len() <= 36
+		&& key.is_ascii()
+		&& key.chars().all(|x| is_valid_challenge_key_char(x))
+}
+
+fn is_valid_challenge_key_char(x: char) -> bool
+{
+	match x
+	{
+		// not space
+		// not !"#$%'()*+,
+		'-' | '.' => true,
+		'/' => true,
+		'0'..='9' => true,
+		// not :;<=>?@
+		'a'..='z' => true,
+		// not [\]^
+		'_' => true,
+		// not `
+		'A'..='Z' => true,
+		// not {|}~
+		_ => false,
+	}
+}
