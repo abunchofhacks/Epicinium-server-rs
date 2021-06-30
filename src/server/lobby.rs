@@ -316,7 +316,7 @@ struct Lobby
 	ruleset_confirmations: HashSet<Keycode>,
 	timer_in_seconds: u32,
 	challenge_pool: Vec<challenge::Challenge>,
-	challenge_id: Option<challenge::ChallengeId>,
+	challenge: Option<(Option<challenge::ChallengeId>, String)>,
 
 	stage: Stage,
 	rating_database_for_games: mpsc::Sender<rating::Update>,
@@ -413,7 +413,7 @@ async fn initialize(
 		ruleset_confirmations: HashSet::new(),
 		timer_in_seconds: 60,
 		challenge_pool,
-		challenge_id: None,
+		challenge: None,
 		stage: Stage::Setup,
 		rating_database_for_games,
 	})
@@ -551,7 +551,8 @@ async fn handle_sub(
 		} =>
 		{
 			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
-				&& lobby.lobby_type == LobbyType::Custom
+				&& (lobby.lobby_type == LobbyType::Custom
+					|| lobby.lobby_type == LobbyType::Challenge)
 			{
 				become_client_hosted_lobby(lobby);
 				list_client_hosted_map(lobby, clients, map_name, metadata)
@@ -565,7 +566,8 @@ async fn handle_sub(
 		} =>
 		{
 			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
-				&& lobby.lobby_type == LobbyType::Custom
+				&& (lobby.lobby_type == LobbyType::Custom
+					|| lobby.lobby_type == LobbyType::Challenge)
 			{
 				become_client_hosted_lobby(lobby);
 				list_client_hosted_ruleset(lobby, clients, ruleset_name).await;
@@ -575,7 +577,8 @@ async fn handle_sub(
 		Sub::HostListAi { client_id, ai_name } =>
 		{
 			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
-				&& lobby.lobby_type == LobbyType::Custom
+				&& (lobby.lobby_type == LobbyType::Custom
+					|| lobby.lobby_type == LobbyType::Challenge)
 			{
 				become_client_hosted_lobby(lobby);
 				list_client_hosted_ai(lobby, clients, ai_name).await;
@@ -589,7 +592,7 @@ async fn handle_sub(
 		} =>
 		{
 			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
-				&& lobby.lobby_type == LobbyType::Custom
+				&& lobby.is_client_hosted
 			{
 				let message = Message::RulesetData { ruleset_name, data };
 				for client in clients.iter_mut()
@@ -605,7 +608,7 @@ async fn handle_sub(
 		} =>
 		{
 			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
-				&& lobby.lobby_type == LobbyType::Custom
+				&& lobby.is_client_hosted
 			{
 				let message = Message::RulesetUnknown { ruleset_name };
 				for client in clients.iter_mut()
@@ -625,7 +628,7 @@ async fn handle_sub(
 				.host
 				.as_ref()
 				.map(|host| host.id)
-				.filter(|_| lobby.lobby_type == LobbyType::Custom)
+				.filter(|_| lobby.is_client_hosted)
 				.map(|host_id| clients.iter_mut().find(|x| x.id == host_id))
 				.flatten()
 			{
@@ -2408,13 +2411,19 @@ async fn pick_challenge(
 		return Ok(());
 	}
 
+	if lobby.is_client_hosted
+	{
+		lobby.challenge = Some((None, challenge_key));
+		return Ok(());
+	}
+
 	let id = lobby
 		.challenge_pool
 		.iter()
 		.find(|x| x.key == challenge_key)
 		.map(|x| x.id)
 		.ok_or_else(|| Error::EmptyChallengePool)?;
-	lobby.challenge_id = Some(id);
+	lobby.challenge = Some((Some(id), challenge_key.clone()));
 
 	for client in clients.iter_mut()
 	{
@@ -2462,9 +2471,12 @@ async fn become_custom_lobby(
 	{
 		lobby.lobby_type = LobbyType::Custom;
 	}
+	else if lobby.lobby_type == LobbyType::Challenge && lobby.host.is_some()
+	{
+		become_client_hosted_lobby(lobby);
+	}
 	else if lobby.lobby_type == LobbyType::Custom
 	{
-		debug!("Cannot turn custom lobby {} into custom.", lobby.id);
 		return Ok(());
 	}
 	else
@@ -2965,13 +2977,10 @@ async fn start(
 ) -> Result<game::Setup, Error>
 {
 	// If this is a client-hosted game, prepare the host client.
-	let mut host_client = if let Some(host) = &lobby.host
+	let mut host_client = if let Some(host) =
+		&lobby.host.as_ref().filter(|_x| lobby.is_client_hosted)
 	{
-		if lobby.lobby_type != LobbyType::Custom
-		{
-			None
-		}
-		else if let Some(client) = clients.iter().find(|x| x.id == host.id)
+		if let Some(client) = clients.iter().find(|x| x.id == host.id)
 		{
 			Some(game::HostClient {
 				id: client.id,
@@ -3249,7 +3258,7 @@ async fn start(
 		ruleset_name: lobby.ruleset_name.clone(),
 		planning_time_in_seconds: planning_timer,
 		lobby_type: lobby.lobby_type,
-		challenge: lobby.challenge_id.map(|id| (id, challenge::key(id))),
+		challenge: lobby.challenge.clone(),
 		is_public: lobby.is_public,
 	};
 

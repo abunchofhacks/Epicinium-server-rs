@@ -171,7 +171,7 @@ pub struct Setup
 	pub ruleset_name: String,
 	pub planning_time_in_seconds: Option<u32>,
 	pub lobby_type: LobbyType,
-	pub challenge: Option<(ChallengeId, String)>,
+	pub challenge: Option<(Option<ChallengeId>, String)>,
 	pub is_public: bool,
 }
 
@@ -348,8 +348,8 @@ pub async fn run_server_game(
 	{
 		let challenge_id = match challenge
 		{
-			Some((challenge_id, ref _key)) => challenge_id,
-			None => return Err(Error::MissingChallengeId),
+			Some((Some(challenge_id), ..)) => challenge_id,
+			_ => return Err(Error::MissingChallengeId),
 		};
 		automaton.set_challenge(challenge_id)?;
 
@@ -586,13 +586,15 @@ pub async fn run_client_hosted_game(
 	mut updates: mpsc::Receiver<Update>,
 ) -> Result<(), Error>
 {
-	if setup.lobby_type != LobbyType::Custom
+	if (setup.lobby_type != LobbyType::Custom
+		&& setup.lobby_type != LobbyType::Challenge)
 		|| !setup.connected_bots.is_empty()
 		|| !setup.local_bots.is_empty()
 	{
 		return Err(Error::InvalidSetup);
 	}
 
+	// TODO challenge key gebruiken
 	let Setup {
 		lobby_id,
 		lobby_name,
