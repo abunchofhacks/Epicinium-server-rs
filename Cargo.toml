@@ -1,13 +1,13 @@
 [package]
 name = "epicinium"
-version = "1.0.12"
+version = "1.1.0"
 authors = ["Sander in 't Veld <sanderintveld@hotmail.com>"]
 edition = "2018"
 publish = false
 default-run = "server"
 
 [dependencies]
-epicinium_lib = { version = "1.0.12" }
+epicinium_lib = { version = "1.1.0", path = "../epicinium_lib/" }
 openssl = { version = "0.10", features = ["vendored"] }
 rlimit = "*"
 serde = "*"

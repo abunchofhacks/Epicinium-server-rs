@@ -2,7 +2,6 @@
 
 use crate::common::platform::Platform;
 use crate::common::version::Version;
-use crate::logic::challenge;
 use crate::server::client;
 use crate::server::game;
 use crate::server::game::MatchType;
@@ -26,11 +25,29 @@ use tokio::sync::watch;
 use reqwest as http;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct RatingAndStars
+{
+	pub rating: f64,
+	pub stars: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Data
 {
 	pub rating: f64,
 	pub stars: i32,
-	pub recent_stars: i32,
+	pub stars_per_challenge: std::collections::HashMap<String, i32>,
+}
+
+impl Data
+{
+	pub fn rating_and_stars(&self) -> RatingAndStars
+	{
+		RatingAndStars {
+			rating: self.rating,
+			stars: self.stars,
+		}
+	}
 }
 
 #[derive(Debug)]
@@ -41,7 +58,7 @@ pub enum Update
 		user_id: UserId,
 		handle: client::Handle,
 		data: Data,
-		sender: watch::Sender<Data>,
+		sender: watch::Sender<RatingAndStars>,
 	},
 	GameResult(game::PlayerResult),
 	Left
@@ -87,7 +104,7 @@ pub async fn run(mut database: Database, mut updates: mpsc::Receiver<Update>)
 struct Entry
 {
 	data: Data,
-	sender: watch::Sender<Data>,
+	sender: watch::Sender<RatingAndStars>,
 	handle: client::Handle,
 }
 
@@ -113,7 +130,8 @@ impl Database
 				return;
 			}
 		};
-		let mut data = entry.data;
+		let data = &mut entry.data;
+		let old_rating_and_stars = data.rating_and_stars();
 
 		if result.is_rated
 		{
@@ -146,16 +164,30 @@ impl Database
 			}
 		}
 
-		if result.challenge == Some(challenge::current_id())
-			&& result.awarded_stars > data.recent_stars
+		if let Some((challenge_key, diff)) = result
+			.challenge
+			.as_ref()
+			.map(|challenge_key| {
+				(
+					challenge_key,
+					data.stars_per_challenge
+						.get(challenge_key)
+						.map(|value| result.awarded_stars - *value)
+						.unwrap_or(result.awarded_stars),
+				)
+			})
+			.filter(|(_challenge_key, diff)| *diff > 0)
 		{
-			let diff = result.awarded_stars - data.recent_stars;
 			data.stars += diff;
-			data.recent_stars = result.awarded_stars;
+			data.stars_per_challenge
+				.insert(challenge_key.clone(), result.awarded_stars);
 
 			if let Some(connection) = &mut self.connection
 			{
-				match connection.award_stars(user_id, data.recent_stars).await
+				let challenge_key = challenge_key.to_string();
+				match connection
+					.award_stars(user_id, challenge_key, result.awarded_stars)
+					.await
 				{
 					Ok(()) => (),
 					Err(error) =>
@@ -168,15 +200,16 @@ impl Database
 			}
 
 			let message = Message::RecentStars {
+				challenge_key: challenge_key.to_string(),
 				stars: result.awarded_stars,
 			};
 			entry.handle.send(message);
 		}
 
-		if data != entry.data
+		let new_rating_and_stars = data.rating_and_stars();
+		if new_rating_and_stars != old_rating_and_stars
 		{
-			entry.data = data;
-			match entry.sender.broadcast(data)
+			match entry.sender.broadcast(new_rating_and_stars)
 			{
 				Ok(()) => (),
 				Err(error) =>
@@ -288,7 +321,6 @@ struct Connection
 	http: http::Client,
 	update_rating_url: http::Url,
 	award_stars_url: http::Url,
-	current_challenge_key: String,
 }
 
 impl Connection
@@ -321,7 +353,6 @@ impl Connection
 			http,
 			update_rating_url,
 			award_stars_url,
-			current_challenge_key: challenge::get_current_key(),
 		})
 	}
 
@@ -353,12 +384,13 @@ impl Connection
 	async fn award_stars(
 		&self,
 		user_id: UserId,
+		challenge_key: String,
 		stars_for_current_challenge: i32,
 	) -> Result<(), anyhow::Error>
 	{
 		let payload = json!({
 			"user_id": user_id,
-			"key": self.current_challenge_key.clone(),
+			"key": challenge_key,
 			"stars": stars_for_current_challenge,
 		});
 

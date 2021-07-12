@@ -3,7 +3,6 @@
 use crate::common::keycode::*;
 use crate::common::platform::*;
 use crate::common::version::*;
-use crate::logic::challenge;
 use crate::server::message::*;
 use crate::server::rating;
 use crate::server::settings::*;
@@ -149,7 +148,7 @@ impl Server
 			rating_data: rating::Data {
 				rating: 0.0,
 				stars: 0,
-				recent_stars: 0,
+				stars_per_challenge: std::collections::HashMap::new(),
 			},
 		};
 
@@ -163,7 +162,6 @@ struct Connection
 
 	validate_session_url: http::Url,
 	confirm_steam_user_url: http::Url,
-	current_challenge_key: String,
 
 	steam_api_config: SteamApiConfig,
 	steam_ticket_url: http::Url,
@@ -239,7 +237,6 @@ impl Connection
 			http,
 			validate_session_url,
 			confirm_steam_user_url,
-			current_challenge_key: challenge::get_current_key(),
 			steam_api_config,
 			steam_ticket_url,
 			steam_player_summaries_url,
@@ -280,7 +277,6 @@ impl Connection
 		let payload = ValidateSessionPayload {
 			session_token: request.token,
 			account_id_as_string: request.account_identifier,
-			challenge_key: self.current_challenge_key.clone(),
 		};
 
 		let response: LoginResponse = self
@@ -556,7 +552,6 @@ impl Connection
 			steam_id,
 			desired_username,
 			merge_token,
-			challenge_key: self.current_challenge_key.clone(),
 		};
 
 		let response: LoginResponse = self
@@ -605,8 +600,6 @@ struct ValidateSessionPayload
 
 	#[serde(rename = "id")]
 	account_id_as_string: String,
-
-	challenge_key: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -618,8 +611,6 @@ struct ConfirmSteamUserPayload
 	desired_username: Option<String>,
 
 	merge_token: Option<String>,
-
-	challenge_key: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

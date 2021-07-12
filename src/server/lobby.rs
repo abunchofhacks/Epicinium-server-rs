@@ -69,6 +69,7 @@ pub enum Update
 	ForSetup(Sub),
 
 	ForGame(game::Sub),
+	FromHost(game::FromHost),
 
 	Msg(Message),
 }
@@ -99,6 +100,45 @@ pub enum Sub
 
 	ListConnectedAi(ConnectedAi),
 
+	HostListMap
+	{
+		client_id: Keycode,
+		map_name: String,
+		metadata: map::Metadata,
+	},
+	HostListRuleset
+	{
+		client_id: Keycode,
+		ruleset_name: String,
+	},
+	HostListAi
+	{
+		client_id: Keycode,
+		ai_name: String,
+	},
+	HostRulesetData
+	{
+		client_id: Keycode,
+		ruleset_name: String,
+		data: ruleset::Data,
+	},
+	HostRulesetUnknown
+	{
+		client_id: Keycode,
+		ruleset_name: String,
+	},
+
+	RulesetRequest
+	{
+		client_id: Keycode,
+		ruleset_name: String,
+	},
+
+	ClaimHost
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+		username: String,
+	},
 	ClaimRole
 	{
 		general_chat: mpsc::Sender<chat::Update>,
@@ -142,6 +182,11 @@ pub enum Sub
 	{
 		general_chat: mpsc::Sender<chat::Update>,
 		map_name: String,
+	},
+	PickChallenge
+	{
+		general_chat: mpsc::Sender<chat::Update>,
+		challenge_key: String,
 	},
 	PickTimer
 	{
@@ -232,6 +277,13 @@ struct Listing
 }
 
 #[derive(Debug)]
+struct Host
+{
+	id: Keycode,
+	username: String,
+}
+
+#[derive(Debug)]
 struct Lobby
 {
 	id: Keycode,
@@ -252,7 +304,9 @@ struct Lobby
 	player_visiontypes: HashMap<Keycode, VisionType>,
 	bot_visiontypes: HashMap<Botslot, VisionType>,
 
-	ai_pool: Vec<(String, Option<BotAuthorsMetadata>)>,
+	host: Option<Host>,
+	is_client_hosted: bool,
+	ai_pool: Vec<(String, Option<ListAiMetadata>)>,
 	ai_name_blockers: Vec<String>,
 	connected_ais: Vec<ConnectedAi>,
 	staged_connected_ais: Vec<ConnectedAi>,
@@ -261,7 +315,8 @@ struct Lobby
 	ruleset_name: String,
 	ruleset_confirmations: HashSet<Keycode>,
 	timer_in_seconds: u32,
-	challenge_id: Option<challenge::ChallengeId>,
+	challenge_pool: Vec<challenge::Challenge>,
+	challenge: Option<(Option<challenge::ChallengeId>, String)>,
 
 	stage: Stage,
 	rating_database_for_games: mpsc::Sender<rating::Update>,
@@ -328,6 +383,8 @@ async fn initialize(
 	let (name, _) = defaultmap;
 	let map_name = name.to_string();
 
+	let challenge_pool = challenge::load_pool()?;
+
 	Ok(Lobby {
 		id: lobby_id,
 		name: name::generate(),
@@ -344,6 +401,8 @@ async fn initialize(
 		bot_colors: HashMap::new(),
 		player_visiontypes: HashMap::new(),
 		bot_visiontypes: HashMap::new(),
+		host: None,
+		is_client_hosted: false,
 		ai_pool,
 		ai_name_blockers: Vec::new(),
 		connected_ais: Vec::new(),
@@ -353,7 +412,8 @@ async fn initialize(
 		ruleset_name: ruleset::current(),
 		ruleset_confirmations: HashSet::new(),
 		timer_in_seconds: 60,
-		challenge_id: None,
+		challenge_pool,
+		challenge: None,
 		stage: Stage::Setup,
 		rating_database_for_games,
 	})
@@ -423,6 +483,7 @@ async fn handle_update(
 		Update::ForSetup(sub) => handle_sub(sub, lobby, clients).await,
 
 		Update::ForGame(_) => Ok(None),
+		Update::FromHost(_) => Ok(None),
 
 		Update::Msg(message) =>
 		{
@@ -479,10 +540,127 @@ async fn handle_sub(
 
 		Sub::ListConnectedAi(ai) =>
 		{
-			add_ai_to_list(lobby, clients, ai).await;
+			add_connected_ai_to_list(lobby, clients, ai).await;
 			Ok(None)
 		}
 
+		Sub::HostListMap {
+			client_id,
+			map_name,
+			metadata,
+		} =>
+		{
+			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
+				&& (lobby.lobby_type == LobbyType::Custom
+					|| lobby.lobby_type == LobbyType::Challenge)
+			{
+				become_client_hosted_lobby(lobby);
+				list_client_hosted_map(lobby, clients, map_name, metadata)
+					.await;
+			}
+			Ok(None)
+		}
+		Sub::HostListRuleset {
+			client_id,
+			ruleset_name,
+		} =>
+		{
+			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
+				&& (lobby.lobby_type == LobbyType::Custom
+					|| lobby.lobby_type == LobbyType::Challenge)
+			{
+				become_client_hosted_lobby(lobby);
+				list_client_hosted_ruleset(lobby, clients, ruleset_name).await;
+			}
+			Ok(None)
+		}
+		Sub::HostListAi { client_id, ai_name } =>
+		{
+			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
+				&& (lobby.lobby_type == LobbyType::Custom
+					|| lobby.lobby_type == LobbyType::Challenge)
+			{
+				become_client_hosted_lobby(lobby);
+				list_client_hosted_ai(lobby, clients, ai_name).await;
+			}
+			Ok(None)
+		}
+		Sub::HostRulesetData {
+			client_id,
+			ruleset_name,
+			data,
+		} =>
+		{
+			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
+				&& lobby.is_client_hosted
+			{
+				let message = Message::RulesetData { ruleset_name, data };
+				for client in clients.iter_mut()
+				{
+					client.handle.send(message.clone());
+				}
+			}
+			Ok(None)
+		}
+		Sub::HostRulesetUnknown {
+			client_id,
+			ruleset_name,
+		} =>
+		{
+			if lobby.host.as_ref().filter(|x| x.id == client_id).is_some()
+				&& lobby.is_client_hosted
+			{
+				let message = Message::RulesetUnknown { ruleset_name };
+				for client in clients.iter_mut()
+				{
+					client.handle.send(message.clone());
+				}
+			}
+			Ok(None)
+		}
+
+		Sub::RulesetRequest {
+			client_id,
+			ruleset_name,
+		} =>
+		{
+			if let Some(host_client) = lobby
+				.host
+				.as_ref()
+				.map(|host| host.id)
+				.filter(|_| lobby.is_client_hosted)
+				.map(|host_id| clients.iter_mut().find(|x| x.id == host_id))
+				.flatten()
+			{
+				let message = Message::RulesetRequest { ruleset_name };
+				host_client.handle.send(message);
+			}
+			else if let Some(requesting_client) =
+				clients.iter_mut().find(|x| x.id == client_id)
+			{
+				let message = if ruleset::exists(&ruleset_name)
+				{
+					let data = ruleset::load_data(&ruleset_name).await?;
+					Message::RulesetData { ruleset_name, data }
+				}
+				else
+				{
+					Message::RulesetUnknown { ruleset_name }
+				};
+				requesting_client.handle.send(message);
+			}
+			Ok(None)
+		}
+
+		Sub::ClaimHost {
+			mut general_chat,
+			username,
+		} =>
+		{
+			handle_claim_host(lobby, clients, username)?;
+			describe_lobby(lobby, &mut general_chat).await?;
+			Ok(None)
+		}
 		Sub::ClaimRole {
 			mut general_chat,
 			username,
@@ -555,6 +733,15 @@ async fn handle_sub(
 		} =>
 		{
 			pick_map(lobby, clients, map_name).await?;
+			describe_lobby(lobby, &mut general_chat).await?;
+			Ok(None)
+		}
+		Sub::PickChallenge {
+			mut general_chat,
+			challenge_key,
+		} =>
+		{
+			pick_challenge(lobby, clients, challenge_key).await?;
 			describe_lobby(lobby, &mut general_chat).await?;
 			Ok(None)
 		}
@@ -672,7 +859,7 @@ fn make_description_metadata(lobby: &Lobby) -> LobbyMetadata
 
 	match lobby.lobby_type
 	{
-		LobbyType::Generic | LobbyType::Custom =>
+		LobbyType::Generic | LobbyType::Custom | LobbyType::Challenge =>
 		{
 			debug_assert!(lobby.max_players > 0);
 		}
@@ -680,7 +867,7 @@ fn make_description_metadata(lobby: &Lobby) -> LobbyMetadata
 		{
 			debug_assert!(lobby.max_players == 2);
 		}
-		LobbyType::Challenge | LobbyType::Tutorial =>
+		LobbyType::Tutorial =>
 		{
 			debug_assert!(lobby.max_players == 2);
 			debug_assert!(num_bot_players == 1);
@@ -867,6 +1054,14 @@ fn do_join(
 		}
 	}
 
+	if let Some(host) = &lobby.host
+	{
+		// Tell the newcomer who is host.
+		newcomer.handle.send(Message::ClaimHost {
+			username: Some(host.username.clone()),
+		});
+	}
+
 	if lobby.lobby_type != LobbyType::Replay
 	{
 		// Tell the newcomer the AI pool.
@@ -927,7 +1122,9 @@ fn do_join(
 
 		newcomer.handle.send(Message::ListRuleset {
 			ruleset_name: lobby.ruleset_name.clone(),
-			metadata: Some(ListRulesetMetadata { lobby_id: lobby.id }),
+			metadata: Some(ListRulesetMetadata::Forwarding {
+				lobby_id: lobby.id,
+			}),
 		});
 		newcomer.handle.send(Message::PickRuleset {
 			ruleset_name: lobby.ruleset_name.clone(),
@@ -980,9 +1177,22 @@ async fn handle_leave(
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
-	let removed: Vec<Client> = clients
-		.e_drain_where(|client| client.id == client_id)
-		.collect();
+	let host_left = lobby
+		.host
+		.as_ref()
+		.map(|x| x.id == client_id)
+		.unwrap_or(false);
+	let removed: Vec<Client> = if host_left
+	{
+		// When the host leaves, the lobby is disbanded.
+		clients.drain(0..).collect()
+	}
+	else
+	{
+		clients
+			.e_drain_where(|client| client.id == client_id)
+			.collect()
+	};
 
 	handle_removed(lobby, clients, removed).await?;
 
@@ -1045,25 +1255,51 @@ async fn handle_removed(
 		{
 			lobby.num_players -= 1;
 		}
+	}
 
-		// This is a stupid hack that is necessary because clients <1.0.8
-		// do not handle LIST_AI messages sent after the lobby is created.
-		for (name, metadata) in &lobby.ai_pool
+	Ok(())
+}
+
+fn handle_claim_host(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	username: String,
+) -> Result<(), Error>
+{
+	// Find any client based on the username supplied by the sender.
+	let client = match clients.into_iter().find(|x| x.username == username)
+	{
+		Some(client) => client,
+		None =>
 		{
-			handle.send(Message::ListAi {
-				ai_name: name.clone(),
-				metadata: metadata.clone(),
-			});
+			// Client not found.
+			// FUTURE let the sender know somehow?
+			return Ok(());
 		}
-		for ai in &lobby.connected_ais
-		{
-			handle.send(Message::ListAi {
-				ai_name: ai.ai_name.clone(),
-				metadata: Some(BotAuthorsMetadata {
-					authors: ai.authors.clone(),
-				}),
-			});
-		}
+	};
+
+	if let Some(host) = &lobby.host
+	{
+		// Claim failed. Remind the claimant of the actual host.
+		client.handle.send(Message::ClaimHost {
+			username: Some(host.username.clone()),
+		});
+		return Ok(());
+	}
+
+	// Claim successful.
+	lobby.host = Some(Host {
+		id: client.id,
+		username: username.clone(),
+	});
+
+	// Announce the new host.
+	let message = Message::ClaimHost {
+		username: Some(username),
+	};
+	for client in clients.iter_mut()
+	{
+		client.handle.send(message.clone());
 	}
 
 	Ok(())
@@ -1463,7 +1699,11 @@ fn change_ai(
 
 	let connected = lobby.connected_ais.iter().find(|x| x.ai_name == ai_name);
 
-	if connected.is_none() && !ai::exists(&ai_name)
+	if lobby.is_client_hosted
+	{
+		// Checking if it exists is the responsibility of the host.
+	}
+	else if connected.is_none() && !ai::exists(&ai_name)
 	{
 		warn!("Cannot set AI to non-existing '{}'.", ai_name);
 		for client in clients.into_iter()
@@ -1493,8 +1733,10 @@ fn change_ai(
 
 	if lobby.ai_pool.iter().find(|&(x, _)| x == &ai_name).is_none()
 	{
-		let metadata = connected.map(|ai| BotAuthorsMetadata {
-			authors: ai.authors.clone(),
+		let metadata = connected.map(|ai| {
+			ListAiMetadata::Authors(BotAuthorsMetadata {
+				authors: ai.authors.clone(),
+			})
 		});
 
 		lobby.ai_pool.push((ai_name.clone(), metadata.clone()));
@@ -1705,6 +1947,12 @@ async fn pick_map(
 		warn!("Cannot pick unlisted map in onevsone lobby {}.", lobby.id);
 		None
 	}
+	else if lobby.is_client_hosted
+	{
+		// Checking if it exists is the responsibility of the host.
+		// But the host should have sent a ListMap beforehand.
+		None
+	}
 	// FUTURE check if map in hidden pool or client is developer
 	else if map::exists(&map_name)
 	{
@@ -1868,6 +2116,10 @@ async fn pick_map(
 	if let Some(ruleset_name) = custom_ruleset
 	{
 		pick_ruleset(lobby, clients, ruleset_name).await?;
+	}
+	else if lobby.ruleset_name != ruleset::current()
+	{
+		pick_ruleset(lobby, clients, ruleset::current()).await?;
 	}
 
 	Ok(())
@@ -2113,6 +2365,23 @@ async fn become_challenge_lobby(
 	clients: &mut Vec<Client>,
 ) -> Result<(), Error>
 {
+	if let Some(challenge_key) =
+		lobby.challenge_pool.first().map(|x| x.key.clone())
+	{
+		pick_challenge(lobby, clients, challenge_key).await
+	}
+	else
+	{
+		Err(Error::EmptyChallengePool)
+	}
+}
+
+async fn pick_challenge(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	challenge_key: String,
+) -> Result<(), Error>
+{
 	// FUTURE check if client is host
 
 	// Is this a game lobby?
@@ -2134,7 +2403,7 @@ async fn become_challenge_lobby(
 	}
 	else if lobby.lobby_type == LobbyType::Challenge
 	{
-		return Ok(());
+		// Continue below.
 	}
 	else
 	{
@@ -2142,10 +2411,20 @@ async fn become_challenge_lobby(
 		return Ok(());
 	}
 
-	let id = challenge::current_id();
-	let challenge_key = challenge::get_current_key();
+	if lobby.is_client_hosted
+	{
+		let sanitized_key = sanitize_challenge_key(&challenge_key);
+		lobby.challenge = Some((None, sanitized_key));
+		return Ok(());
+	}
 
-	lobby.challenge_id = Some(id);
+	let id = lobby
+		.challenge_pool
+		.iter()
+		.find(|x| x.key == challenge_key)
+		.map(|x| x.id)
+		.ok_or_else(|| Error::EmptyChallengePool)?;
+	lobby.challenge = Some((Some(id), challenge_key.clone()));
 
 	for client in clients.iter_mut()
 	{
@@ -2193,14 +2472,34 @@ async fn become_custom_lobby(
 	{
 		lobby.lobby_type = LobbyType::Custom;
 	}
+	else if lobby.lobby_type == LobbyType::Challenge && lobby.host.is_some()
+	{
+		become_client_hosted_lobby(lobby);
+	}
 	else if lobby.lobby_type == LobbyType::Custom
 	{
-		debug!("Cannot turn custom lobby {} into custom.", lobby.id);
 		return Ok(());
 	}
 	else
 	{
 		warn!("Cannot turn non-generic lobby {} into custom.", lobby.id);
+		return Ok(());
+	}
+
+	if let Some(host) = &lobby.host
+	{
+		// Remind the host that they are the host, because this simplifies
+		// the client-side code.
+		let message = Message::ClaimHost {
+			username: Some(host.username.clone()),
+		};
+		for client in clients.iter_mut()
+		{
+			client.handle.send(message.clone());
+		}
+
+		// No need to load the custom pool because the lobby host will have
+		// their own pool.
 		return Ok(());
 	}
 
@@ -2297,6 +2596,11 @@ async fn pick_ruleset(
 	{
 		lobby.ruleset_name = ruleset::current();
 	}
+	else if lobby.is_client_hosted
+	{
+		// Checking if it exists is the responsibility of the host.
+		lobby.ruleset_name = ruleset_name;
+	}
 	else if ruleset::exists(&ruleset_name)
 	{
 		lobby.ruleset_name = ruleset_name;
@@ -2327,7 +2631,7 @@ async fn pick_ruleset(
 	// reconfirm the ruleset every time it is picked, just once it is listed.
 	let listmessage = Message::ListRuleset {
 		ruleset_name: lobby.ruleset_name.clone(),
-		metadata: Some(ListRulesetMetadata { lobby_id: lobby.id }),
+		metadata: Some(ListRulesetMetadata::Forwarding { lobby_id: lobby.id }),
 	};
 	let pickmessage = Message::PickRuleset {
 		ruleset_name: lobby.ruleset_name.clone(),
@@ -2339,6 +2643,21 @@ async fn pick_ruleset(
 	}
 
 	Ok(())
+}
+
+fn become_client_hosted_lobby(lobby: &mut Lobby)
+{
+	if lobby.is_client_hosted
+	{
+		return;
+	}
+
+	lobby.is_client_hosted = true;
+
+	lobby.ai_pool.clear();
+	lobby.map_pool.clear();
+	lobby.connected_ais.clear();
+	lobby.staged_connected_ais.clear();
 }
 
 fn block_ai(lobby: &mut Lobby, clients: &mut Vec<Client>, blocker: String)
@@ -2370,13 +2689,17 @@ fn block_ai(lobby: &mut Lobby, clients: &mut Vec<Client>, blocker: String)
 	}
 }
 
-async fn add_ai_to_list(
+async fn add_connected_ai_to_list(
 	lobby: &mut Lobby,
 	clients: &mut Vec<Client>,
 	ai: ConnectedAi,
 )
 {
 	if lobby.ai_name_blockers.contains(&ai.ai_name)
+	{
+		return;
+	}
+	else if lobby.is_client_hosted
 	{
 		return;
 	}
@@ -2392,13 +2715,93 @@ async fn add_ai_to_list(
 	{
 		client.handle.send(Message::ListAi {
 			ai_name: ai.ai_name.clone(),
-			metadata: Some(BotAuthorsMetadata {
+			metadata: Some(ListAiMetadata::Authors(BotAuthorsMetadata {
 				authors: ai.authors.clone(),
-			}),
+			})),
 		});
 	}
 
 	lobby.connected_ais.push(ai);
+}
+
+async fn list_client_hosted_map(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	map_name: String,
+	metadata: map::Metadata,
+)
+{
+	if !lobby.is_client_hosted
+	{
+		return;
+	}
+	else if lobby
+		.map_pool
+		.iter()
+		.any(|(name, _metadata)| name == &map_name)
+	{
+		return;
+	}
+
+	for client in clients.iter_mut()
+	{
+		client.handle.send(Message::ListMap {
+			map_name: map_name.clone(),
+			metadata: metadata.clone(),
+		});
+	}
+
+	lobby.map_pool.push((map_name.clone(), metadata));
+}
+
+async fn list_client_hosted_ruleset(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	ruleset_name: String,
+)
+{
+	if !lobby.is_client_hosted
+	{
+		return;
+	}
+
+	for client in clients.iter_mut()
+	{
+		client.handle.send(Message::ListRuleset {
+			ruleset_name: ruleset_name.clone(),
+			metadata: None,
+		});
+	}
+
+	// See: "in the future we might want to
+	// have an actual ruleset dropdown".
+}
+
+async fn list_client_hosted_ai(
+	lobby: &mut Lobby,
+	clients: &mut Vec<Client>,
+	ai_name: String,
+)
+{
+	if !lobby.is_client_hosted
+	{
+		return;
+	}
+	else if lobby
+		.ai_pool
+		.iter()
+		.any(|(name, _metadata)| name == &ai_name)
+	{
+		return;
+	}
+
+	for client in clients.into_iter()
+	{
+		client.handle.send(Message::ListAi {
+			ai_name: ai_name.clone(),
+			metadata: None,
+		});
+	}
 }
 
 async fn handle_ruleset_confirmation(
@@ -2465,6 +2868,18 @@ async fn try_start(
 	lobby_sendbuffer: mpsc::Sender<Update>,
 ) -> Result<Option<game::Setup>, Error>
 {
+	// FUTURE check if host
+
+	if let Some(host) = &lobby.host
+	{
+		// Make sure the host is present when the game starts.
+		if !clients.iter().any(|x| x.id == host.id)
+		{
+			debug!("Cannot start lobby {}: host missing.", lobby.id);
+			return Ok(None);
+		}
+	}
+
 	// Add connected bots if necessary.
 	let to_be_added: Vec<ConnectedAi> = lobby
 		.connected_ais
@@ -2538,7 +2953,9 @@ async fn try_start(
 			{
 				let message = Message::ListRuleset {
 					ruleset_name: lobby.ruleset_name.clone(),
-					metadata: Some(ListRulesetMetadata { lobby_id: lobby.id }),
+					metadata: Some(ListRulesetMetadata::Forwarding {
+						lobby_id: lobby.id,
+					}),
 				};
 				ai.handle.send(message);
 			}
@@ -2560,6 +2977,32 @@ async fn start(
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<game::Setup, Error>
 {
+	// If this is a client-hosted game, prepare the host client.
+	let mut host_client = if let Some(host) =
+		&lobby.host.as_ref().filter(|_x| lobby.is_client_hosted)
+	{
+		if let Some(client) = clients.iter().find(|x| x.id == host.id)
+		{
+			Some(game::HostClient {
+				id: client.id,
+				user_id: client.user_id,
+				username: client.username.clone(),
+				handle: client.handle.clone(),
+
+				is_gameover: false,
+				awarded_stars: 0,
+			})
+		}
+		else
+		{
+			return Err(Error::StartGameHostMissing);
+		}
+	}
+	else
+	{
+		None
+	};
+
 	// Create a stack of available colors, with Red on top, then Blue, etcetera.
 	let mut colorstack = lobby.available_colors.clone();
 	colorstack.sort();
@@ -2596,6 +3039,19 @@ async fn start(
 						}
 					},
 				};
+
+				// If there is a host, tell them who is playing as which color.
+				// We also send this information to players, but then using descriptive
+				// names instead of botslots, so we need to send it here as well.
+				if let Some(host) = &mut host_client
+				{
+					host.handle.send(Message::ClaimColor {
+						color,
+						username_or_slot: UsernameOrSlot::Username(
+							client.username.clone(),
+						),
+					});
+				}
 
 				let vision = match lobby.player_visiontypes.get(&client.id)
 				{
@@ -2640,6 +3096,7 @@ async fn start(
 	// Assign colors and roles to bots.
 	let mut connected_bots = Vec::new();
 	let mut local_bots = Vec::new();
+	let mut hosted_bots = Vec::new();
 	for bot in lobby.bots.iter()
 	{
 		let color = match lobby.bot_colors.get(&bot.slot)
@@ -2655,6 +3112,17 @@ async fn start(
 			},
 		};
 
+		// If there is a host, tell them who is playing as which color.
+		// We also send this information to players, but then using descriptive
+		// names instead of botslots, so we need to send it here as well.
+		if let Some(host) = &mut host_client
+		{
+			host.handle.send(Message::ClaimColor {
+				username_or_slot: UsernameOrSlot::Slot(bot.slot),
+				color,
+			});
+		}
+
 		let vision = match lobby.bot_visiontypes.get(&bot.slot)
 		{
 			Some(&vision) => vision,
@@ -2663,7 +3131,26 @@ async fn start(
 
 		let character = bot.slot.get_character();
 
-		if let Some(connected_ai) = lobby
+		if host_client.is_some()
+		{
+			let difficulty_str = match bot.difficulty
+			{
+				Difficulty::None => "Easy",
+				Difficulty::Easy => "Easy",
+				Difficulty::Medium => "Medium",
+				Difficulty::Hard => "Hard",
+			};
+			let display_name = bot.slot.get_display_name();
+			let descriptive_name = format!(
+				"{} ({} {})",
+				display_name, difficulty_str, bot.ai_name
+			);
+			hosted_bots.push(game::HostedBot {
+				descriptive_name,
+				color,
+			});
+		}
+		else if let Some(connected_ai) = lobby
 			.connected_ais
 			.iter()
 			.find(|ai| ai.ai_name == bot.ai_name)
@@ -2695,7 +3182,7 @@ async fn start(
 					Ok(metadata) => metadata,
 					Err(error) => return Err(Error::AiMetadataParsing(error)),
 				};
-			let connected_bot_metadata = ConnectedBotMetadata {
+			let forwarding_metadata = ForwardingMetadata::ConnectedBot {
 				lobby_id: lobby.id,
 				slot: bot.slot,
 			};
@@ -2705,7 +3192,7 @@ async fn start(
 				difficulty: bot.difficulty,
 				descriptive_name,
 				ai_metadata,
-				connected_bot_metadata,
+				forwarding_metadata,
 
 				id: connected_ai.client_id,
 				user_id: connected_ai.client_user_id,
@@ -2762,16 +3249,18 @@ async fn start(
 		lobby_id: lobby.id,
 		lobby_name: lobby.name.clone(),
 		lobby_description_metadata: make_description_metadata(lobby),
+		host: host_client,
 		players: player_clients,
 		connected_bots,
 		local_bots,
+		hosted_bots,
 		watchers: watcher_clients,
 		map_name,
 		map_metadata,
 		ruleset_name: lobby.ruleset_name.clone(),
 		planning_time_in_seconds: planning_timer,
 		lobby_type: lobby.lobby_type,
-		challenge: lobby.challenge_id,
+		challenge: lobby.challenge.clone(),
 		is_public: lobby.is_public,
 	};
 
@@ -2803,8 +3292,11 @@ async fn start(
 enum Error
 {
 	EmptyMapPool,
+	EmptyChallengePool,
 	ClientMissing,
+	StartGameHostMissing,
 	StartGameNotEnoughColors,
+	Interface(challenge::InterfaceError),
 	Io
 	{
 		error: io::Error,
@@ -2826,6 +3318,14 @@ enum Error
 		error: ai::InterfaceError,
 	},
 	AiMetadataParsing(serde_json::error::Error),
+}
+
+impl From<challenge::InterfaceError> for Error
+{
+	fn from(error: challenge::InterfaceError) -> Self
+	{
+		Error::Interface(error)
+	}
 }
 
 impl From<io::Error> for Error
@@ -2867,8 +3367,11 @@ impl fmt::Display for Error
 		match self
 		{
 			Error::EmptyMapPool => write!(f, "{:#?}", self),
+			Error::EmptyChallengePool => write!(f, "{:#?}", self),
 			Error::ClientMissing => write!(f, "{:#?}", self),
+			Error::StartGameHostMissing => write!(f, "{:#?}", self),
 			Error::StartGameNotEnoughColors => write!(f, "{:#?}", self),
+			Error::Interface(error) => error.fmt(f),
 			Error::Io { error } => error.fmt(f),
 			Error::GeneralChat { error } => error.fmt(f),
 			Error::NameSend { error } => error.fmt(f),
@@ -2883,3 +3386,44 @@ impl fmt::Display for Error
 }
 
 impl std::error::Error for Error {}
+
+fn sanitize_challenge_key(raw_key: &str) -> String
+{
+	if let Some(segment) = raw_key.split('@').skip(1).next()
+	{
+		if is_valid_challenge_key(segment)
+		{
+			return segment.to_string();
+		}
+	}
+
+	return "sanitized".to_string();
+}
+
+fn is_valid_challenge_key(key: &str) -> bool
+{
+	key.len() >= 3
+		&& key.len() <= 36
+		&& key.is_ascii()
+		&& key.chars().all(|x| is_valid_challenge_key_char(x))
+}
+
+fn is_valid_challenge_key_char(x: char) -> bool
+{
+	match x
+	{
+		// not space
+		// not !"#$%'()*+,
+		'-' | '.' => true,
+		'/' => true,
+		'0'..='9' => true,
+		// not :;<=>?@
+		'a'..='z' => true,
+		// not [\]^
+		'_' => true,
+		// not `
+		'A'..='Z' => true,
+		// not {|}~
+		_ => false,
+	}
+}
