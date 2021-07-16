@@ -594,5 +594,7 @@ pub struct HostSyncMetadata
 	pub defeated_players: Vec<PlayerColor>,
 
 	pub game_over: bool,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
 	pub stars: i32,
 }

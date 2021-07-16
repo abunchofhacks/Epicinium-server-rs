@@ -1980,6 +1980,22 @@ async fn handle_message(
 			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
+		Message::Briefing { briefing } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update =
+					lobby::Update::FromHost(game::FromHost::Briefing {
+						client_id: client.id,
+						briefing,
+					});
+				lobby.send(update).await?
+			}
+			None =>
+			{
+				debug!("Ignoring Briefing from unlobbied client");
+			}
+		},
 		Message::Chat { .. } if client.username.is_empty() =>
 		{
 			info!("Ignoring Chat from client without username: {:?}", message);
@@ -2061,7 +2077,6 @@ async fn handle_message(
 		| Message::Game { .. }
 		| Message::Tutorial { .. }
 		| Message::Challenge { .. }
-		| Message::Briefing { .. }
 		| Message::ReplayWithAnimations { .. }
 		| Message::HostRejoinRequest { .. }
 		| Message::RatingAndStars { .. }

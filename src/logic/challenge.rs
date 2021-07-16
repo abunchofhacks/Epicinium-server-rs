@@ -22,7 +22,6 @@ pub struct Metadata
 	display_name: String,
 	panel_picture_name: String,
 	discord_image_key: String,
-	steam_short_key: String,
 	max_stars: i32,
 }
 
@@ -36,7 +35,6 @@ pub fn load_pool() -> Result<Vec<Challenge>, InterfaceError>
 		let panel_picture_name =
 			epicinium_lib::challenge_panel_picture_name(id);
 		let discord_image_key = epicinium_lib::challenge_discord_image_key(id);
-		let steam_short_key = epicinium_lib::challenge_steam_short_key(id);
 
 		let briefing = load_briefing(id)?;
 		let max_stars = if briefing.0.get("3").is_some()
@@ -59,7 +57,6 @@ pub fn load_pool() -> Result<Vec<Challenge>, InterfaceError>
 				display_name,
 				panel_picture_name,
 				discord_image_key,
-				steam_short_key,
 				max_stars,
 			},
 		};

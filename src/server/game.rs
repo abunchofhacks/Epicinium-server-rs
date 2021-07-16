@@ -613,35 +613,31 @@ pub async fn run_client_hosted_game(
 		challenge,
 		is_public,
 	} = setup;
-	let is_fake = challenge.is_some();
 	let mut host = host.ok_or(Error::InvalidSetup)?;
 
-	if !is_fake
+	// Tell everyone that the game is starting.
+	for client in &mut players
 	{
-		// Tell everyone that the game is starting.
-		for client in &mut players
-		{
-			client.handle.send(Message::Game {
-				role: Some(Role::Player),
-				player: Some(client.color),
-				ruleset_name: Some(ruleset_name.clone()),
-				timer_in_seconds: planning_time_in_seconds,
-				difficulty: None,
-				forwarding: None,
-			});
-		}
+		client.handle.send(Message::Game {
+			role: Some(Role::Player),
+			player: Some(client.color),
+			ruleset_name: Some(ruleset_name.clone()),
+			timer_in_seconds: planning_time_in_seconds,
+			difficulty: None,
+			forwarding: None,
+		});
+	}
 
-		for client in &mut watchers
-		{
-			client.handle.send(Message::Game {
-				role: Some(Role::Observer),
-				player: None,
-				ruleset_name: Some(ruleset_name.clone()),
-				timer_in_seconds: planning_time_in_seconds,
-				difficulty: None,
-				forwarding: None,
-			});
-		}
+	for client in &mut watchers
+	{
+		client.handle.send(Message::Game {
+			role: Some(Role::Observer),
+			player: None,
+			ruleset_name: Some(ruleset_name.clone()),
+			timer_in_seconds: planning_time_in_seconds,
+			difficulty: None,
+			forwarding: None,
+		});
 	}
 
 	// Tell everyone who is playing as which color.
@@ -666,22 +662,19 @@ pub async fn run_client_hosted_game(
 		metadata: map_metadata.clone(),
 	});
 
-	if !is_fake
+	// Send the initial messages.
+	for client in &mut players
 	{
-		// Send the initial messages.
-		for client in &mut players
+		for message in &initial_messages
 		{
-			for message in &initial_messages
-			{
-				client.handle.send(message.clone());
-			}
+			client.handle.send(message.clone());
 		}
-		for client in &mut watchers
+	}
+	for client in &mut watchers
+	{
+		for message in &initial_messages
 		{
-			for message in &initial_messages
-			{
-				client.handle.send(message.clone());
-			}
+			client.handle.send(message.clone());
 		}
 	}
 
@@ -800,6 +793,11 @@ pub enum FromHost
 		changes: Vec<Change>,
 		rejoining_username: String,
 		rejoining_player: PlayerColor,
+	},
+	Briefing
+	{
+		client_id: Keycode,
+		briefing: challenge::MissionBriefing,
 	},
 }
 
@@ -969,22 +967,6 @@ async fn iterate_client_hosted_game(
 	planning_time_in_seconds: Option<u32>,
 ) -> Result<State, Error>
 {
-	if lobby.challenge.is_some()
-	{
-		// This is a fake lobby while the host is playing their own challenge.
-		sync_host(lobby, host, players, watchers, updates).await?;
-		if host.is_gameover
-		{
-			return Ok(State::Finished);
-		}
-		else if !host.is_connected()
-		{
-			debug!("Abandoning game in lobby {} without host...", lobby.id);
-			return Ok(State::AbandonedByHost);
-		}
-		return Ok(State::InProgress);
-	}
-
 	// Wait for host to finish action phase.
 	sync_host(lobby, host, players, watchers, updates).await?;
 	if !host.is_connected()
@@ -1442,6 +1424,7 @@ async fn sleep(
 		None => Duration::from_secs(24 * 60 * 60),
 	};
 	let end = start + duration;
+	trace!("Planning phase ({}s) started.", duration.as_secs());
 
 	// Wait for 1 second at the start of the planning phase, to prevent
 	// blasting through the game in the time between the last human client
@@ -1648,6 +1631,7 @@ async fn stage(
 {
 	let start = Instant::now();
 	let end = start + Duration::from_secs(10);
+	trace!("Staging phase started.");
 
 	// There is a 10 second grace period for anyone whose orders we
 	// haven't received; they might have sent their orders before
@@ -1838,6 +1822,30 @@ async fn sync_host(
 								client.is_defeated = true;
 							}
 						}
+					}
+				}
+				else
+				{
+					debug!("Ignoring sync from non-host client {}", client_id);
+				}
+			}
+			Update::FromHost(FromHost::Briefing {
+				client_id,
+				briefing,
+			}) =>
+			{
+				if client_id == host.id
+				{
+					let message = Message::Briefing {
+						briefing: briefing.clone(),
+					};
+					for client in players.iter_mut()
+					{
+						client.handle.send(message.clone());
+					}
+					for client in watchers.iter_mut()
+					{
+						client.handle.send(message.clone());
 					}
 				}
 				else
