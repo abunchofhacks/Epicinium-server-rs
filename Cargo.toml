@@ -1,8 +1,15 @@
 [package]
-name = "epicinium"
+name = "epicinium_server"
 version = "1.0.12"
 authors = ["Sander in 't Veld <sanderintveld@hotmail.com>"]
 edition = "2018"
+license = "AGPL-3.0-or-later"
+readme = "README.md"
+description = "An asynchronous multiplayer server for the strategy game Epicinium."
+homepage = "https://abunchofhacks.coop"
+repository = "https://github.com/abunchofhacks/Epicinium-server-rs"
+keywords = ["game","gamedev","server"]
+categories = ["games"]
 publish = false
 default-run = "server"
 

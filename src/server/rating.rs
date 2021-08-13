@@ -109,7 +109,6 @@ impl Database
 			{
 				error!("Missing entry for user id {:?}!", user_id);
 				// We do not want this to end the rating task.
-				// FUTURE insert entry now to avoid losing data?
 				return;
 			}
 		};

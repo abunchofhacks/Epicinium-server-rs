@@ -364,7 +364,6 @@ impl Connection
 			if !is_valid_username(&username)
 			{
 				warn!("Rejecting invalid desired username '{}'.", username);
-				// TODO support UTF8 usernames
 				return Err(ResponseStatus::UsernameRequiredInvalid);
 			}
 			info!("Confirming steam user with desired username...");
@@ -387,7 +386,6 @@ impl Connection
 				if !is_valid_username(&username)
 				{
 					warn!("Rejecting persona name '{}' as username.", username);
-					// TODO support UTF8 usernames
 					// We use a "milder" response status here because it is not
 					// the user's fault that their Steam persona name is not
 					// a valid Epicinium username.
@@ -441,7 +439,6 @@ impl Connection
 		if data.is_banned_by_vac || data.is_banned_by_publisher
 		{
 			info!("Refusing user with banned Steam ID {}.", data.steam_id);
-			// TODO notify login-server to flag this account as banned?
 			return Err(ResponseStatus::AccountDisabled);
 		}
 		else if data.result != SteamResult::Ok

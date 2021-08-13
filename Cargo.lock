@@ -191,7 +191,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "epicinium"
+name = "epicinium_lib"
+version = "1.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a449c53dd9713993294c49fae8b74554d935bf63918b2cc81b573938efb57054"
+dependencies = [
+ "libc",
+ "log",
+ "serde",
+ "serde_derive",
+ "serde_json",
+]
+
+[[package]]
+name = "epicinium_server"
 version = "1.0.12"
 dependencies = [
  "anyhow",
@@ -219,19 +232,6 @@ dependencies = [
  "toml",
  "unindent",
  "vec-drain-where",
-]
-
-[[package]]
-name = "epicinium_lib"
-version = "1.0.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a449c53dd9713993294c49fae8b74554d935bf63918b2cc81b573938efb57054"
-dependencies = [
- "libc",
- "log",
- "serde",
- "serde_derive",
- "serde_json",
 ]
 
 [[package]]

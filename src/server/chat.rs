@@ -313,7 +313,6 @@ impl Ghostbuster
 			"Client {} successfully ghostbusted client {}.",
 			self.id, self.ghost_id
 		);
-		// FUTURE is this the most sensible message type for this? (#962)
 		let message = Message::LeaveServer {
 			content: Some(self.username),
 		};
@@ -407,7 +406,6 @@ fn handle_join(
 	}
 
 	// Tell the newcomer that they are online.
-	// FUTURE this is weird (#1411)
 	newcomer.handle.send(message);
 
 	do_init(
@@ -439,10 +437,6 @@ fn handle_join(
 		};
 		newcomer.handle.send(message);
 	}
-
-	// If the user was a player in a game that is still in progress,
-	// automatically have them rejoin the lobby.
-	// TODO automatically rejoin
 
 	// Show them a welcome message, if any.
 	welcome_client(&mut newcomer);

@@ -18,7 +18,7 @@ pub fn letter_from_nickel(value: u8) -> u8
 	ALPHABET[value as usize]
 }
 
-// Convert a (case insensitive) letter in the Crockform Base32 alphabet
+// Convert a (case insensitive) letter in the Crockford Base32 alphabet
 // to a 5-bit nickel, i.e. a value between 0 and 31 (inclusive).
 pub fn nickel_from_letter(x: u8) -> Result<u8, DecodeError>
 {

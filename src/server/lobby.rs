@@ -933,11 +933,6 @@ fn do_join(
 			ruleset_name: lobby.ruleset_name.clone(),
 		});
 	}
-	else
-	{
-		// TODO list all recordings if this is a replay lobby
-		// TODO other replay settings
-	}
 
 	let message = Message::JoinLobby {
 		lobby_id: Some(lobby.id),
@@ -1083,7 +1078,6 @@ fn handle_claim_role(
 		None =>
 		{
 			// Client not found.
-			// FUTURE let the sender know somehow?
 			return Ok(());
 		}
 	};
@@ -1218,7 +1212,6 @@ fn change_color(
 				None =>
 				{
 					warn!("Failed to find client named {}.", username);
-					// FUTURE let the sender know somehow?
 					return;
 				}
 			};
@@ -1230,7 +1223,6 @@ fn change_color(
 				Some(Role::Observer) | None =>
 				{
 					warn!("Cannot assign to non-player {}.", client_id);
-					// FUTURE let the sender know somehow?
 					return;
 				}
 			}
@@ -1276,7 +1268,6 @@ fn change_color(
 			if lobby.bots.iter_mut().find(|x| x.slot == slot).is_none()
 			{
 				warn!("Failed to find bot '{:?}'.", slot);
-				// FUTURE let the sender know somehow?
 				return;
 			}
 
@@ -1319,7 +1310,6 @@ fn change_color(
 		&UsernameOrSlot::Empty(_empty) =>
 		{
 			warn!("Failed to find latest bot: there are no bots.");
-			// FUTURE let the sender know somehow?
 			return;
 		}
 	};
@@ -1372,7 +1362,6 @@ fn change_visiontype(
 				None =>
 				{
 					warn!("Failed to find client named {}.", username);
-					// FUTURE let the sender know somehow?
 					return;
 				}
 			};
@@ -1384,7 +1373,6 @@ fn change_visiontype(
 				Some(Role::Observer) | None =>
 				{
 					warn!("Cannot assign to non-player {}.", client_id);
-					// FUTURE let the sender know somehow?
 					return;
 				}
 			}
@@ -1396,7 +1384,6 @@ fn change_visiontype(
 			if lobby.bots.iter_mut().find(|x| x.slot == slot).is_none()
 			{
 				warn!("Failed to find bot '{:?}'.", slot);
-				// FUTURE let the sender know somehow?
 				return;
 			}
 
@@ -1405,7 +1392,6 @@ fn change_visiontype(
 		&UsernameOrSlot::Empty(_empty) =>
 		{
 			warn!("Failed to find latest bot: there are no bots.");
-			// FUTURE let the sender know somehow?
 			return;
 		}
 	};
@@ -1432,7 +1418,6 @@ fn change_ai(
 		UsernameOrSlot::Username(username) =>
 		{
 			warn!("Failed to find bot with username '{:?}'.", username);
-			// FUTURE let the sender know somehow?
 			return;
 		}
 		UsernameOrSlot::Slot(slot) => Some(slot),
@@ -1455,7 +1440,6 @@ fn change_ai(
 			None =>
 			{
 				warn!("Failed to find bot '{:?}'.", slot);
-				// FUTURE let the sender know somehow?
 				return;
 			}
 		}
@@ -1531,7 +1515,6 @@ fn change_difficulty(
 		UsernameOrSlot::Username(username) =>
 		{
 			warn!("Failed to find bot with username '{:?}'.", username);
-			// FUTURE let the sender know somehow?
 			return;
 		}
 		UsernameOrSlot::Slot(slot) => Some(slot),
@@ -1554,7 +1537,6 @@ fn change_difficulty(
 			None =>
 			{
 				warn!("Failed to find bot '{:?}'.", slot);
-				// FUTURE let the sender know somehow?
 				return;
 			}
 		}
@@ -1589,14 +1571,12 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 	if lobby.lobby_type == LobbyType::OneVsOne
 	{
 		warn!("Cannot add bot in onevsone lobby {}.", lobby.id);
-		// FUTURE let the sender know somehow?
 		return;
 	}
 
 	if lobby.num_players >= lobby.max_players
 	{
 		warn!("Cannot add bot to lobby {}: lobby full", lobby.id);
-		// FUTURE let the sender know somehow?
 		return;
 	}
 
@@ -1604,7 +1584,6 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 		if lobby.open_botslots.is_empty()
 		{
 			warn!("Cannot add bot to lobby {}: all slots taken", lobby.id);
-			// FUTURE let the sender know somehow?
 			return;
 		}
 		let mut rng = rand::thread_rng();
@@ -1671,8 +1650,6 @@ async fn pick_map(
 	map_name: String,
 ) -> Result<(), Error>
 {
-	// FUTURE check if client is host
-
 	// Is this a game lobby?
 	if lobby.lobby_type == LobbyType::Replay
 	{
@@ -1705,7 +1682,6 @@ async fn pick_map(
 		warn!("Cannot pick unlisted map in onevsone lobby {}.", lobby.id);
 		None
 	}
-	// FUTURE check if map in hidden pool or client is developer
 	else if map::exists(&map_name)
 	{
 		let metadata = map::load_metadata(&map_name).await?;
@@ -1951,7 +1927,6 @@ async fn become_desired_lobby(
 		{
 			become_challenge_lobby(lobby, clients).await?;
 		}
-		// TODO LobbyType::Replay
 		_ =>
 		{
 			warn!("Cannot turn lobby {} into desired lobby.", lobby.id);
@@ -2043,8 +2018,6 @@ async fn become_tutorial_lobby(
 	clients: &mut Vec<Client>,
 ) -> Result<(), Error>
 {
-	// FUTURE check if client is host
-
 	// Is this a game lobby?
 	if lobby.lobby_type == LobbyType::Generic
 	{
@@ -2113,8 +2086,6 @@ async fn become_challenge_lobby(
 	clients: &mut Vec<Client>,
 ) -> Result<(), Error>
 {
-	// FUTURE check if client is host
-
 	// Is this a game lobby?
 	if lobby.lobby_type == LobbyType::Generic
 	{
@@ -2186,8 +2157,6 @@ async fn become_custom_lobby(
 	clients: &mut Vec<Client>,
 ) -> Result<(), Error>
 {
-	// FUTURE check if client is host
-
 	// Is this a game lobby?
 	if lobby.lobby_type == LobbyType::Generic
 	{
@@ -2228,13 +2197,10 @@ async fn pick_timer(
 	mut timer_in_seconds: u32,
 ) -> Result<(), Error>
 {
-	// FUTURE check if client is host
-
 	// Is this a game lobby?
 	if lobby.lobby_type == LobbyType::Replay
 	{
 		warn!("Cannot pick map for replay lobby {}.", lobby.id);
-		// FUTURE let the sender know somehow?
 		return Ok(());
 	}
 	else if lobby.lobby_type == LobbyType::OneVsOne
@@ -2269,9 +2235,6 @@ async fn pick_ruleset(
 	ruleset_name: String,
 ) -> Result<(), Error>
 {
-	// FUTURE check if client is host
-	// FUTURE check if ruleset in pool or client is developer or replay
-
 	// Is this a game lobby?
 	if lobby.lobby_type == LobbyType::Replay
 	{
@@ -2744,8 +2707,6 @@ async fn start(
 			});
 		}
 	}
-
-	// TODO if (_replay && _replayname.empty()) return error;
 
 	let map_name = lobby.map_name.clone();
 	let map_metadata = {

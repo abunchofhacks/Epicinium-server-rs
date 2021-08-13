@@ -737,7 +737,6 @@ async fn handle_update(
 							);
 							// If the chat cannot handle more updates, it is
 							// probably too busy to handle more clients.
-							// FUTURE better error handling (#962)
 							let message = Message::JoinServer {
 								status: Some(ResponseStatus::UnknownError),
 								content: None,
@@ -945,11 +944,7 @@ async fn handle_message(
 			if client.version.major != curver.major
 				|| client.version.minor != curver.minor
 			{
-				// Why is this LEAVE_SERVER {} and not
-				// JOIN_SERVER {}? Maybe it has something
-				// to do with MainMenu. Well, let's leave
-				// it until we do proper error handling.
-				// FUTURE better error handling (#962)
+				// Let the client know that joining the server failed.
 				let rejection = Message::LeaveServer { content: None };
 				client.sendbuffer.try_send(rejection)?;
 			}
@@ -1895,8 +1890,6 @@ fn greet_client(client: &mut Client, version: Version) -> Result<(), Error>
 		.has_proper_version_a
 		.store(true, atomic::Ordering::Relaxed);
 
-	// TODO enable compression
-
 	Ok(())
 }
 
@@ -1914,10 +1907,7 @@ fn joining_server(
 		{
 			error!("Failed to enqueue for login, login task busy.");
 
-			// We only process one login request at a time. Does it make sense
-			// to respond to a second request if the first response is still
-			// underway?
-			// FUTURE better error handling (#962)
+			// For each client we only process one login request at a time.
 			let message = Message::JoinServer {
 				status: Some(ResponseStatus::ConnectionFailed),
 				content: None,

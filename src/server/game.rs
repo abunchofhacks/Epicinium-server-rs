@@ -672,8 +672,6 @@ async fn iterate(
 	broadcast(players, connected_bots, local_bots, watchers, cset)?;
 
 	// Allow the bots to calculate their next move.
-	// FUTURE bots could prepare orders asynchronously
-	// FUTURE start planning phase timer before bots prepare orders
 	for bot in local_bots.into_iter()
 	{
 		bot.ai.prepare_orders();
@@ -1492,7 +1490,6 @@ fn do_join(
 
 	if disconnected_role.is_none() && !lobby.is_public && !is_invited
 	{
-		// TODO send joinlobby{}?
 		return Ok(RejoinResult::AccessDenied);
 	}
 
@@ -1539,10 +1536,8 @@ fn do_join(
 	client_handle.send(Message::PickMap {
 		map_name: lobby.map_name.clone(),
 	});
-	// TODO tell them the recording if this is a replay lobby
 	if let Some(_id) = lobby.challenge
 	{
-		// FUTURE this should be the challenge key of _id
 		let challenge_key = challenge::get_current_key();
 		client_handle.send(Message::PickChallenge { challenge_key });
 	}
