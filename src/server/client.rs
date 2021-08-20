@@ -247,7 +247,7 @@ pub fn accept(
 		general_chat: None,
 		rating_database,
 		data_for_rating: None,
-		lobby_authority: lobby_authority,
+		lobby_authority,
 		canary_for_lobbies,
 		lobby: None,
 		bot_lobbies: std::collections::HashMap::new(),
@@ -256,7 +256,7 @@ pub fn accept(
 		appears_active_according_to_notifications: false,
 		has_gracefully_disconnected: false,
 
-		id: id,
+		id,
 		user_id: None,
 		username: String::new(),
 		version: Version::undefined(),
@@ -1092,7 +1092,7 @@ async fn handle_message(
 
 				let update = lobby::Update::Leave {
 					client_id: client.id,
-					general_chat: general_chat,
+					general_chat,
 				};
 				lobby.send(update).await?;
 			}
@@ -1698,7 +1698,7 @@ async fn handle_message(
 			{
 				let update = lobby::Update::ForGame(game::Sub::BotOrders {
 					client_id: client.id,
-					slot: slot,
+					slot,
 					orders,
 				});
 				lobby.send(update).await?;
@@ -1767,7 +1767,7 @@ async fn handle_message(
 				);
 
 				let update = chat::Update::Msg(Message::Chat {
-					content: content,
+					content,
 					sender: Some(client.username.clone()),
 					target: ChatTarget::General,
 				});
@@ -1794,7 +1794,7 @@ async fn handle_message(
 				);
 
 				let update = lobby::Update::Msg(Message::Chat {
-					content: content,
+					content,
 					sender: Some(client.username.clone()),
 					target: ChatTarget::Lobby,
 				});

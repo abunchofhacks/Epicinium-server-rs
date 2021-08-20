@@ -220,9 +220,9 @@ fn adjust(
 		gain_percentage = std::cmp::max(gain_percentage, minimum);
 	}
 
-	// Should the rating increase...
 	let ratingtenths = if scoretenths > ratingtenths
 	{
+		// The rating should increase.
 		// Get the absolute difference.
 		let difference = scoretenths - ratingtenths;
 		// Rating gain is a percentage of the difference,
@@ -232,16 +232,16 @@ fn adjust(
 		// Increase the rating by the gain.
 		std::cmp::max(0, std::cmp::min(ratingtenths + gaintenths, 1000))
 	}
-	// ... or increase by a minimal amount because they were victorious ...
 	else if is_victorious
 	{
+		// The rating should increase by a minimal amount.
 		let gaintenths = 1;
 		// Increase the rating by the gain.
 		std::cmp::max(0, std::cmp::min(ratingtenths + gaintenths, 1000))
 	}
-	// ... or decrease...
 	else if scoretenths < ratingtenths
 	{
+		// The rating should decrease.
 		// Get the absolute difference.
 		let difference = ratingtenths - scoretenths;
 		// Rating loss is a percentage of the difference,
@@ -251,9 +251,9 @@ fn adjust(
 		// Lower the rating by the loss.
 		std::cmp::max(0, std::cmp::min(ratingtenths - losstenths, 1000))
 	}
-	// ... or stay the same?
 	else
 	{
+		// The rating should stay exactly the same.
 		ratingtenths
 	};
 

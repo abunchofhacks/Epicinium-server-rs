@@ -62,8 +62,7 @@ pub fn setup(logname: &str) -> Result<Setup, std::io::Error>
 
 	file.write_all(conf.as_bytes())?;
 
-	let statusfilename =
-		format!("logs/.{}.logrotate.status", logname).to_string();
+	let statusfilename = format!("logs/.{}.logrotate.status", logname);
 
 	let setup = Setup {
 		conffilename,

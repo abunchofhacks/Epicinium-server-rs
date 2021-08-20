@@ -375,16 +375,16 @@ fn handle_join(
 	}
 
 	let join_metadata = generate_join_metadata(&unlocks);
-	let hidden = username.starts_with("#");
+	let hidden = username.starts_with('#');
 
 	let mut newcomer = Client {
-		id: id,
+		id,
 		username,
 		join_metadata,
 		handle,
 		rating_data,
 		availability_status: AvailabilityStatus::Available,
-		hidden: hidden,
+		hidden,
 	};
 
 	// Confirm to the newcomer that they have joined.
@@ -560,7 +560,7 @@ fn do_init(
 					});
 					handle.send(Message::InGame {
 						username: client.username.clone(),
-						lobby_id: lobby_id,
+						lobby_id,
 						role,
 					});
 				}
@@ -717,7 +717,7 @@ fn handle_describe_lobby(
 	lobbies: &mut Vec<Lobby>,
 )
 {
-	let lobby = match lobbies.into_iter().find(|x| x.id == lobby_id)
+	let lobby = match lobbies.iter().find(|x| x.id == lobby_id)
 	{
 		Some(lobby) => lobby,
 		None =>
@@ -727,7 +727,7 @@ fn handle_describe_lobby(
 		}
 	};
 
-	describe_lobby(&lobby, clients);
+	describe_lobby(lobby, clients);
 }
 
 fn describe_lobby(lobby: &Lobby, clients: &mut Vec<Client>)

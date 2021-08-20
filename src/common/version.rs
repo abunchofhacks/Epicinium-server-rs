@@ -133,8 +133,8 @@ impl std::fmt::Display for ParseError
 	{
 		match self
 		{
-			&ParseError::Int { ref error } => error.fmt(f),
-			&ParseError::Separator { ref source } => write!(
+			ParseError::Int { error } => error.fmt(f),
+			ParseError::Separator { source } => write!(
 				f,
 				"failed to parse '{}' as a dot-separated version",
 				source
@@ -160,7 +160,7 @@ impl std::str::FromStr for Version
 		let parts: Vec<&str> = s
 			.trim_matches(|p| p == 'v')
 			.split("-rc")
-			.flat_map(|p| p.split("."))
+			.flat_map(|p| p.split('.'))
 			.collect();
 
 		if parts.len() == 3

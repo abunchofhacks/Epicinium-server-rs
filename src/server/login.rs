@@ -123,7 +123,7 @@ impl Server
 				username = "Alice".to_string();
 				unlocks = enum_set!(Unlock::BetaAccess | Unlock::Dev);
 			}
-			Ok(x) if x >= 2 && x <= 8 =>
+			Ok(x) if (2..=8).contains(&x) =>
 			{
 				user_id = UserId(x as u64);
 				const NAMES: [&str; 7] =
@@ -144,8 +144,8 @@ impl Server
 
 		let data = LoginData {
 			user_id,
-			username: username,
-			unlocks: unlocks,
+			username,
+			unlocks,
 			rating_data: rating::Data {
 				rating: 0.0,
 				stars: 0,
@@ -739,7 +739,7 @@ fn is_valid_username(username: &str) -> bool
 	username.len() >= 3
 		&& username.len() <= 36
 		&& username.is_ascii()
-		&& username.chars().all(|x| is_valid_username_char(x))
+		&& username.chars().all(is_valid_username_char)
 }
 
 fn is_valid_username_char(x: char) -> bool

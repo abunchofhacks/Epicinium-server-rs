@@ -832,7 +832,7 @@ fn do_join(
 	};
 
 	// Tell the newcomer which users are already in the lobby.
-	for other in clients.into_iter()
+	for other in clients.iter()
 	{
 		newcomer.handle.send(Message::JoinLobby {
 			lobby_id: Some(lobby.id),
@@ -1072,7 +1072,7 @@ fn handle_claim_role(
 ) -> Result<(), Error>
 {
 	// Find any client based on the username supplied by the sender.
-	let client = match clients.into_iter().find(|x| x.username == username)
+	let client = match clients.iter().find(|x| x.username == username)
 	{
 		Some(client) => client,
 		None =>
@@ -1094,7 +1094,7 @@ fn change_role(
 ) -> Result<(), Error>
 {
 	let client = clients
-		.into_iter()
+		.iter()
 		.find(|x| x.id == client_id)
 		.ok_or(Error::ClientMissing)?;
 	let client_username = client.username.clone();
@@ -1315,7 +1315,7 @@ fn change_color(
 	};
 
 	// Broadcast whatever the result of the claim was.
-	for client in clients.into_iter()
+	for client in clients.iter_mut()
 	{
 		client.handle.send(Message::ClaimColor {
 			username_or_slot: username_or_slot.clone(),
@@ -1397,7 +1397,7 @@ fn change_visiontype(
 	};
 
 	// Broadcast the claim.
-	for client in clients.into_iter()
+	for client in clients.iter_mut()
 	{
 		client.handle.send(Message::ClaimVisionType {
 			username_or_slot: username_or_slot.clone(),
@@ -1450,7 +1450,7 @@ fn change_ai(
 	if connected.is_none() && !ai::exists(&ai_name)
 	{
 		warn!("Cannot set AI to non-existing '{}'.", ai_name);
-		for client in clients.into_iter()
+		for client in clients.iter_mut()
 		{
 			client.handle.send(Message::ClaimAi {
 				username_or_slot: UsernameOrSlot::Slot(bot.slot),
@@ -1465,7 +1465,7 @@ fn change_ai(
 		.any(|blocker| ai_name.to_lowercase().contains(blocker))
 	{
 		warn!("Cannot set AI to blocked '{}'.", ai_name);
-		for client in clients.into_iter()
+		for client in clients.iter_mut()
 		{
 			client.handle.send(Message::ClaimAi {
 				username_or_slot: UsernameOrSlot::Slot(bot.slot),
@@ -1483,7 +1483,7 @@ fn change_ai(
 
 		lobby.ai_pool.push((ai_name.clone(), metadata.clone()));
 
-		for client in clients.into_iter()
+		for client in clients.iter_mut()
 		{
 			client.handle.send(Message::ListAi {
 				ai_name: ai_name.clone(),
@@ -1494,7 +1494,7 @@ fn change_ai(
 
 	bot.ai_name = ai_name;
 
-	for client in clients.into_iter()
+	for client in clients.iter_mut()
 	{
 		client.handle.send(Message::ClaimAi {
 			username_or_slot: UsernameOrSlot::Slot(bot.slot),
@@ -1518,11 +1518,7 @@ fn change_difficulty(
 			return;
 		}
 		UsernameOrSlot::Slot(slot) => Some(slot),
-		UsernameOrSlot::Empty(_empty) => match lobby.bots.last()
-		{
-			Some(bot) => Some(bot.slot),
-			None => None,
-		},
+		UsernameOrSlot::Empty(_empty) => None,
 	};
 
 	let mut bot = {
@@ -1545,7 +1541,7 @@ fn change_difficulty(
 	if difficulty == Difficulty::None && bot.ai_name != "Dummy"
 	{
 		warn!("Cannot send difficulty of AI '{}' to none.", bot.ai_name);
-		for client in clients.into_iter()
+		for client in clients.iter_mut()
 		{
 			client.handle.send(Message::ClaimDifficulty {
 				username_or_slot: UsernameOrSlot::Slot(bot.slot),
@@ -1557,7 +1553,7 @@ fn change_difficulty(
 
 	bot.difficulty = difficulty;
 
-	for client in clients.into_iter()
+	for client in clients.iter_mut()
 	{
 		client.handle.send(Message::ClaimDifficulty {
 			username_or_slot: UsernameOrSlot::Slot(bot.slot),
@@ -1602,7 +1598,7 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 		difficulty: Difficulty::Medium,
 	};
 
-	for client in clients.into_iter()
+	for client in clients.iter_mut()
 	{
 		client.handle.send(Message::AddBot {
 			slot: Some(bot.slot),
@@ -1623,7 +1619,7 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 
 fn remove_bot(lobby: &mut Lobby, clients: &mut Vec<Client>, slot: Botslot)
 {
-	if lobby.bots.iter().find(|x| x.slot == slot).is_some()
+	if lobby.bots.iter().any(|x| x.slot == slot)
 	{
 		lobby.bots.retain(|x| x.slot != slot);
 		lobby.num_players -= 1;
@@ -1637,7 +1633,7 @@ fn remove_bot(lobby: &mut Lobby, clients: &mut Vec<Client>, slot: Botslot)
 
 		lobby.bot_visiontypes.remove(&slot);
 
-		for client in clients.into_iter()
+		for client in clients.iter_mut()
 		{
 			client.handle.send(Message::RemoveBot { slot });
 		}
@@ -1702,7 +1698,7 @@ async fn pick_map(
 	{
 		// Partial search for '1v1' or 'ffa'.
 		let pat = &map_name;
-		lobby.map_pool.iter().find(|&(x, _)| x.find(pat).is_some())
+		lobby.map_pool.iter().find(|&(name, _)| name.contains(pat))
 	}
 	else
 	{
@@ -1779,7 +1775,7 @@ async fn pick_map(
 	let mut humancount = 0;
 	let mut botcount = 0;
 	let mut demotions = Vec::new();
-	for client in clients.into_iter()
+	for client in clients.iter_mut()
 	{
 		if lobby.roles.get(&client.id) == Some(&Role::Player)
 		{
@@ -2340,18 +2336,12 @@ async fn add_ai_to_list(
 )
 {
 	if lobby.ai_name_blockers.contains(&ai.ai_name)
-	{
-		return;
-	}
-	else if lobby
-		.ai_pool
-		.iter()
-		.any(|(ainame, _metadata)| ainame == &ai.ai_name)
+		|| lobby.ai_pool.iter().any(|(name, _)| name == &ai.ai_name)
 	{
 		return;
 	}
 
-	for client in clients.into_iter()
+	for client in clients.iter_mut()
 	{
 		client.handle.send(Message::ListAi {
 			ai_name: ai.ai_name.clone(),
@@ -2418,7 +2408,7 @@ fn is_ruleset_confirmed(lobby: &Lobby, clients: &Vec<Client>) -> bool
 			return false;
 		}
 	}
-	return true;
+	true
 }
 
 async fn try_start(
@@ -2439,7 +2429,7 @@ async fn try_start(
 					.iter()
 					.any(|x| x.client_id == ai.client_id)
 		})
-		.map(|ai| ai.clone())
+		.cloned()
 		.collect();
 	for mut connected_ai in to_be_added
 	{
@@ -2458,7 +2448,7 @@ async fn try_start(
 		.collect();
 	handle_removed(lobby, clients, removed).await?;
 
-	if clients.len() < 1
+	if clients.is_empty()
 	{
 		let update = chat::Update::DisbandLobby { lobby_id: lobby.id };
 		general_chat.send(update).await?;

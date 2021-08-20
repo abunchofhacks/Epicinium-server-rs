@@ -6,17 +6,17 @@ use serde_derive::{Deserialize, Serialize};
 
 pub fn trace_filename(logname: &str) -> String
 {
-	format!("logs/{}.trace.log", logname).to_string()
+	format!("logs/{}.trace.log", logname)
 }
 
 pub fn info_filename(logname: &str) -> String
 {
-	format!("logs/{}.info.log", logname).to_string()
+	format!("logs/{}.info.log", logname)
 }
 
 pub fn error_filename(logname: &str) -> String
 {
-	format!("logs/{}.error.log", logname).to_string()
+	format!("logs/{}.error.log", logname)
 }
 
 pub fn start(logname: &str, level: Level) -> Result<(), fern::InitError>

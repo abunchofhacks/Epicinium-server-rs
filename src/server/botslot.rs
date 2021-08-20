@@ -15,7 +15,7 @@ pub fn pool() -> Vec<Botslot>
 	(b'A'..=b'Z').map(|x| Botslot(x)).collect()
 }
 
-const NAME_POOL: [&'static str; 26] = [
+const NAME_POOL: [&str; 26] = [
 	"Alice", "Bob", "Carol", "Dave", "Emma", "Frank", "Gwen", "Harold", "Iris",
 	"Justin", "Kate", "Leopold", "Mary", "Nick", "Olivia", "Peter", "Quintin",
 	"Rachel", "Sasha", "Timothy", "Ursula", "Victor", "Wendy", "Xerxes",
@@ -31,14 +31,14 @@ impl Botslot
 
 	pub fn get_display_name(&self) -> &'static str
 	{
-		if self.0 >= b'A' && self.0 <= b'Z'
+		match self.0
 		{
-			NAME_POOL[(self.0 - b'A') as usize]
-		}
-		else
-		{
-			error!("Invalid botslot {}", self);
-			"Eduardo"
+			b'A'..=b'Z' => NAME_POOL[(self.0 - b'A') as usize],
+			_ =>
+			{
+				error!("Invalid botslot {}", self);
+				"Eduardo"
+			}
 		}
 	}
 }
@@ -47,8 +47,11 @@ impl std::fmt::Display for Botslot
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 	{
-		debug_assert!(self.0 >= b'A' && self.0 <= b'Z');
-		write!(f, "%{}", self.0 as char)
+		match self.0
+		{
+			b'A'..=b'Z' => write!(f, "%{}", self.0 as char),
+			_ => write!(f, "%E"),
+		}
 	}
 }
 
@@ -89,13 +92,10 @@ impl std::str::FromStr for Botslot
 			}
 		}?;
 
-		if x >= b'A' && x <= b'Z'
+		match x
 		{
-			Ok(Botslot(x))
-		}
-		else
-		{
-			Err(DecodeError::InvalidLetter { letter: x })
+			b'A'..=b'Z' => Ok(Botslot(x)),
+			_ => Err(DecodeError::InvalidLetter { letter: x }),
 		}
 	}
 }

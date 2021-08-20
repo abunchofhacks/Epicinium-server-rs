@@ -11,7 +11,7 @@ use docopt::Docopt;
 
 use serde::Deserialize;
 
-const USAGE: &'static str = "
+const USAGE: &str = "
 Usage: server [options]
 
 Options:
@@ -59,9 +59,9 @@ fn main() -> std::result::Result<(), anyhow::Error>
 
 	let settings_filename = args
 		.flag_settings
-		.clone()
-		.unwrap_or("settings-server.json".to_string());
-	let mut settings = Settings::load(&settings_filename)?;
+		.as_deref()
+		.unwrap_or("settings-server.json");
+	let mut settings = Settings::load(settings_filename)?;
 
 	settings.logname = args.flag_logname.or(settings.logname);
 	settings.loglevel = args.flag_loglevel.or(settings.loglevel);
@@ -76,15 +76,15 @@ fn main() -> std::result::Result<(), anyhow::Error>
 	settings.slackname = args.flag_slackname.or(settings.slackname);
 	settings.discordurl = args.flag_discordurl.or(settings.discordurl);
 
-	let logname = settings.logname.clone().unwrap_or("rust".to_string());
+	let logname = settings.logname.as_deref().unwrap_or("rust");
 	let loglevel = settings.loglevel.unwrap_or(epicinium::log::Level::Verbose);
-	epicinium::log::start(&logname, loglevel)?;
-	let log_setup = epicinium::logrotate::setup(&logname)?;
+	epicinium::log::start(logname, loglevel)?;
+	let log_setup = epicinium::logrotate::setup(logname)?;
 
 	let currentversion = Version::current();
 
 	println!("[ Epicinium Server ] ({} v{})", logname, currentversion);
-	println!("");
+	println!();
 
 	info!("Server started.");
 
@@ -104,7 +104,7 @@ fn main() -> std::result::Result<(), anyhow::Error>
 
 	info!("Server stopped.");
 
-	println!("");
+	println!();
 	println!("[ Done ]");
 	Ok(())
 }
