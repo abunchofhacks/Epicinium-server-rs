@@ -174,10 +174,8 @@ pub fn decode(word: &str) -> Result<Vec<u8>, DecodeError>
 	// If necessary, we can drop bits from the front of the representation.
 	// E.g. if we had encoded a single uint8_t, we are now decoding two
 	// characters, which is 10 bits, but the first two bits should be zero.
-	let discarded = (wordlength * 5) % 8;
-	// FUTURE this assertion fails if the word is e.g. 1 character, which
-	// shouldn't happen but it shouldn't crash a debug server either.
-	debug_assert!(discarded < 5);
+	// If we have a single character, we treat it as 5 bits of garbage.
+	let mut discarded = (wordlength * 5) % 8;
 
 	// We have a buffer of between 0 and 12 bits to draw from; we use the
 	// most significant bits, so bitpositions 12, ..., 15 will always be zero.
@@ -188,12 +186,24 @@ pub fn decode(word: &str) -> Result<Vec<u8>, DecodeError>
 
 	// Decode the word one character at a time.
 	let mut datapos = 0;
-	for (i, x) in word.bytes().enumerate()
+	for x in word.bytes()
 	{
 		let value: u8 = nickel_from_letter(x)?;
 		debug_assert!(value <= 31);
 
-		if i == 0 && discarded > 0
+		if discarded >= 5
+		{
+			// This entire character is unusable and should be zero.
+			if value > 0
+			{
+				return Err(DecodeError::NonZeroLeadingBits {
+					source: word.to_string(),
+				});
+			}
+			discarded -= 5;
+			continue;
+		}
+		else if discarded > 0
 		{
 			// The leading bits should be zero.
 			if value >= 1 << (5 - discarded)
@@ -205,6 +215,7 @@ pub fn decode(word: &str) -> Result<Vec<u8>, DecodeError>
 
 			// The leading zeroes are non-significant.
 			nbits -= discarded as i8;
+			discarded = 0;
 		}
 
 		// Add the fresh bits.
@@ -361,19 +372,43 @@ mod tests
 	fn test_inverse_len() -> Result<(), DecodeError>
 	{
 		let len = 256;
-		let text = "a".repeat(len);
+		let text = "0".repeat(len);
 		for n in 0..=len
 		{
-			assert!(decode(&text[0..n]).is_ok());
+			decode(&text[0..n])?;
 		}
 		Ok(())
 	}
 
 	#[test]
-	fn test_garbage() -> Result<(), DecodeError>
+	fn test_garbage()
 	{
 		assert!(decode("abc ").is_err());
 		assert!(decode("abc\0").is_err());
+	}
+
+	#[test]
+	fn test_leading_zeroes() -> Result<(), DecodeError>
+	{
+		{
+			let decoded = decode("0")?;
+			assert_eq!(decoded.len(), 0);
+		}
+		{
+			let decoded = decode("7z")?;
+			assert_eq!(decoded, [255u8]);
+		}
+		{
+			let decoded = decode("07z")?;
+			assert_eq!(decoded, [255u8]);
+		}
 		Ok(())
+	}
+
+	#[test]
+	fn test_nonzero_leading_bits()
+	{
+		assert!(decode("a").is_err());
+		assert!(decode("zz").is_err());
 	}
 }
