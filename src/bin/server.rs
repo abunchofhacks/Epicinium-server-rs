@@ -3,6 +3,7 @@
 use epicinium::Settings;
 use epicinium::Version;
 use epicinium::{run_server, setup_server};
+use epicinium_server as epicinium;
 
 use log::{error, info};
 
