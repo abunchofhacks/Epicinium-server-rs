@@ -17,28 +17,28 @@ default-run = "server"
 epicinium_lib = { version = "=1.0.12" }
 openssl = { version = "0.10", features = ["vendored"] }
 rlimit = "^0.3.0"
-serde = "*"
-serde_derive = "*"
-serde_json = "*"
-serde_repr = "*"
-serde_plain = "*"
-serde-aux = "*"
+serde = "1.0.128"
+serde_derive = "1.0.128"
+serde_json = "1.0.66"
+serde_repr = "0.1.7"
+serde_plain = "0.3.0"
+serde-aux = "2.2.0"
 enumset = { version = "1.0", features = ["serde"] }
-vec-drain-where = "*"
+vec-drain-where = "1.0.1"
 rand = "0.7.0"
 reqwest = { version = "~0.10", features = ["json"] }
 futures = "^0.3.11"
 tokio = { version = "~0.2", features = ["rt-threaded", "macros", "time", "sync", "tcp", "signal", "fs", "io-util", "process"] }
-libc = "*"
-log = "*"
+libc = "0.2.100"
+log = "0.4.14"
 fern = { version = "^0.6", features = ["reopen-03"] }
-chrono = "*"
-thread-id = "*"
-itertools = "*"
-unindent = "*"
-docopt = "*"
-anyhow = "*"
-toml = "*"
+chrono = "0.4.19"
+thread-id = "4.0.0"
+itertools = "0.10.1"
+unindent = "0.1.7"
+docopt = "1.1.1"
+anyhow = "1.0.43"
+toml = "0.5.8"
 
 [features]
 defaults = []
