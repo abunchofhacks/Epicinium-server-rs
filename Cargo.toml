@@ -14,9 +14,9 @@ publish = true
 default-run = "server"
 
 [dependencies]
-epicinium_lib = { version = "1.0.12" }
+epicinium_lib = { version = "=1.0.12" }
 openssl = { version = "0.10", features = ["vendored"] }
-rlimit = "*"
+rlimit = "^0.3.0"
 serde = "*"
 serde_derive = "*"
 serde_json = "*"
@@ -26,9 +26,9 @@ serde-aux = "*"
 enumset = { version = "1.0", features = ["serde"] }
 vec-drain-where = "*"
 rand = "0.7.0"
-reqwest = { version = "*", features = ["json"] }
-futures = "^0.3.5"
-tokio = { version = "0.2", features = ["rt-threaded", "macros", "time", "sync", "tcp", "signal", "fs", "io-util", "process"] }
+reqwest = { version = "~0.10", features = ["json"] }
+futures = "^0.3.11"
+tokio = { version = "~0.2", features = ["rt-threaded", "macros", "time", "sync", "tcp", "signal", "fs", "io-util", "process"] }
 libc = "*"
 log = "*"
 fern = { version = "^0.6", features = ["reopen-03"] }
