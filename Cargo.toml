@@ -10,7 +10,7 @@ homepage = "https://abunchofhacks.coop"
 repository = "https://github.com/abunchofhacks/Epicinium-server-rs"
 keywords = ["game","gamedev","server"]
 categories = ["games"]
-publish = false
+publish = true
 default-run = "server"
 
 [dependencies]
