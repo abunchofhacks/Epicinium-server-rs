@@ -64,7 +64,7 @@ impl Version
 			major: 1,
 			minor: 1,
 			patch: 0,
-			release: 1,
+			release: 2,
 		}
 	}
 
