@@ -1,4 +1,25 @@
-/* Server::Client */
+/*
+ * Part of epicinium_server
+ * developed by A Bunch of Hacks.
+ *
+ * Copyright (c) 2018-2021 A Bunch of Hacks
+ *
+ * This library is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * [authors:]
+ * Sander in 't Veld (sander@abunchofhacks.coop)
+ */
 
 mod limit;
 mod login;
@@ -247,7 +268,7 @@ pub fn accept(
 		general_chat: None,
 		rating_database,
 		data_for_rating: None,
-		lobby_authority: lobby_authority,
+		lobby_authority,
 		canary_for_lobbies,
 		lobby: None,
 		bot_lobbies: std::collections::HashMap::new(),
@@ -256,7 +277,7 @@ pub fn accept(
 		appears_active_according_to_notifications: false,
 		has_gracefully_disconnected: false,
 
-		id: id,
+		id,
 		user_id: None,
 		username: String::new(),
 		version: Version::undefined(),
@@ -739,7 +760,6 @@ async fn handle_update(
 							);
 							// If the chat cannot handle more updates, it is
 							// probably too busy to handle more clients.
-							// FUTURE better error handling (#962)
 							let message = Message::JoinServer {
 								status: Some(ResponseStatus::UnknownError),
 								content: None,
@@ -947,11 +967,7 @@ async fn handle_message(
 			if client.version.major != curver.major
 				|| client.version.minor != curver.minor
 			{
-				// Why is this LEAVE_SERVER {} and not
-				// JOIN_SERVER {}? Maybe it has something
-				// to do with MainMenu. Well, let's leave
-				// it until we do proper error handling.
-				// FUTURE better error handling (#962)
+				// Let the client know that joining the server failed.
 				let rejection = Message::LeaveServer { content: None };
 				client.sendbuffer.try_send(rejection)?;
 			}
@@ -1099,7 +1115,7 @@ async fn handle_message(
 
 				let update = lobby::Update::Leave {
 					client_id: client.id,
-					general_chat: general_chat,
+					general_chat,
 				};
 				lobby.send(update).await?;
 			}
@@ -1926,7 +1942,7 @@ async fn handle_message(
 			{
 				let update = lobby::Update::ForGame(game::Sub::BotOrders {
 					client_id: client.id,
-					slot: slot,
+					slot,
 					orders,
 				});
 				lobby.send(update).await?;
@@ -2016,7 +2032,7 @@ async fn handle_message(
 				);
 
 				let update = chat::Update::Msg(Message::Chat {
-					content: content,
+					content,
 					sender: Some(client.username.clone()),
 					target: ChatTarget::General,
 				});
@@ -2043,7 +2059,7 @@ async fn handle_message(
 				);
 
 				let update = lobby::Update::Msg(Message::Chat {
-					content: content,
+					content,
 					sender: Some(client.username.clone()),
 					target: ChatTarget::Lobby,
 				});
@@ -2134,8 +2150,6 @@ fn greet_client(client: &mut Client, version: Version) -> Result<(), Error>
 		.has_proper_version_a
 		.store(true, atomic::Ordering::Relaxed);
 
-	// TODO enable compression
-
 	Ok(())
 }
 
@@ -2153,10 +2167,7 @@ fn joining_server(
 		{
 			error!("Failed to enqueue for login, login task busy.");
 
-			// We only process one login request at a time. Does it make sense
-			// to respond to a second request if the first response is still
-			// underway?
-			// FUTURE better error handling (#962)
+			// For each client we only process one login request at a time.
 			let message = Message::JoinServer {
 				status: Some(ResponseStatus::ConnectionFailed),
 				content: None,

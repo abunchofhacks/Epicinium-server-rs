@@ -1,4 +1,25 @@
-/* Server::Lobby */
+/*
+ * Part of epicinium_server
+ * developed by A Bunch of Hacks.
+ *
+ * Copyright (c) 2018-2021 A Bunch of Hacks
+ *
+ * This library is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * [authors:]
+ * Sander in 't Veld (sander@abunchofhacks.coop)
+ */
 
 mod name;
 mod secrets;
@@ -1019,7 +1040,7 @@ fn do_join(
 	};
 
 	// Tell the newcomer which users are already in the lobby.
-	for other in clients.into_iter()
+	for other in clients.iter()
 	{
 		newcomer.handle.send(Message::JoinLobby {
 			lobby_id: Some(lobby.id),
@@ -1129,11 +1150,6 @@ fn do_join(
 		newcomer.handle.send(Message::PickRuleset {
 			ruleset_name: lobby.ruleset_name.clone(),
 		});
-	}
-	else
-	{
-		// TODO list all recordings if this is a replay lobby
-		// TODO other replay settings
 	}
 
 	let message = Message::JoinLobby {
@@ -1273,7 +1289,6 @@ fn handle_claim_host(
 		None =>
 		{
 			// Client not found.
-			// FUTURE let the sender know somehow?
 			return Ok(());
 		}
 	};
@@ -1313,13 +1328,12 @@ fn handle_claim_role(
 ) -> Result<(), Error>
 {
 	// Find any client based on the username supplied by the sender.
-	let client = match clients.into_iter().find(|x| x.username == username)
+	let client = match clients.iter().find(|x| x.username == username)
 	{
 		Some(client) => client,
 		None =>
 		{
 			// Client not found.
-			// FUTURE let the sender know somehow?
 			return Ok(());
 		}
 	};
@@ -1336,7 +1350,7 @@ fn change_role(
 ) -> Result<(), Error>
 {
 	let client = clients
-		.into_iter()
+		.iter()
 		.find(|x| x.id == client_id)
 		.ok_or(Error::ClientMissing)?;
 	let client_username = client.username.clone();
@@ -1454,7 +1468,6 @@ fn change_color(
 				None =>
 				{
 					warn!("Failed to find client named {}.", username);
-					// FUTURE let the sender know somehow?
 					return;
 				}
 			};
@@ -1466,7 +1479,6 @@ fn change_color(
 				Some(Role::Observer) | None =>
 				{
 					warn!("Cannot assign to non-player {}.", client_id);
-					// FUTURE let the sender know somehow?
 					return;
 				}
 			}
@@ -1512,7 +1524,6 @@ fn change_color(
 			if lobby.bots.iter_mut().find(|x| x.slot == slot).is_none()
 			{
 				warn!("Failed to find bot '{:?}'.", slot);
-				// FUTURE let the sender know somehow?
 				return;
 			}
 
@@ -1555,13 +1566,12 @@ fn change_color(
 		&UsernameOrSlot::Empty(_empty) =>
 		{
 			warn!("Failed to find latest bot: there are no bots.");
-			// FUTURE let the sender know somehow?
 			return;
 		}
 	};
 
 	// Broadcast whatever the result of the claim was.
-	for client in clients.into_iter()
+	for client in clients.iter_mut()
 	{
 		client.handle.send(Message::ClaimColor {
 			username_or_slot: username_or_slot.clone(),
@@ -1608,7 +1618,6 @@ fn change_visiontype(
 				None =>
 				{
 					warn!("Failed to find client named {}.", username);
-					// FUTURE let the sender know somehow?
 					return;
 				}
 			};
@@ -1620,7 +1629,6 @@ fn change_visiontype(
 				Some(Role::Observer) | None =>
 				{
 					warn!("Cannot assign to non-player {}.", client_id);
-					// FUTURE let the sender know somehow?
 					return;
 				}
 			}
@@ -1632,7 +1640,6 @@ fn change_visiontype(
 			if lobby.bots.iter_mut().find(|x| x.slot == slot).is_none()
 			{
 				warn!("Failed to find bot '{:?}'.", slot);
-				// FUTURE let the sender know somehow?
 				return;
 			}
 
@@ -1641,13 +1648,12 @@ fn change_visiontype(
 		&UsernameOrSlot::Empty(_empty) =>
 		{
 			warn!("Failed to find latest bot: there are no bots.");
-			// FUTURE let the sender know somehow?
 			return;
 		}
 	};
 
 	// Broadcast the claim.
-	for client in clients.into_iter()
+	for client in clients.iter_mut()
 	{
 		client.handle.send(Message::ClaimVisionType {
 			username_or_slot: username_or_slot.clone(),
@@ -1668,7 +1674,6 @@ fn change_ai(
 		UsernameOrSlot::Username(username) =>
 		{
 			warn!("Failed to find bot with username '{:?}'.", username);
-			// FUTURE let the sender know somehow?
 			return;
 		}
 		UsernameOrSlot::Slot(slot) => Some(slot),
@@ -1691,7 +1696,6 @@ fn change_ai(
 			None =>
 			{
 				warn!("Failed to find bot '{:?}'.", slot);
-				// FUTURE let the sender know somehow?
 				return;
 			}
 		}
@@ -1706,7 +1710,7 @@ fn change_ai(
 	else if connected.is_none() && !ai::exists(&ai_name)
 	{
 		warn!("Cannot set AI to non-existing '{}'.", ai_name);
-		for client in clients.into_iter()
+		for client in clients.iter_mut()
 		{
 			client.handle.send(Message::ClaimAi {
 				username_or_slot: UsernameOrSlot::Slot(bot.slot),
@@ -1721,7 +1725,7 @@ fn change_ai(
 		.any(|blocker| ai_name.to_lowercase().contains(blocker))
 	{
 		warn!("Cannot set AI to blocked '{}'.", ai_name);
-		for client in clients.into_iter()
+		for client in clients.iter_mut()
 		{
 			client.handle.send(Message::ClaimAi {
 				username_or_slot: UsernameOrSlot::Slot(bot.slot),
@@ -1741,7 +1745,7 @@ fn change_ai(
 
 		lobby.ai_pool.push((ai_name.clone(), metadata.clone()));
 
-		for client in clients.into_iter()
+		for client in clients.iter_mut()
 		{
 			client.handle.send(Message::ListAi {
 				ai_name: ai_name.clone(),
@@ -1752,7 +1756,7 @@ fn change_ai(
 
 	bot.ai_name = ai_name;
 
-	for client in clients.into_iter()
+	for client in clients.iter_mut()
 	{
 		client.handle.send(Message::ClaimAi {
 			username_or_slot: UsernameOrSlot::Slot(bot.slot),
@@ -1773,15 +1777,10 @@ fn change_difficulty(
 		UsernameOrSlot::Username(username) =>
 		{
 			warn!("Failed to find bot with username '{:?}'.", username);
-			// FUTURE let the sender know somehow?
 			return;
 		}
 		UsernameOrSlot::Slot(slot) => Some(slot),
-		UsernameOrSlot::Empty(_empty) => match lobby.bots.last()
-		{
-			Some(bot) => Some(bot.slot),
-			None => None,
-		},
+		UsernameOrSlot::Empty(_empty) => None,
 	};
 
 	let mut bot = {
@@ -1796,7 +1795,6 @@ fn change_difficulty(
 			None =>
 			{
 				warn!("Failed to find bot '{:?}'.", slot);
-				// FUTURE let the sender know somehow?
 				return;
 			}
 		}
@@ -1805,7 +1803,7 @@ fn change_difficulty(
 	if difficulty == Difficulty::None && bot.ai_name != "Dummy"
 	{
 		warn!("Cannot send difficulty of AI '{}' to none.", bot.ai_name);
-		for client in clients.into_iter()
+		for client in clients.iter_mut()
 		{
 			client.handle.send(Message::ClaimDifficulty {
 				username_or_slot: UsernameOrSlot::Slot(bot.slot),
@@ -1817,7 +1815,7 @@ fn change_difficulty(
 
 	bot.difficulty = difficulty;
 
-	for client in clients.into_iter()
+	for client in clients.iter_mut()
 	{
 		client.handle.send(Message::ClaimDifficulty {
 			username_or_slot: UsernameOrSlot::Slot(bot.slot),
@@ -1831,14 +1829,12 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 	if lobby.lobby_type == LobbyType::OneVsOne
 	{
 		warn!("Cannot add bot in onevsone lobby {}.", lobby.id);
-		// FUTURE let the sender know somehow?
 		return;
 	}
 
 	if lobby.num_players >= lobby.max_players
 	{
 		warn!("Cannot add bot to lobby {}: lobby full", lobby.id);
-		// FUTURE let the sender know somehow?
 		return;
 	}
 
@@ -1846,7 +1842,6 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 		if lobby.open_botslots.is_empty()
 		{
 			warn!("Cannot add bot to lobby {}: all slots taken", lobby.id);
-			// FUTURE let the sender know somehow?
 			return;
 		}
 		let mut rng = rand::thread_rng();
@@ -1865,7 +1860,7 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 		difficulty: Difficulty::Medium,
 	};
 
-	for client in clients.into_iter()
+	for client in clients.iter_mut()
 	{
 		client.handle.send(Message::AddBot {
 			slot: Some(bot.slot),
@@ -1886,7 +1881,7 @@ fn add_bot(lobby: &mut Lobby, clients: &mut Vec<Client>)
 
 fn remove_bot(lobby: &mut Lobby, clients: &mut Vec<Client>, slot: Botslot)
 {
-	if lobby.bots.iter().find(|x| x.slot == slot).is_some()
+	if lobby.bots.iter().any(|x| x.slot == slot)
 	{
 		lobby.bots.retain(|x| x.slot != slot);
 		lobby.num_players -= 1;
@@ -1900,7 +1895,7 @@ fn remove_bot(lobby: &mut Lobby, clients: &mut Vec<Client>, slot: Botslot)
 
 		lobby.bot_visiontypes.remove(&slot);
 
-		for client in clients.into_iter()
+		for client in clients.iter_mut()
 		{
 			client.handle.send(Message::RemoveBot { slot });
 		}
@@ -1913,8 +1908,6 @@ async fn pick_map(
 	map_name: String,
 ) -> Result<(), Error>
 {
-	// FUTURE check if client is host
-
 	// Is this a game lobby?
 	if lobby.lobby_type == LobbyType::Replay
 	{
@@ -1953,7 +1946,6 @@ async fn pick_map(
 		// But the host should have sent a ListMap beforehand.
 		None
 	}
-	// FUTURE check if map in hidden pool or client is developer
 	else if map::exists(&map_name)
 	{
 		let metadata = map::load_metadata(&map_name).await?;
@@ -1974,7 +1966,7 @@ async fn pick_map(
 	{
 		// Partial search for '1v1' or 'ffa'.
 		let pat = &map_name;
-		lobby.map_pool.iter().find(|&(x, _)| x.find(pat).is_some())
+		lobby.map_pool.iter().find(|&(name, _)| name.contains(pat))
 	}
 	else
 	{
@@ -2051,7 +2043,7 @@ async fn pick_map(
 	let mut humancount = 0;
 	let mut botcount = 0;
 	let mut demotions = Vec::new();
-	for client in clients.into_iter()
+	for client in clients.iter_mut()
 	{
 		if lobby.roles.get(&client.id) == Some(&Role::Player)
 		{
@@ -2203,7 +2195,6 @@ async fn become_desired_lobby(
 		{
 			become_challenge_lobby(lobby, clients).await?;
 		}
-		// TODO LobbyType::Replay
 		_ =>
 		{
 			warn!("Cannot turn lobby {} into desired lobby.", lobby.id);
@@ -2295,8 +2286,6 @@ async fn become_tutorial_lobby(
 	clients: &mut Vec<Client>,
 ) -> Result<(), Error>
 {
-	// FUTURE check if client is host
-
 	// Is this a game lobby?
 	if lobby.lobby_type == LobbyType::Generic
 	{
@@ -2382,8 +2371,6 @@ async fn pick_challenge(
 	challenge_key: String,
 ) -> Result<(), Error>
 {
-	// FUTURE check if client is host
-
 	// Is this a game lobby?
 	if lobby.lobby_type == LobbyType::Generic
 	{
@@ -2465,8 +2452,6 @@ async fn become_custom_lobby(
 	clients: &mut Vec<Client>,
 ) -> Result<(), Error>
 {
-	// FUTURE check if client is host
-
 	// Is this a game lobby?
 	if lobby.lobby_type == LobbyType::Generic
 	{
@@ -2527,13 +2512,10 @@ async fn pick_timer(
 	mut timer_in_seconds: u32,
 ) -> Result<(), Error>
 {
-	// FUTURE check if client is host
-
 	// Is this a game lobby?
 	if lobby.lobby_type == LobbyType::Replay
 	{
 		warn!("Cannot pick map for replay lobby {}.", lobby.id);
-		// FUTURE let the sender know somehow?
 		return Ok(());
 	}
 	else if lobby.lobby_type == LobbyType::OneVsOne
@@ -2568,9 +2550,6 @@ async fn pick_ruleset(
 	ruleset_name: String,
 ) -> Result<(), Error>
 {
-	// FUTURE check if client is host
-	// FUTURE check if ruleset in pool or client is developer or replay
-
 	// Is this a game lobby?
 	if lobby.lobby_type == LobbyType::Replay
 	{
@@ -2696,22 +2675,13 @@ async fn add_connected_ai_to_list(
 )
 {
 	if lobby.ai_name_blockers.contains(&ai.ai_name)
-	{
-		return;
-	}
-	else if lobby.is_client_hosted
-	{
-		return;
-	}
-	else if lobby
-		.ai_pool
-		.iter()
-		.any(|(ainame, _metadata)| ainame == &ai.ai_name)
+		|| lobby.is_client_hosted
+		|| lobby.ai_pool.iter().any(|(name, _)| name == &ai.ai_name)
 	{
 		return;
 	}
 
-	for client in clients.into_iter()
+	for client in clients.iter_mut()
 	{
 		client.handle.send(Message::ListAi {
 			ai_name: ai.ai_name.clone(),
@@ -2858,7 +2828,7 @@ fn is_ruleset_confirmed(lobby: &Lobby, clients: &Vec<Client>) -> bool
 			return false;
 		}
 	}
-	return true;
+	true
 }
 
 async fn try_start(
@@ -2868,8 +2838,6 @@ async fn try_start(
 	lobby_sendbuffer: mpsc::Sender<Update>,
 ) -> Result<Option<game::Setup>, Error>
 {
-	// FUTURE check if host
-
 	if let Some(host) = &lobby.host
 	{
 		// Make sure the host is present when the game starts.
@@ -2891,7 +2859,7 @@ async fn try_start(
 					.iter()
 					.any(|x| x.client_id == ai.client_id)
 		})
-		.map(|ai| ai.clone())
+		.cloned()
 		.collect();
 	for mut connected_ai in to_be_added
 	{
@@ -2910,7 +2878,7 @@ async fn try_start(
 		.collect();
 	handle_removed(lobby, clients, removed).await?;
 
-	if clients.len() < 1
+	if clients.is_empty()
 	{
 		let update = chat::Update::DisbandLobby { lobby_id: lobby.id };
 		general_chat.send(update).await?;
@@ -3231,8 +3199,6 @@ async fn start(
 			});
 		}
 	}
-
-	// TODO if (_replay && _replayname.empty()) return error;
 
 	let map_name = lobby.map_name.clone();
 	let map_metadata = {

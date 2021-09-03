@@ -1,4 +1,25 @@
-/* Server::Rating */
+/*
+ * Part of epicinium_server
+ * developed by A Bunch of Hacks.
+ *
+ * Copyright (c) 2018-2021 A Bunch of Hacks
+ *
+ * This library is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * [authors:]
+ * Sander in 't Veld (sander@abunchofhacks.coop)
+ */
 
 use crate::common::platform::Platform;
 use crate::common::version::Version;
@@ -126,7 +147,6 @@ impl Database
 			{
 				error!("Missing entry for user id {:?}!", user_id);
 				// We do not want this to end the rating task.
-				// FUTURE insert entry now to avoid losing data?
 				return;
 			}
 		};
@@ -254,9 +274,9 @@ fn adjust(
 		gain_percentage = std::cmp::max(gain_percentage, minimum);
 	}
 
-	// Should the rating increase...
 	let ratingtenths = if scoretenths > ratingtenths
 	{
+		// The rating should increase.
 		// Get the absolute difference.
 		let difference = scoretenths - ratingtenths;
 		// Rating gain is a percentage of the difference,
@@ -266,16 +286,16 @@ fn adjust(
 		// Increase the rating by the gain.
 		std::cmp::max(0, std::cmp::min(ratingtenths + gaintenths, 1000))
 	}
-	// ... or increase by a minimal amount because they were victorious ...
 	else if is_victorious
 	{
+		// The rating should increase by a minimal amount.
 		let gaintenths = 1;
 		// Increase the rating by the gain.
 		std::cmp::max(0, std::cmp::min(ratingtenths + gaintenths, 1000))
 	}
-	// ... or decrease...
 	else if scoretenths < ratingtenths
 	{
+		// The rating should decrease.
 		// Get the absolute difference.
 		let difference = ratingtenths - scoretenths;
 		// Rating loss is a percentage of the difference,
@@ -285,9 +305,9 @@ fn adjust(
 		// Lower the rating by the loss.
 		std::cmp::max(0, std::cmp::min(ratingtenths - losstenths, 1000))
 	}
-	// ... or stay the same?
 	else
 	{
+		// The rating should stay exactly the same.
 		ratingtenths
 	};
 

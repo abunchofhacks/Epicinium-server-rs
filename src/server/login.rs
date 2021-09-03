@@ -1,4 +1,25 @@
-/* Server::Login */
+/*
+ * Part of epicinium_server
+ * developed by A Bunch of Hacks.
+ *
+ * Copyright (c) 2018-2021 A Bunch of Hacks
+ *
+ * This library is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * [authors:]
+ * Sander in 't Veld (sander@abunchofhacks.coop)
+ */
 
 use crate::common::keycode::*;
 use crate::common::platform::*;
@@ -122,7 +143,7 @@ impl Server
 				username = "Alice".to_string();
 				unlocks = enum_set!(Unlock::BetaAccess | Unlock::Dev);
 			}
-			Ok(x) if x >= 2 && x <= 8 =>
+			Ok(x) if (2..=8).contains(&x) =>
 			{
 				user_id = UserId(x as u64);
 				const NAMES: [&str; 7] =
@@ -143,8 +164,8 @@ impl Server
 
 		let data = LoginData {
 			user_id,
-			username: username,
-			unlocks: unlocks,
+			username,
+			unlocks,
 			rating_data: rating::Data {
 				rating: 0.0,
 				stars: 0,
@@ -360,7 +381,6 @@ impl Connection
 			if !is_valid_username(&username)
 			{
 				warn!("Rejecting invalid desired username '{}'.", username);
-				// TODO support UTF8 usernames
 				return Err(ResponseStatus::UsernameRequiredInvalid);
 			}
 			info!("Confirming steam user with desired username...");
@@ -383,7 +403,6 @@ impl Connection
 				if !is_valid_username(&username)
 				{
 					warn!("Rejecting persona name '{}' as username.", username);
-					// TODO support UTF8 usernames
 					// We use a "milder" response status here because it is not
 					// the user's fault that their Steam persona name is not
 					// a valid Epicinium username.
@@ -437,7 +456,6 @@ impl Connection
 		if data.is_banned_by_vac || data.is_banned_by_publisher
 		{
 			info!("Refusing user with banned Steam ID {}.", data.steam_id);
-			// TODO notify login-server to flag this account as banned?
 			return Err(ResponseStatus::AccountDisabled);
 		}
 		else if data.result != SteamResult::Ok
@@ -733,7 +751,7 @@ fn is_valid_username(username: &str) -> bool
 	username.len() >= 3
 		&& username.len() <= 36
 		&& username.is_ascii()
-		&& username.chars().all(|x| is_valid_username_char(x))
+		&& username.chars().all(is_valid_username_char)
 }
 
 fn is_valid_username_char(x: char) -> bool

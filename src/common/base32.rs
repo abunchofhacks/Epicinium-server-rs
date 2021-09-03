@@ -1,4 +1,27 @@
-/* Functions for encoding and decoding byte arrays into base32. */
+/*
+ * Functions for encoding and decoding byte arrays into base32.
+ *
+ * Part of epicinium_server
+ * developed by A Bunch of Hacks.
+ *
+ * Copyright (c) 2018-2021 A Bunch of Hacks
+ *
+ * This library is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * [authors:]
+ * Sander in 't Veld (sander@abunchofhacks.coop)
+ */
 
 // Convert a 5-bit nickel, i.e. a value between 0 and 31 (inclusive), to
 // a letter in the Base32 alphabet, which is an alphanumeric 8-bit character.
@@ -6,99 +29,49 @@ pub fn letter_from_nickel(value: u8) -> u8
 {
 	// Crockford Base32 alphabet where a = 10 and i, l, o and u are skipped.
 	const ALPHABET: [u8; 32] = [
-		'0' as u8, '1' as u8, '2' as u8, '3' as u8, '4' as u8, '5' as u8,
-		'6' as u8, '7' as u8, '8' as u8, '9' as u8, 'a' as u8, 'b' as u8,
-		'c' as u8, 'd' as u8, 'e' as u8, 'f' as u8, 'g' as u8, 'h' as u8,
-		'j' as u8, 'k' as u8, 'm' as u8, 'n' as u8, 'p' as u8, 'q' as u8,
-		'r' as u8, 's' as u8, 't' as u8, 'v' as u8, 'w' as u8, 'x' as u8,
-		'y' as u8, 'z' as u8,
+		b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'a', b'b',
+		b'c', b'd', b'e', b'f', b'g', b'h', b'j', b'k', b'm', b'n', b'p', b'q',
+		b'r', b's', b't', b'v', b'w', b'x', b'y', b'z',
 	];
 
 	debug_assert!(value <= 31);
 	ALPHABET[value as usize]
 }
 
-// Convert a (case insensitive) letter in the Crockform Base32 alphabet
+// Convert a (case insensitive) letter in the Crockford Base32 alphabet
 // to a 5-bit nickel, i.e. a value between 0 and 31 (inclusive).
 pub fn nickel_from_letter(x: u8) -> Result<u8, DecodeError>
 {
-	if x >= b'0' && x <= b'9'
+	match x
 	{
-		Ok(x - b'0')
-	}
-	// a = 10
-	else if x >= b'a' && x <= b'h'
-	{
-		Ok(x - b'a' + 10)
-	}
-	// skip i
-	else if x >= b'j' && x <= b'k'
-	{
-		Ok(x - b'j' + 18)
-	}
-	// skip l
-	else if x >= b'm' && x <= b'n'
-	{
-		Ok(x - b'm' + 20)
-	}
-	// skip o
-	else if x >= b'p' && x <= b't'
-	{
-		Ok(x - b'p' + 22)
-	}
-	// skip u
-	else if x >= b'v' && x <= b'z'
-	{
-		Ok(x - b'v' + 27)
-	}
-	// continue with capitals
-	else if x >= b'A' && x <= b'H'
-	{
-		Ok(x - b'A' + 10)
-	}
-	// skip I
-	else if x >= b'J' && x <= b'K'
-	{
-		Ok(x - b'J' + 18)
-	}
-	// skip L
-	else if x >= b'M' && x <= b'N'
-	{
-		Ok(x - b'M' + 20)
-	}
-	// skip O
-	else if x >= b'P' && x <= b'T'
-	{
-		Ok(x - b'P' + 22)
-	}
-	// skip U
-	else if x >= b'V' && x <= b'Z'
-	{
-		Ok(x - b'V' + 27)
-	}
-	// i and I are confused with 1
-	else if x == b'i' || x == b'I'
-	{
-		Ok(1)
-	}
-	// l and L are confused with 1
-	else if x == b'l' || x == b'L'
-	{
-		Ok(1)
-	}
-	// o and O are confused with 0
-	else if x == b'o' || x == b'O'
-	{
-		Ok(0)
-	}
-	// u and U are confused with v
-	else if x == b'u' || x == b'U'
-	{
-		Ok(27)
-	}
-	else
-	{
-		Err(DecodeError::InvalidLetter { letter: x })
+		b'0'..=b'9' => Ok(x - b'0'),
+		// a = 10
+		b'a'..=b'h' => Ok(x - b'a' + 10),
+		// skip i
+		b'j'..=b'k' => Ok(x - b'j' + 18),
+		// skip l
+		b'm'..=b'n' => Ok(x - b'm' + 20),
+		// skip o
+		b'p'..=b't' => Ok(x - b'p' + 22),
+		// skip u
+		b'v'..=b'z' => Ok(x - b'v' + 27),
+		// continue with capitals
+		b'A'..=b'H' => Ok(x - b'A' + 10),
+		// skip I
+		b'J'..=b'K' => Ok(x - b'J' + 18),
+		// skip L
+		b'M'..=b'N' => Ok(x - b'M' + 20),
+		// skip O
+		b'P'..=b'T' => Ok(x - b'P' + 22),
+		// skip U
+		b'V'..=b'Z' => Ok(x - b'V' + 27),
+		// i, I, l and L are confused with 1
+		b'i' | b'I' | b'l' | b'L' => Ok(1),
+		// o and O are confused with 0
+		b'o' | b'O' => Ok(0),
+		// u and U are confused with v
+		b'u' | b'U' => Ok(27),
+		_ => Err(DecodeError::InvalidLetter { letter: x }),
 	}
 }
 
@@ -126,7 +99,7 @@ pub fn encode(data: &[u8]) -> String
 
 	// Create the word from left to right.
 	let mut datapos = 0;
-	for wordpos in 0..wordlength
+	for character in word.iter_mut()
 	{
 		// Do we need to add fresh bits?
 		if nbits < 5
@@ -144,7 +117,7 @@ pub fn encode(data: &[u8]) -> String
 		nbits -= 5;
 
 		// Turn those five bits into the next character.
-		word[wordpos] = letter_from_nickel(nickel);
+		*character = letter_from_nickel(nickel);
 	}
 
 	debug_assert!(datapos == datalength);
@@ -174,10 +147,8 @@ pub fn decode(word: &str) -> Result<Vec<u8>, DecodeError>
 	// If necessary, we can drop bits from the front of the representation.
 	// E.g. if we had encoded a single uint8_t, we are now decoding two
 	// characters, which is 10 bits, but the first two bits should be zero.
-	let discarded = (wordlength * 5) % 8;
-	// FUTURE this assertion fails if the word is e.g. 1 character, which
-	// shouldn't happen but it shouldn't crash a debug server either.
-	debug_assert!(discarded < 5);
+	// If we have a single character, we treat it as 5 bits of garbage.
+	let mut discarded = (wordlength * 5) % 8;
 
 	// We have a buffer of between 0 and 12 bits to draw from; we use the
 	// most significant bits, so bitpositions 12, ..., 15 will always be zero.
@@ -188,12 +159,24 @@ pub fn decode(word: &str) -> Result<Vec<u8>, DecodeError>
 
 	// Decode the word one character at a time.
 	let mut datapos = 0;
-	for (i, x) in word.bytes().enumerate()
+	for x in word.bytes()
 	{
 		let value: u8 = nickel_from_letter(x)?;
 		debug_assert!(value <= 31);
 
-		if i == 0 && discarded > 0
+		if discarded >= 5
+		{
+			// This entire character is unusable and should be zero.
+			if value > 0
+			{
+				return Err(DecodeError::NonZeroLeadingBits {
+					source: word.to_string(),
+				});
+			}
+			discarded -= 5;
+			continue;
+		}
+		else if discarded > 0
 		{
 			// The leading bits should be zero.
 			if value >= 1 << (5 - discarded)
@@ -205,6 +188,7 @@ pub fn decode(word: &str) -> Result<Vec<u8>, DecodeError>
 
 			// The leading zeroes are non-significant.
 			nbits -= discarded as i8;
+			discarded = 0;
 		}
 
 		// Add the fresh bits.
@@ -361,19 +345,43 @@ mod tests
 	fn test_inverse_len() -> Result<(), DecodeError>
 	{
 		let len = 256;
-		let text = "a".repeat(len);
+		let text = "0".repeat(len);
 		for n in 0..=len
 		{
-			assert!(decode(&text[0..n]).is_ok());
+			decode(&text[0..n])?;
 		}
 		Ok(())
 	}
 
 	#[test]
-	fn test_garbage() -> Result<(), DecodeError>
+	fn test_garbage()
 	{
 		assert!(decode("abc ").is_err());
 		assert!(decode("abc\0").is_err());
+	}
+
+	#[test]
+	fn test_leading_zeroes() -> Result<(), DecodeError>
+	{
+		{
+			let decoded = decode("0")?;
+			assert_eq!(decoded.len(), 0);
+		}
+		{
+			let decoded = decode("7z")?;
+			assert_eq!(decoded, [255u8]);
+		}
+		{
+			let decoded = decode("07z")?;
+			assert_eq!(decoded, [255u8]);
+		}
 		Ok(())
+	}
+
+	#[test]
+	fn test_nonzero_leading_bits()
+	{
+		assert!(decode("a").is_err());
+		assert!(decode("zz").is_err());
 	}
 }

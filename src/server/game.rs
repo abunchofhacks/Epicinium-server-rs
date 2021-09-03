@@ -1,4 +1,25 @@
-/* ServerGame */
+/*
+ * Part of epicinium_server
+ * developed by A Bunch of Hacks.
+ *
+ * Copyright (c) 2018-2021 A Bunch of Hacks
+ *
+ * This library is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * [authors:]
+ * Sander in 't Veld (sander@abunchofhacks.coop)
+ */
 
 use crate::common::keycode::*;
 use crate::logic::ai;
@@ -445,35 +466,36 @@ pub async fn run_server_game(
 	// Is this game rated?
 	let match_type = if !is_rated
 	{
+		// No, because some lobby setting precludes it from being rated.
 		MatchType::Unrated
 	}
-	// Is this a competitive 1v1 match with two humans?
 	else if lobby_type == LobbyType::OneVsOne
 	{
+		// Yes, it is a competitive 1v1 match with two humans.
 		MatchType::Competitive
 	}
-	// Is this a friendly 1v1 match with two humans?
 	else if players.len() == 2
 		&& connected_bots.len() == 0
 		&& local_bots.len() == 0
 	{
+		// Yes, it is a friendly 1v1 match with two humans.
 		MatchType::FriendlyOneVsOne
 	}
-	// Is this a free for all match with at least two humans?
 	else if players.len() >= 2
 	{
+		// Yes, it is a free for all match with at least two humans.
 		MatchType::FreeForAll {
 			num_non_bot_players: players.len(),
 		}
 	}
-	// Is this a versus AI match?
 	else if players.len() == 1
 	{
+		// Yes, it is a versus AI match.
 		MatchType::VersusAi
 	}
-	// Otherwise this match contains only bots.
 	else
 	{
+		// No, it only contains bots.
 		MatchType::Unrated
 	};
 
@@ -854,21 +876,21 @@ async fn iterate(
 
 	// If players or bots are defeated, we no longer wait for them in the
 	// planning phase.
-	for player in players.into_iter()
+	for player in players.iter_mut()
 	{
 		if automaton.is_defeated(player.color)
 		{
 			player.is_defeated = true;
 		}
 	}
-	for bot in connected_bots.into_iter()
+	for bot in connected_bots.iter_mut()
 	{
 		if automaton.is_defeated(bot.color)
 		{
 			bot.is_defeated = true;
 		}
 	}
-	for bot in local_bots.into_iter()
+	for bot in local_bots.iter_mut()
 	{
 		if automaton.is_defeated(bot.color)
 		{
@@ -899,12 +921,12 @@ async fn iterate(
 	let message = Message::Sync {
 		time_remaining_in_seconds: planning_time_in_seconds,
 	};
-	for client in players.into_iter()
+	for client in players.iter_mut()
 	{
 		client.has_synced = false;
 		client.handle.send(message.clone());
 	}
-	for client in watchers.into_iter()
+	for client in watchers.iter_mut()
 	{
 		client.has_synced = false;
 		client.handle.send(message.clone());
@@ -914,9 +936,7 @@ async fn iterate(
 	broadcast(players, connected_bots, local_bots, watchers, cset)?;
 
 	// Allow the bots to calculate their next move.
-	// FUTURE bots could prepare orders asynchronously
-	// FUTURE start planning phase timer before bots prepare orders
-	for bot in local_bots.into_iter()
+	for bot in local_bots.iter_mut()
 	{
 		bot.ai.prepare_orders();
 	}
@@ -929,21 +949,21 @@ async fn iterate(
 	stage(lobby, automaton, players, connected_bots, watchers, updates).await?;
 
 	// Get submitted or calculated orders.
-	for player in players.into_iter()
+	for player in players.iter_mut()
 	{
 		if let Some(orders) = player.submitted_orders.take()
 		{
 			automaton.receive(player.color, orders)?;
 		}
 	}
-	for bot in connected_bots.into_iter()
+	for bot in connected_bots.iter_mut()
 	{
 		if let Some(orders) = bot.submitted_orders.take()
 		{
 			automaton.receive(bot.color, orders)?;
 		}
 	}
-	for bot in local_bots.into_iter()
+	for bot in local_bots.iter_mut()
 	{
 		if !bot.is_defeated
 		{
@@ -1105,8 +1125,8 @@ fn all_players_and_watchers_have_disconnected(
 	watchers: &mut Vec<WatcherClient>,
 ) -> bool
 {
-	players.iter().find(|x| x.is_connected()).is_none()
-		&& watchers.iter().find(|x| x.is_connected()).is_none()
+	!players.iter().any(|x| x.is_connected())
+		&& !watchers.iter().any(|x| x.is_connected())
 }
 
 async fn rest(
@@ -1253,19 +1273,17 @@ fn all_players_or_watchers_have_synced(
 	watchers: &mut Vec<WatcherClient>,
 ) -> bool
 {
-	if players.iter().find(|x| x.is_connected()).is_some()
+	// Are there connected players?
+	if players.iter().any(|x| x.is_connected())
 	{
-		players
-			.iter()
-			.find(|x| x.is_connected() && !x.has_synced)
-			.is_none()
+		// Have all connected players synced?
+		!players.iter().any(|x| x.is_connected() && !x.has_synced)
 	}
 	else
 	{
-		watchers
-			.iter()
-			.find(|x| x.is_connected() && !x.has_synced)
-			.is_none()
+		// There are no players or all players have disconnected.
+		// Have all connected watchers synced?
+		!watchers.iter().any(|x| x.is_connected() && !x.has_synced)
 	}
 }
 
@@ -1397,8 +1415,7 @@ fn at_least_one_live_player(players: &mut Vec<PlayerClient>) -> bool
 {
 	players
 		.iter()
-		.find(|x| !x.is_defeated && !x.is_retired() && x.is_connected())
-		.is_some()
+		.any(|x| !x.is_defeated && !x.is_retired() && x.is_connected())
 }
 
 async fn sleep(
@@ -2153,7 +2170,6 @@ fn do_join(
 
 	if disconnected_role.is_none() && !lobby.is_public && !is_invited
 	{
-		// TODO send joinlobby{}?
 		return Ok(RejoinResult::AccessDenied);
 	}
 
@@ -2200,7 +2216,6 @@ fn do_join(
 	client_handle.send(Message::PickMap {
 		map_name: lobby.map_name.clone(),
 	});
-	// TODO tell them the recording if this is a replay lobby
 	if let Some(challenge_key) = lobby.challenge.to_owned()
 	{
 		client_handle.send(Message::PickChallenge { challenge_key });
@@ -2631,7 +2646,7 @@ async fn handle_leave(
 	if players.iter().all(|x| x.handle.is_disconnected())
 		&& watchers.iter().all(|x| x.handle.is_disconnected())
 	{
-		let update = chat::Update::DisbandLobby { lobby_id: lobby_id };
+		let update = chat::Update::DisbandLobby { lobby_id };
 		general_chat.send(update).await?;
 	}
 

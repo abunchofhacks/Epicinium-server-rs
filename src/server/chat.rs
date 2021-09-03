@@ -1,4 +1,25 @@
-/* Server::Chat */
+/*
+ * Part of epicinium_server
+ * developed by A Bunch of Hacks.
+ *
+ * Copyright (c) 2018-2021 A Bunch of Hacks
+ *
+ * This library is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * [authors:]
+ * Sander in 't Veld (sander@abunchofhacks.coop)
+ */
 
 use crate::common::keycode::*;
 use crate::logic::challenge;
@@ -315,7 +336,6 @@ impl Ghostbuster
 			"Client {} successfully ghostbusted client {}.",
 			self.id, self.ghost_id
 		);
-		// FUTURE is this the most sensible message type for this? (#962)
 		let message = Message::LeaveServer {
 			content: Some(self.username),
 		};
@@ -379,16 +399,16 @@ fn handle_join(
 	}
 
 	let join_metadata = generate_join_metadata(&unlocks);
-	let hidden = username.starts_with("#");
+	let hidden = username.starts_with('#');
 
 	let mut newcomer = Client {
-		id: id,
+		id,
 		username,
 		join_metadata,
 		handle,
 		rating_and_stars,
 		availability_status: AvailabilityStatus::Available,
-		hidden: hidden,
+		hidden,
 	};
 
 	// Confirm to the newcomer that they have joined.
@@ -410,7 +430,6 @@ fn handle_join(
 	}
 
 	// Tell the newcomer that they are online.
-	// FUTURE this is weird (#1411)
 	newcomer.handle.send(message);
 
 	do_init(
@@ -445,10 +464,6 @@ fn handle_join(
 		};
 		newcomer.handle.send(message);
 	}
-
-	// If the user was a player in a game that is still in progress,
-	// automatically have them rejoin the lobby.
-	// TODO automatically rejoin
 
 	// Show them a welcome message, if any.
 	welcome_client(&mut newcomer);
@@ -554,7 +569,7 @@ fn do_init(
 					});
 					handle.send(Message::InGame {
 						username: client.username.clone(),
-						lobby_id: lobby_id,
+						lobby_id,
 						role,
 					});
 				}
@@ -714,7 +729,7 @@ fn handle_describe_lobby(
 	lobbies: &mut Vec<Lobby>,
 )
 {
-	let lobby = match lobbies.into_iter().find(|x| x.id == lobby_id)
+	let lobby = match lobbies.iter().find(|x| x.id == lobby_id)
 	{
 		Some(lobby) => lobby,
 		None =>
@@ -724,7 +739,7 @@ fn handle_describe_lobby(
 		}
 	};
 
-	describe_lobby(&lobby, clients);
+	describe_lobby(lobby, clients);
 }
 
 fn describe_lobby(lobby: &Lobby, clients: &mut Vec<Client>)
