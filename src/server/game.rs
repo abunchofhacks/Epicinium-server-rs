@@ -27,6 +27,7 @@ use crate::logic::automaton;
 use crate::logic::automaton::Automaton;
 use crate::logic::challenge;
 use crate::logic::challenge::ChallengeId;
+use crate::logic::change::Change;
 use crate::logic::change::ChangeSet;
 use crate::logic::difficulty::Difficulty;
 use crate::logic::map;
@@ -50,6 +51,26 @@ use log::*;
 use tokio::sync::mpsc;
 use tokio::time as timer;
 use tokio::time::{Duration, Instant};
+
+#[derive(Debug)]
+pub struct HostClient
+{
+	pub id: Keycode,
+	pub user_id: UserId,
+	pub username: String,
+	pub handle: client::Handle,
+
+	pub is_gameover: bool,
+	pub awarded_stars: i32,
+}
+
+impl HostClient
+{
+	fn is_connected(&self) -> bool
+	{
+		!self.handle.is_disconnected()
+	}
+}
 
 #[derive(Debug)]
 pub struct PlayerClient
@@ -88,7 +109,7 @@ pub struct BotClient
 	pub difficulty: Difficulty,
 	pub descriptive_name: String,
 	pub ai_metadata: ai::Metadata,
-	pub connected_bot_metadata: ConnectedBotMetadata,
+	pub forwarding_metadata: ForwardingMetadata,
 
 	pub id: Keycode,
 	pub user_id: UserId,
@@ -127,6 +148,13 @@ pub struct LocalBot
 }
 
 #[derive(Debug)]
+pub struct HostedBot
+{
+	pub descriptive_name: String,
+	pub color: PlayerColor,
+}
+
+#[derive(Debug)]
 pub struct WatcherClient
 {
 	pub id: Keycode,
@@ -154,32 +182,57 @@ pub struct Setup
 	pub lobby_name: String,
 	pub lobby_description_metadata: LobbyMetadata,
 
+	pub host: Option<HostClient>,
 	pub players: Vec<PlayerClient>,
 	pub connected_bots: Vec<BotClient>,
 	pub local_bots: Vec<LocalBot>,
+	pub hosted_bots: Vec<HostedBot>,
 	pub watchers: Vec<WatcherClient>,
 	pub map_name: String,
 	pub map_metadata: map::Metadata,
 	pub ruleset_name: String,
 	pub planning_time_in_seconds: Option<u32>,
 	pub lobby_type: LobbyType,
-	pub challenge: Option<ChallengeId>,
+	pub challenge: Option<(Option<ChallengeId>, String)>,
 	pub is_public: bool,
 }
 
 pub async fn run(
 	setup: Setup,
+	discord_api: mpsc::Sender<discord_api::Post>,
+	updates: mpsc::Receiver<Update>,
+) -> Result<(), Error>
+{
+	if setup.host.is_some()
+	{
+		run_client_hosted_game(setup, updates).await
+	}
+	else
+	{
+		run_server_game(setup, discord_api, updates).await
+	}
+}
+
+pub async fn run_server_game(
+	setup: Setup,
 	mut discord_api: mpsc::Sender<discord_api::Post>,
 	mut updates: mpsc::Receiver<Update>,
 ) -> Result<(), Error>
 {
+	if !setup.hosted_bots.is_empty()
+	{
+		return Err(Error::InvalidSetup);
+	}
+
 	let Setup {
 		lobby_id,
 		lobby_name,
 		lobby_description_metadata,
+		host: _,
 		mut players,
 		mut connected_bots,
 		mut local_bots,
+		hosted_bots: _,
 		mut watchers,
 		map_name,
 		map_metadata,
@@ -252,7 +305,7 @@ pub async fn run(
 				ruleset_name: Some(ruleset_name.clone()),
 				timer_in_seconds: planning_time_in_seconds,
 				difficulty: None,
-				connected_bot: None,
+				forwarding: None,
 			});
 		}
 	}
@@ -265,7 +318,7 @@ pub async fn run(
 			ruleset_name: Some(ruleset_name.clone()),
 			timer_in_seconds: planning_time_in_seconds,
 			difficulty: Some(client.difficulty),
-			connected_bot: Some(client.connected_bot_metadata),
+			forwarding: Some(client.forwarding_metadata),
 		});
 	}
 
@@ -277,7 +330,7 @@ pub async fn run(
 			ruleset_name: Some(ruleset_name.clone()),
 			timer_in_seconds: planning_time_in_seconds,
 			difficulty: None,
-			connected_bot: None,
+			forwarding: None,
 		});
 	}
 
@@ -317,8 +370,8 @@ pub async fn run(
 	{
 		let challenge_id = match challenge
 		{
-			Some(challenge_id) => challenge_id,
-			None => return Err(Error::MissingChallengeId),
+			Some((Some(challenge_id), ..)) => challenge_id,
+			_ => return Err(Error::MissingChallengeId),
 		};
 		automaton.set_challenge(challenge_id)?;
 
@@ -480,7 +533,7 @@ pub async fn run(
 		description_metadata: lobby_description_metadata,
 		is_public,
 		match_type,
-		challenge,
+		challenge: challenge.map(|(_id, key)| key),
 		num_bots: connected_bots.len() + local_bots.len(),
 		map_name,
 		map_metadata,
@@ -508,6 +561,7 @@ pub async fn run(
 			State::InProgress => (),
 			State::Finished => break,
 			State::Abandoned => break,
+			State::AbandonedByHost => break,
 		}
 	}
 
@@ -550,6 +604,173 @@ pub async fn run(
 	Ok(())
 }
 
+pub async fn run_client_hosted_game(
+	setup: Setup,
+	mut updates: mpsc::Receiver<Update>,
+) -> Result<(), Error>
+{
+	if (setup.lobby_type != LobbyType::Custom
+		&& setup.lobby_type != LobbyType::Challenge)
+		|| !setup.connected_bots.is_empty()
+		|| !setup.local_bots.is_empty()
+	{
+		return Err(Error::InvalidSetup);
+	}
+
+	let Setup {
+		lobby_id,
+		lobby_name,
+		lobby_description_metadata,
+		host,
+		mut players,
+		connected_bots: _,
+		local_bots: _,
+		hosted_bots,
+		mut watchers,
+		map_name,
+		map_metadata,
+		ruleset_name,
+		planning_time_in_seconds,
+		lobby_type: _,
+		challenge,
+		is_public,
+	} = setup;
+	let mut host = host.ok_or(Error::InvalidSetup)?;
+
+	// Tell everyone that the game is starting.
+	for client in &mut players
+	{
+		client.handle.send(Message::Game {
+			role: Some(Role::Player),
+			player: Some(client.color),
+			ruleset_name: Some(ruleset_name.clone()),
+			timer_in_seconds: planning_time_in_seconds,
+			difficulty: None,
+			forwarding: None,
+		});
+	}
+
+	for client in &mut watchers
+	{
+		client.handle.send(Message::Game {
+			role: Some(Role::Observer),
+			player: None,
+			ruleset_name: Some(ruleset_name.clone()),
+			timer_in_seconds: planning_time_in_seconds,
+			difficulty: None,
+			forwarding: None,
+		});
+	}
+
+	// Tell everyone who is playing as which color.
+	let mut initial_messages = Vec::new();
+	for player in &players
+	{
+		initial_messages.push(Message::AssignColor {
+			color: player.color,
+			name: player.username.clone(),
+		});
+	}
+	for bot in &hosted_bots
+	{
+		initial_messages.push(Message::AssignColor {
+			color: bot.color,
+			name: bot.descriptive_name.clone(),
+		});
+	}
+
+	// Tell everyone which skins are being used.
+	initial_messages.push(Message::Skins {
+		metadata: map_metadata.clone(),
+	});
+
+	// Send the initial messages.
+	for client in &mut players
+	{
+		for message in &initial_messages
+		{
+			client.handle.send(message.clone());
+		}
+	}
+	for client in &mut watchers
+	{
+		for message in &initial_messages
+		{
+			client.handle.send(message.clone());
+		}
+	}
+
+	let lobby_info = LobbyInfo {
+		id: lobby_id,
+		name: lobby_name,
+		description_metadata: lobby_description_metadata,
+		is_public,
+		match_type: MatchType::Unrated,
+		challenge: challenge.map(|(_id, key)| key),
+		num_bots: hosted_bots.len(),
+		map_name,
+		map_metadata,
+		ruleset_name,
+		planning_time_in_seconds,
+		initial_messages,
+	};
+
+	loop
+	{
+		let state = iterate_client_hosted_game(
+			&lobby_info,
+			&mut host,
+			&mut players,
+			&mut watchers,
+			&mut updates,
+			planning_time_in_seconds,
+		)
+		.await?;
+
+		match state
+		{
+			State::InProgress => (),
+			State::Finished => break,
+			State::Abandoned => break,
+			State::AbandonedByHost =>
+			{
+				let message = Message::Chat {
+					content: "Game interrupted: host left.".to_string(),
+					sender: Some("server".to_string()),
+					target: ChatTarget::Lobby,
+				};
+				for client in players.iter_mut()
+				{
+					client.handle.send(message.clone());
+				}
+				for client in watchers.iter_mut()
+				{
+					client.handle.send(message.clone());
+				}
+				break;
+			}
+		}
+	}
+
+	// If there are non-bot non-observer participants, adjust their stars.
+	for client in players.iter_mut()
+	{
+		retire(&lobby_info, &mut host, client).await?;
+	}
+
+	debug!("Game has finished in lobby {}; lingering...", lobby_id);
+	linger(
+		&lobby_info,
+		&mut players,
+		&mut Vec::new(),
+		&mut watchers,
+		&mut updates,
+	)
+	.await?;
+
+	Ok(())
+}
+
 #[derive(Debug)]
 pub enum Sub
 {
@@ -575,13 +796,41 @@ pub enum Sub
 }
 
 #[derive(Debug)]
+pub enum FromHost
+{
+	Sync
+	{
+		client_id: Keycode,
+		metadata: Option<HostSyncMetadata>,
+	},
+	Changes
+	{
+		client_id: Keycode,
+		vision: PlayerColor,
+		changes: Vec<Change>,
+	},
+	Rejoin
+	{
+		client_id: Keycode,
+		changes: Vec<Change>,
+		rejoining_username: String,
+		rejoining_player: PlayerColor,
+	},
+	Briefing
+	{
+		client_id: Keycode,
+		briefing: challenge::MissionBriefing,
+	},
+}
+
+#[derive(Debug)]
 struct LobbyInfo
 {
 	id: Keycode,
 	name: String,
 	is_public: bool,
 	match_type: MatchType,
-	challenge: Option<ChallengeId>,
+	challenge: Option<String>,
 	num_bots: usize,
 	map_name: String,
 	map_metadata: map::Metadata,
@@ -605,6 +854,7 @@ enum State
 	InProgress,
 	Finished,
 	Abandoned,
+	AbandonedByHost,
 }
 
 async fn iterate(
@@ -666,15 +916,7 @@ async fn iterate(
 	// If all live players are disconnected during the resting phase,
 	// the game cannot continue until at least one player reconnects
 	// and has finished rejoining.
-	ensure_live_players(
-		lobby,
-		automaton,
-		players,
-		connected_bots,
-		watchers,
-		updates,
-	)
-	.await?;
+	check(lobby, automaton, players, connected_bots, watchers, updates).await?;
 
 	let message = Message::Sync {
 		time_remaining_in_seconds: planning_time_in_seconds,
@@ -736,6 +978,101 @@ async fn iterate(
 	Ok(State::InProgress)
 }
 
+async fn iterate_client_hosted_game(
+	lobby: &LobbyInfo,
+	host: &mut HostClient,
+	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
+	updates: &mut mpsc::Receiver<Update>,
+	planning_time_in_seconds: Option<u32>,
+) -> Result<State, Error>
+{
+	// Wait for host to finish action phase.
+	sync_host(lobby, host, players, watchers, updates).await?;
+	if !host.is_connected()
+	{
+		debug!("Abandoning game in lobby {} without host...", lobby.id);
+		return Ok(State::AbandonedByHost);
+	}
+
+	// Resting phase.
+	rest(lobby, host, players, &mut Vec::new(), watchers, updates).await?;
+
+	// If the game has ended, we are done.
+	// We waited with this check until all players have finished animating,
+	// to avoid spoiling the outcome by changing ratings or posting to Discord.
+	if host.is_gameover
+	{
+		return Ok(State::Finished);
+	}
+	else if all_players_and_watchers_have_disconnected(players, watchers)
+	{
+		debug!("Abandoning game in lobby {} without clients...", lobby.id);
+		return Ok(State::Abandoned);
+	}
+
+	// If all live players are disconnected during the resting phase,
+	// the game cannot continue until at least one player reconnects
+	// and has finished rejoining.
+	check(lobby, host, players, &mut Vec::new(), watchers, updates).await?;
+
+	let message = Message::Sync {
+		time_remaining_in_seconds: planning_time_in_seconds,
+	};
+	for client in players.into_iter()
+	{
+		client.has_synced = false;
+		client.handle.send(message.clone());
+	}
+	for client in watchers.into_iter()
+	{
+		client.has_synced = false;
+		client.handle.send(message.clone());
+	}
+
+	// Planning phase.
+	sync_host(lobby, host, players, watchers, updates).await?;
+	if !host.is_connected()
+	{
+		debug!("Abandoning game in lobby {} without host...", lobby.id);
+		return Ok(State::AbandonedByHost);
+	}
+	sleep(lobby, host, players, &mut Vec::new(), watchers, updates).await?;
+
+	// Staging phase.
+	sync_host(lobby, host, players, watchers, updates).await?;
+	if !host.is_connected()
+	{
+		debug!("Abandoning game in lobby {} without host...", lobby.id);
+		return Ok(State::AbandonedByHost);
+	}
+	stage(lobby, host, players, &mut Vec::new(), watchers, updates).await?;
+
+	// Forward submitted orders.
+	for player in players.into_iter()
+	{
+		if let Some(orders) = player.submitted_orders.take()
+		{
+			host.handle.send(Message::Orders {
+				orders,
+				forwarding: Some(ForwardingMetadata::ClientHosted {
+					player: player.color,
+				}),
+			});
+		}
+	}
+
+	// Let the host know we have finished sending orders.
+	sync_host(lobby, host, players, watchers, updates).await?;
+	if !host.is_connected()
+	{
+		debug!("Abandoning game in lobby {} without host...", lobby.id);
+		return Ok(State::AbandonedByHost);
+	}
+
+	Ok(State::InProgress)
+}
+
 fn broadcast(
 	players: &mut Vec<PlayerClient>,
 	connected_bots: &mut Vec<BotClient>,
@@ -749,7 +1086,7 @@ fn broadcast(
 		let changes = cset.get(client.color);
 		let message = Message::Changes {
 			changes,
-			connected_bot: None,
+			forwarding: None,
 		};
 		client.handle.send(message);
 	}
@@ -759,7 +1096,7 @@ fn broadcast(
 		let changes = cset.get(client.color);
 		let message = Message::Changes {
 			changes,
-			connected_bot: Some(client.connected_bot_metadata.clone()),
+			forwarding: Some(client.forwarding_metadata),
 		};
 		client.handle.send(message);
 	}
@@ -775,7 +1112,7 @@ fn broadcast(
 		let changes = cset.get(client.vision_level);
 		let message = Message::Changes {
 			changes,
-			connected_bot: None,
+			forwarding: None,
 		};
 		client.handle.send(message);
 	}
@@ -794,7 +1131,7 @@ fn all_players_and_watchers_have_disconnected(
 
 async fn rest(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	players: &mut Vec<PlayerClient>,
 	bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -847,7 +1184,7 @@ async fn rest(
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
-				handle_resign(lobby, automaton, players, client_id).await?;
+				handle_resign(lobby, handler, players, client_id).await?;
 			}
 			Update::Leave {
 				client_id,
@@ -856,6 +1193,7 @@ async fn rest(
 			{
 				handle_leave(
 					lobby.id,
+					None,
 					players,
 					bots,
 					watchers,
@@ -877,7 +1215,7 @@ async fn rest(
 			{
 				handle_join(
 					lobby,
-					automaton,
+					handler,
 					players,
 					watchers,
 					RejoinPhase::Other,
@@ -891,8 +1229,26 @@ async fn rest(
 				)
 				.await?;
 			}
+			Update::FromHost(FromHost::Rejoin {
+				client_id,
+				changes,
+				rejoining_username,
+				rejoining_player: _,
+			}) => handle_rejoin_changes(
+				handler,
+				players,
+				watchers,
+				client_id,
+				rejoining_username,
+				RejoinPhase::Other,
+				changes,
+			),
 			Update::ForSetup(..) =>
 			{}
+			Update::FromHost(..) =>
+			{
+				debug!("Ignoring FromHost while not hostsyncing");
+			}
 			Update::Msg(message) =>
 			{
 				for client in players.iter_mut()
@@ -931,9 +1287,9 @@ fn all_players_or_watchers_have_synced(
 	}
 }
 
-async fn ensure_live_players(
+async fn check(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	players: &mut Vec<PlayerClient>,
 	bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -971,7 +1327,7 @@ async fn ensure_live_players(
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
-				handle_resign(lobby, automaton, players, client_id).await?;
+				handle_resign(lobby, handler, players, client_id).await?;
 			}
 			Update::Leave {
 				client_id,
@@ -980,6 +1336,7 @@ async fn ensure_live_players(
 			{
 				handle_leave(
 					lobby.id,
+					None,
 					players,
 					bots,
 					watchers,
@@ -1001,7 +1358,7 @@ async fn ensure_live_players(
 			{
 				handle_join(
 					lobby,
-					automaton,
+					handler,
 					players,
 					watchers,
 					RejoinPhase::Other,
@@ -1015,8 +1372,26 @@ async fn ensure_live_players(
 				)
 				.await?;
 			}
+			Update::FromHost(FromHost::Rejoin {
+				client_id,
+				changes,
+				rejoining_username,
+				rejoining_player: _,
+			}) => handle_rejoin_changes(
+				handler,
+				players,
+				watchers,
+				client_id,
+				rejoining_username,
+				RejoinPhase::Other,
+				changes,
+			),
 			Update::ForSetup(..) =>
 			{}
+			Update::FromHost(..) =>
+			{
+				debug!("Ignoring FromHost while not hostsyncing");
+			}
 			Update::Msg(message) =>
 			{
 				for client in players.iter_mut()
@@ -1045,7 +1420,7 @@ fn at_least_one_live_player(players: &mut Vec<PlayerClient>) -> bool
 
 async fn sleep(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	players: &mut Vec<PlayerClient>,
 	connected_bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -1066,6 +1441,7 @@ async fn sleep(
 		None => Duration::from_secs(24 * 60 * 60),
 	};
 	let end = start + duration;
+	trace!("Planning phase ({}s) started.", duration.as_secs());
 
 	// Wait for 1 second at the start of the planning phase, to prevent
 	// blasting through the game in the time between the last human client
@@ -1130,7 +1506,7 @@ async fn sleep(
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
-				handle_resign(lobby, automaton, players, client_id).await?;
+				handle_resign(lobby, handler, players, client_id).await?;
 
 				if too_few_potential_winners(players, num_bots)
 				{
@@ -1145,6 +1521,7 @@ async fn sleep(
 			{
 				handle_leave(
 					lobby.id,
+					None,
 					players,
 					connected_bots,
 					watchers,
@@ -1169,7 +1546,7 @@ async fn sleep(
 					.map(|timer| timer - start.elapsed().as_secs() as u32);
 				handle_join(
 					lobby,
-					automaton,
+					handler,
 					players,
 					watchers,
 					RejoinPhase::Planning {
@@ -1185,8 +1562,34 @@ async fn sleep(
 				)
 				.await?;
 			}
+			Update::FromHost(FromHost::Rejoin {
+				client_id,
+				changes,
+				rejoining_username,
+				rejoining_player: _,
+			}) =>
+			{
+				let time_remaining_in_seconds = lobby
+					.planning_time_in_seconds
+					.map(|timer| timer - start.elapsed().as_secs() as u32);
+				handle_rejoin_changes(
+					handler,
+					players,
+					watchers,
+					client_id,
+					rejoining_username,
+					RejoinPhase::Planning {
+						time_remaining_in_seconds,
+					},
+					changes,
+				);
+			}
 			Update::ForSetup(..) =>
 			{}
+			Update::FromHost(..) =>
+			{
+				debug!("Ignoring FromHost while not hostsyncing");
+			}
 			Update::Msg(message) =>
 			{
 				for client in players.iter_mut()
@@ -1236,7 +1639,7 @@ fn all_players_have_submitted_orders(
 
 async fn stage(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	players: &mut Vec<PlayerClient>,
 	connected_bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -1245,6 +1648,7 @@ async fn stage(
 {
 	let start = Instant::now();
 	let end = start + Duration::from_secs(10);
+	trace!("Staging phase started.");
 
 	// There is a 10 second grace period for anyone whose orders we
 	// haven't received; they might have sent their orders before
@@ -1300,7 +1704,7 @@ async fn stage(
 			}
 			Update::ForGame(Sub::Resign { client_id }) =>
 			{
-				handle_resign(lobby, automaton, players, client_id).await?;
+				handle_resign(lobby, handler, players, client_id).await?;
 			}
 			Update::Leave {
 				client_id,
@@ -1309,6 +1713,7 @@ async fn stage(
 			{
 				handle_leave(
 					lobby.id,
+					None,
 					players,
 					connected_bots,
 					watchers,
@@ -1330,7 +1735,7 @@ async fn stage(
 			{
 				handle_join(
 					lobby,
-					automaton,
+					handler,
 					players,
 					watchers,
 					RejoinPhase::Other,
@@ -1343,6 +1748,232 @@ async fn stage(
 					invite,
 				)
 				.await?;
+			}
+			Update::FromHost(FromHost::Rejoin {
+				client_id,
+				changes,
+				rejoining_username,
+				rejoining_player: _,
+			}) => handle_rejoin_changes(
+				handler,
+				players,
+				watchers,
+				client_id,
+				rejoining_username,
+				RejoinPhase::Other,
+				changes,
+			),
+			Update::ForSetup(..) =>
+			{}
+			Update::FromHost(..) =>
+			{
+				debug!("Ignoring FromHost while not hostsyncing");
+			}
+			Update::Msg(message) =>
+			{
+				for client in players.iter_mut()
+				{
+					client.handle.send(message.clone());
+				}
+				for client in watchers.iter_mut()
+				{
+					client.handle.send(message.clone());
+				}
+			}
+			Update::Pulse =>
+			{}
+		}
+	}
+
+	Ok(())
+}
+
+async fn sync_host(
+	lobby: &LobbyInfo,
+	host: &mut HostClient,
+	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
+	updates: &mut mpsc::Receiver<Update>,
+) -> Result<(), Error>
+{
+	host.handle.send(Message::HostSync { metadata: None });
+
+	let mut has_synced = false;
+	while !has_synced
+	{
+		trace!("Waiting for host sync...");
+
+		// We only check this here, but if the host disconnected before,
+		// sending the HostSync at the start of this function should (?)
+		// have let us know that it is disconnected.
+		if !host.is_connected()
+		{
+			return Ok(());
+		}
+
+		let update = match updates.recv().await
+		{
+			Some(update) => update,
+			None => return Err(Error::Abandoned),
+		};
+
+		match update
+		{
+			Update::FromHost(FromHost::Sync {
+				client_id,
+				metadata,
+			}) =>
+			{
+				if client_id == host.id
+				{
+					has_synced = true;
+
+					if let Some(metadata) = metadata
+					{
+						host.is_gameover = metadata.game_over;
+						host.awarded_stars = metadata.stars;
+						for client in players.iter_mut()
+						{
+							if metadata.defeated_players.contains(&client.color)
+							{
+								client.is_defeated = true;
+							}
+						}
+					}
+				}
+				else
+				{
+					debug!("Ignoring sync from non-host client {}", client_id);
+				}
+			}
+			Update::FromHost(FromHost::Briefing {
+				client_id,
+				briefing,
+			}) =>
+			{
+				if client_id == host.id
+				{
+					let message = Message::Briefing {
+						briefing: briefing.clone(),
+					};
+					for client in players.iter_mut()
+					{
+						client.handle.send(message.clone());
+					}
+					for client in watchers.iter_mut()
+					{
+						client.handle.send(message.clone());
+					}
+				}
+				else
+				{
+					debug!("Ignoring sync from non-host client {}", client_id);
+				}
+			}
+			Update::FromHost(FromHost::Changes {
+				client_id,
+				vision,
+				changes,
+			}) =>
+			{
+				if client_id == host.id
+				{
+					forward_changes(players, watchers, vision, changes);
+				}
+				else
+				{
+					debug!("Ignoring sync from non-host client {}", client_id);
+				}
+			}
+			Update::ForGame(Sub::Orders { client_id, .. }) =>
+			{
+				debug!("Ignoring orders from {} while hostsyncing", client_id);
+			}
+			Update::ForGame(Sub::BotOrders { client_id, .. }) =>
+			{
+				debug!("Ignoring orders from {} while hostsyncing", client_id);
+			}
+			Update::ForGame(Sub::Sync { client_id }) =>
+			{
+				debug!("Ignoring sync from {} while hostsyncing", client_id);
+			}
+			Update::ForGame(Sub::Resign { client_id }) =>
+			{
+				if let Some(client) = players.iter().find(|x| x.id == client_id)
+				{
+					host.handle_resign(client);
+				}
+			}
+			Update::Leave {
+				client_id,
+				mut general_chat,
+			} =>
+			{
+				handle_leave(
+					lobby.id,
+					Some(host),
+					players,
+					&mut Vec::new(),
+					watchers,
+					client_id,
+					&mut general_chat,
+				)
+				.await?;
+			}
+			Update::Join {
+				client_id,
+				client_user_id,
+				client_username,
+				client_handle,
+				lobby_sendbuffer,
+				mut general_chat,
+				desired_metadata: _,
+				invite,
+			} =>
+			{
+				handle_join(
+					lobby,
+					host,
+					players,
+					watchers,
+					RejoinPhase::Other,
+					client_id,
+					client_user_id,
+					client_username,
+					client_handle,
+					lobby_sendbuffer,
+					&mut general_chat,
+					invite,
+				)
+				.await?;
+			}
+			Update::FromHost(FromHost::Rejoin {
+				client_id,
+				changes: _,
+				rejoining_username,
+				rejoining_player,
+			}) =>
+			{
+				// The host should not send HostRejoinChanges during syncing,
+				// as it would be confusing whether these changes should be
+				// received by the rejoining client before or after any changes
+				// that the host is sending while syncing.
+				// If the host receives a HostRejoinRequest while syncing,
+				// it must wait until it's done to send the HostRejoinChanges,
+				// but those changes might arrive after we have sent another
+				// HostSync message.
+				// In this case, we ask them for another set of changes.
+				if client_id == host.id
+				{
+					host.handle.send(Message::HostRejoinRequest {
+						username: rejoining_username,
+						player: rejoining_player,
+					});
+				}
+				else
+				{
+					debug!("Ignoring non-host client {}", client_id);
+				}
 			}
 			Update::ForSetup(..) =>
 			{}
@@ -1365,6 +1996,33 @@ async fn stage(
 	Ok(())
 }
 
+fn forward_changes(
+	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
+	vision: PlayerColor,
+	changes: Vec<Change>,
+)
+{
+	for client in watchers.iter_mut()
+	{
+		if client.vision_level == vision
+		{
+			client.handle.send(Message::Changes {
+				changes: changes.clone(),
+				forwarding: None,
+			});
+		}
+	}
+
+	if let Some(client) = players.iter_mut().find(|x| x.color == vision)
+	{
+		client.handle.send(Message::Changes {
+			changes,
+			forwarding: None,
+		});
+	}
+}
+
 async fn linger(
 	lobby: &LobbyInfo,
 	players: &mut Vec<PlayerClient>,
@@ -1384,6 +2042,7 @@ async fn linger(
 			{
 				handle_leave(
 					lobby.id,
+					None,
 					players,
 					bots,
 					watchers,
@@ -1399,6 +2058,8 @@ async fn linger(
 			Update::ForSetup(..) =>
 			{}
 			Update::ForGame(..) =>
+			{}
+			Update::FromHost(..) =>
 			{}
 			Update::Msg(message) =>
 			{
@@ -1421,7 +2082,7 @@ async fn linger(
 
 async fn handle_join(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	players: &mut Vec<PlayerClient>,
 	watchers: &mut Vec<WatcherClient>,
 	rejoin_phase: RejoinPhase,
@@ -1436,7 +2097,7 @@ async fn handle_join(
 {
 	match do_join(
 		lobby,
-		automaton,
+		handler,
 		players,
 		watchers,
 		rejoin_phase,
@@ -1464,7 +2125,7 @@ async fn handle_join(
 
 fn do_join(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	players: &mut Vec<PlayerClient>,
 	watchers: &mut Vec<WatcherClient>,
 	rejoin_phase: RejoinPhase,
@@ -1555,9 +2216,8 @@ fn do_join(
 	client_handle.send(Message::PickMap {
 		map_name: lobby.map_name.clone(),
 	});
-	if let Some(_id) = lobby.challenge
+	if let Some(challenge_key) = lobby.challenge.to_owned()
 	{
-		let challenge_key = challenge::get_current_key();
 		client_handle.send(Message::PickChallenge { challenge_key });
 	}
 
@@ -1579,7 +2239,7 @@ fn do_join(
 			ruleset_name: Some(lobby.ruleset_name.clone()),
 			timer_in_seconds: lobby.planning_time_in_seconds,
 			difficulty: None,
-			connected_bot: None,
+			forwarding: None,
 		});
 	}
 	else
@@ -1590,7 +2250,7 @@ fn do_join(
 			ruleset_name: Some(lobby.ruleset_name.clone()),
 			timer_in_seconds: lobby.planning_time_in_seconds,
 			difficulty: None,
-			connected_bot: None,
+			forwarding: None,
 		});
 	}
 
@@ -1605,32 +2265,12 @@ fn do_join(
 		Some(color) => color,
 		None => role.vision_level(),
 	};
-	let cset = automaton.rejoin(vision)?;
-	let changes = cset.get(vision);
-
-	client_handle.send(Message::ReplayWithAnimations {
-		on_or_off: OnOrOff::Off,
-	});
-	client_handle.send(Message::Changes {
-		changes,
-		connected_bot: None,
-	});
-	client_handle.send(Message::ReplayWithAnimations {
-		on_or_off: OnOrOff::On,
-	});
-	match rejoin_phase
-	{
-		RejoinPhase::Planning {
-			time_remaining_in_seconds,
-		} =>
-		{
-			client_handle.send(Message::Sync {
-				time_remaining_in_seconds,
-			});
-		}
-		RejoinPhase::Other =>
-		{}
-	}
+	handler.handle_rejoin(
+		&mut client_handle,
+		&client_username,
+		rejoin_phase,
+		vision,
+	)?;
 
 	let update = client::Update::JoinedLobby {
 		lobby_id: lobby.id,
@@ -1692,9 +2332,70 @@ enum RejoinResult
 	AccessDenied,
 }
 
+fn handle_rejoin_changes(
+	handler: &mut dyn RejoinAndResignHandler,
+	players: &mut Vec<PlayerClient>,
+	watchers: &mut Vec<WatcherClient>,
+	host_client_id: Keycode,
+	rejoining_username: String,
+	rejoin_phase: RejoinPhase,
+	changes: Vec<Change>,
+)
+{
+	if !handler.confirm_identity(host_client_id)
+	{
+		debug!("Ignoring non-host client {}", host_client_id);
+		return;
+	}
+
+	if let Some(client) = players
+		.iter_mut()
+		.find(|x| x.username == rejoining_username)
+	{
+		send_rejoin_changes(&mut client.handle, rejoin_phase, changes);
+	}
+	else if let Some(client) = watchers
+		.iter_mut()
+		.find(|x| x.username == rejoining_username)
+	{
+		send_rejoin_changes(&mut client.handle, rejoin_phase, changes);
+	}
+}
+
+fn send_rejoin_changes(
+	client_handle: &mut client::Handle,
+	rejoin_phase: RejoinPhase,
+	changes: Vec<Change>,
+)
+{
+	client_handle.send(Message::ReplayWithAnimations {
+		on_or_off: OnOrOff::Off,
+	});
+	client_handle.send(Message::Changes {
+		changes,
+		forwarding: None,
+	});
+	client_handle.send(Message::ReplayWithAnimations {
+		on_or_off: OnOrOff::On,
+	});
+	match rejoin_phase
+	{
+		RejoinPhase::Planning {
+			time_remaining_in_seconds,
+		} =>
+		{
+			client_handle.send(Message::Sync {
+				time_remaining_in_seconds,
+			});
+		}
+		RejoinPhase::Other =>
+		{}
+	}
+}
+
 async fn handle_resign(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	players: &mut Vec<PlayerClient>,
 	client_id: Keycode,
 ) -> Result<(), Error>
@@ -1705,14 +2406,14 @@ async fn handle_resign(
 		None => return Err(Error::ClientGone { client_id }),
 	};
 
-	automaton.resign(client.color);
+	handler.handle_resign(client);
 
-	retire(lobby, automaton, client).await
+	retire(lobby, handler, client).await
 }
 
 async fn retire(
 	lobby: &LobbyInfo,
-	automaton: &mut Automaton,
+	handler: &mut dyn RejoinAndResignHandler,
 	client: &mut PlayerClient,
 ) -> Result<(), Error>
 {
@@ -1722,30 +2423,157 @@ async fn retire(
 		None => return Ok(()),
 	};
 
-	// Because players may resign immediately after starting the game,
-	// e.g. due to lobby mishaps or deciding not to play on a certain map,
-	// the game is not rated until the game reaches the third action phase,
-	// which is when the Automaton updates its _round variable.
-	// Note that this means it is possible for someone to resign while unrated
-	// even though their opponent keeps playing a rated game.
-	let is_rated = automaton.current_round() >= 3;
-	let result = PlayerResult {
-		user_id: client.user_id,
-		username: client.username.clone(),
-		is_rated,
-		is_victorious: !automaton.is_defeated(client.color),
-		score: automaton.score(client.color),
-		awarded_stars: automaton.award(client.color),
-		match_type: lobby.match_type,
-		challenge: lobby.challenge,
-	};
-	let update = rating::Update::GameResult(result);
-	callback.send(update).await?;
+	debug!("Retiring client {}", client.id);
+	if let Some(player_result) = handler.handle_retire(lobby, client)
+	{
+		debug!("Client {} retired with {:?}", client.id, player_result);
+		let update = rating::Update::GameResult(player_result);
+		callback.send(update).await?;
+	}
 	Ok(())
+}
+
+trait RejoinAndResignHandler: Send
+{
+	fn confirm_identity(&self, id: Keycode) -> bool;
+
+	fn handle_rejoin(
+		&mut self,
+		client_handle: &mut client::Handle,
+		client_username: &str,
+		rejoin_phase: RejoinPhase,
+		vision: PlayerColor,
+	) -> Result<(), Error>;
+
+	fn handle_resign(&mut self, client: &PlayerClient);
+
+	fn handle_retire(
+		&mut self,
+		lobby: &LobbyInfo,
+		client: &PlayerClient,
+	) -> Option<PlayerResult>;
+}
+
+impl RejoinAndResignHandler for Automaton
+{
+	fn confirm_identity(&self, _id: Keycode) -> bool
+	{
+		false
+	}
+
+	fn handle_rejoin(
+		&mut self,
+		client_handle: &mut client::Handle,
+		_client_username: &str,
+		rejoin_phase: RejoinPhase,
+		vision: PlayerColor,
+	) -> Result<(), Error>
+	{
+		let cset = self.rejoin(vision)?;
+		let changes = cset.get(vision);
+
+		send_rejoin_changes(client_handle, rejoin_phase, changes);
+
+		Ok(())
+	}
+
+	fn handle_resign(&mut self, client: &PlayerClient)
+	{
+		self.resign(client.color);
+	}
+
+	fn handle_retire(
+		&mut self,
+		lobby: &LobbyInfo,
+		client: &PlayerClient,
+	) -> Option<PlayerResult>
+	{
+		// Because players may resign immediately after starting the game,
+		// e.g. due to lobby mishaps or deciding not to play on a certain map,
+		// the game is not rated until the game reaches the third action phase,
+		// which is when the Automaton updates its _round variable.
+		// Note that this means it is possible for someone to resign while
+		// unrated even though their opponent keeps playing a rated game.
+		let is_rated = self.current_round() >= 3;
+		let result = PlayerResult {
+			user_id: client.user_id,
+			username: client.username.clone(),
+			is_rated,
+			is_victorious: !self.is_defeated(client.color),
+			score: self.score(client.color),
+			awarded_stars: self.award(client.color),
+			match_type: lobby.match_type,
+			challenge: lobby.challenge.clone(),
+		};
+		Some(result)
+	}
+}
+
+impl RejoinAndResignHandler for HostClient
+{
+	fn confirm_identity(&self, id: Keycode) -> bool
+	{
+		id == self.id
+	}
+
+	fn handle_rejoin(
+		&mut self,
+		client_handle: &mut client::Handle,
+		client_username: &str,
+		_rejoin_phase: RejoinPhase,
+		vision: PlayerColor,
+	) -> Result<(), Error>
+	{
+		client_handle.send(Message::ReplayWithAnimations {
+			on_or_off: OnOrOff::Off,
+		});
+		self.handle.send(Message::HostRejoinRequest {
+			player: vision,
+			username: client_username.to_string(),
+		});
+		Ok(())
+	}
+
+	fn handle_resign(&mut self, client: &PlayerClient)
+	{
+		self.handle.send(Message::Resign {
+			username: Some(client.username.clone()),
+		});
+	}
+
+	fn handle_retire(
+		&mut self,
+		lobby: &LobbyInfo,
+		client: &PlayerClient,
+	) -> std::option::Option<PlayerResult>
+	{
+		if lobby.challenge.is_some()
+			&& client.id == self.id
+			&& self.awarded_stars > 0
+		{
+			debug!("Awarding host with {} stars", self.awarded_stars);
+			let result = PlayerResult {
+				user_id: client.user_id,
+				username: client.username.clone(),
+				is_rated: false,
+				is_victorious: true,
+				score: 0,
+				awarded_stars: self.awarded_stars,
+				match_type: lobby.match_type,
+				challenge: lobby.challenge.clone(),
+			};
+			Some(result)
+		}
+		else
+		{
+			None
+		}
+	}
 }
 
 async fn handle_leave(
 	lobby_id: Keycode,
+	host: Option<&mut HostClient>,
 	players: &mut Vec<PlayerClient>,
 	bots: &mut Vec<BotClient>,
 	watchers: &mut Vec<WatcherClient>,
@@ -1753,6 +2581,14 @@ async fn handle_leave(
 	general_chat: &mut mpsc::Sender<chat::Update>,
 ) -> Result<(), Error>
 {
+	if let Some(host) = host
+	{
+		if host.id == client_id
+		{
+			host.handle.take();
+		}
+	}
+
 	let mut was_bot = false;
 	for bot in bots
 	{
@@ -1821,6 +2657,7 @@ async fn handle_leave(
 pub enum Error
 {
 	Abandoned,
+	InvalidSetup,
 	MissingChallengeId,
 	ClientGone
 	{
@@ -1880,6 +2717,7 @@ impl fmt::Display for Error
 		match self
 		{
 			Error::Abandoned => write!(f, "{:#?}", &self),
+			Error::InvalidSetup => write!(f, "{:#?}", &self),
 			Error::MissingChallengeId => write!(f, "{:#?}", &self),
 			Error::ClientGone { .. } => write!(f, "{:#?}", &self),
 			Error::ResultDropped { .. } => write!(f, "{:#?}", &self),
@@ -1903,7 +2741,7 @@ pub struct PlayerResult
 	pub awarded_stars: i32,
 
 	pub match_type: MatchType,
-	pub challenge: Option<ChallengeId>,
+	pub challenge: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -34,7 +34,6 @@ pub use handle::Handle;
 
 use crate::common::keycode::Keycode;
 use crate::common::version::*;
-use crate::logic::ruleset;
 use crate::server::chat;
 use crate::server::discord_api;
 use crate::server::game;
@@ -80,7 +79,8 @@ struct Client
 	general_chat_reserve: Option<mpsc::Sender<chat::Update>>,
 	general_chat: Option<mpsc::Sender<chat::Update>>,
 	rating_database: mpsc::Sender<rating::Update>,
-	data_for_rating: Option<(rating::Data, watch::Sender<rating::Data>)>,
+	data_for_rating:
+		Option<(rating::Data, watch::Sender<rating::RatingAndStars>)>,
 	canary_for_lobbies: mpsc::Sender<()>,
 	lobby_authority: sync::Arc<atomic::AtomicU64>,
 	lobby: Option<mpsc::Sender<lobby::Update>>,
@@ -733,8 +733,9 @@ async fn handle_update(
 			client.username = username;
 			client.unlocks = unlocks;
 
-			let (rating_in, rating_out) = watch::channel(rating_data);
-			client.data_for_rating = Some((rating_data, rating_in));
+			let (rating_in, rating_out) =
+				watch::channel(rating_data.rating_and_stars());
+			client.data_for_rating = Some((rating_data.clone(), rating_in));
 
 			match &mut client.general_chat_reserve
 			{
@@ -744,7 +745,8 @@ async fn handle_update(
 						client_id: client.id,
 						username: client.username.clone(),
 						unlocks: client.unlocks.clone(),
-						rating_data: rating_out,
+						rating_data,
+						rating_and_stars: rating_out,
 						handle: client.handle.clone(),
 					};
 					match chat.try_send(request)
@@ -1295,6 +1297,36 @@ async fn handle_message(
 				debug!("Ignoring NameLobby message from unlobbied client");
 			}
 		},
+		Message::ClaimHost { username: None } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						error!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update = lobby::Update::ForSetup(lobby::Sub::ClaimHost {
+					general_chat,
+					username: client.username.clone(),
+				});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring ClaimHost from unlobbied client");
+			}
+		},
+		Message::ClaimHost { .. } =>
+		{
+			warn!("Invalid message from client: {:?}", message);
+			return Err(Error::Invalid);
+		}
 		Message::ClaimRole { username, role } => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -1420,6 +1452,32 @@ async fn handle_message(
 				debug!("Ignoring PickMap from unlobbied client");
 			}
 		},
+		Message::PickChallenge { challenge_key } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let general_chat = match &client.general_chat
+				{
+					Some(general_chat) => general_chat.clone(),
+					None =>
+					{
+						error!("Expected general_chat");
+						return Err(Error::Unexpected);
+					}
+				};
+
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::PickChallenge {
+						general_chat,
+						challenge_key,
+					});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring PickMap from unlobbied client");
+			}
+		},
 		Message::PickTimer { seconds } => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -1447,9 +1505,25 @@ async fn handle_message(
 				debug!("Ignoring PickRuleset from unlobbied client");
 			}
 		},
+		Message::ListMap { map_name, metadata } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = lobby::Update::ForSetup(lobby::Sub::HostListMap {
+					client_id: client.id,
+					map_name,
+					metadata,
+				});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring ListMap from unlobbied client");
+			}
+		},
 		Message::ListRuleset {
 			ruleset_name,
-			metadata: Some(ListRulesetMetadata { lobby_id }),
+			metadata: Some(ListRulesetMetadata::Forwarding { lobby_id }),
 		} if client.is_bot() =>
 		{
 			if let Some(lobby) = client.bot_lobbies.get_mut(&lobby_id)
@@ -1480,7 +1554,26 @@ async fn handle_message(
 		}
 		Message::ListRuleset {
 			ruleset_name,
-			metadata: _,
+			metadata: Some(ListRulesetMetadata::FromHost { self_hosted: true }),
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::HostListRuleset {
+						client_id: client.id,
+						ruleset_name,
+					});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring ListRuleset from unlobbied client");
+			}
+		},
+		Message::ListRuleset {
+			ruleset_name,
+			metadata: None,
 		} => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -1509,9 +1602,15 @@ async fn handle_message(
 				debug!("Ignoring ListRuleset from unlobbied client");
 			}
 		},
+		Message::ListRuleset { .. } =>
+		{
+			warn!("Invalid message from client: {:?}", message);
+			return Err(Error::Invalid);
+		}
 		Message::ListAi {
 			ai_name,
-			metadata: Some(BotAuthorsMetadata { authors }),
+			metadata:
+				Some(ListAiMetadata::Authors(BotAuthorsMetadata { authors })),
 		} if client.is_bot() => match client.general_chat
 		{
 			Some(ref mut general_chat) =>
@@ -1576,6 +1675,24 @@ async fn handle_message(
 			{
 				error!("Invalid message from offline bot");
 				return Err(Error::Invalid);
+			}
+		},
+		Message::ListAi {
+			ai_name,
+			metadata: Some(ListAiMetadata::FromHost { self_hosted: true }),
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = lobby::Update::ForSetup(lobby::Sub::HostListAi {
+					client_id: client.id,
+					ai_name,
+				});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring ListAi from unlobbied client");
 			}
 		},
 		Message::ListAi { .. } =>
@@ -1662,10 +1779,55 @@ async fn handle_message(
 				debug!("Ignoring EnableCustomMaps from unlobbied client");
 			}
 		},
-		Message::RulesetRequest { ruleset_name } =>
+		Message::RulesetRequest { ruleset_name } => match client.lobby
 		{
-			handle_ruleset_request(client, ruleset_name).await?;
-		}
+			Some(ref mut lobby) =>
+			{
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::RulesetRequest {
+						client_id: client.id,
+						ruleset_name,
+					});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring RulesetRequest from unlobbied client");
+			}
+		},
+		Message::RulesetData { ruleset_name, data } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::HostRulesetData {
+						client_id: client.id,
+						ruleset_name,
+						data,
+					});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring RulesetData from unlobbied client");
+			}
+		},
+		Message::RulesetUnknown { ruleset_name } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update =
+					lobby::Update::ForSetup(lobby::Sub::HostRulesetUnknown {
+						client_id: client.id,
+						ruleset_name,
+					});
+				lobby.send(update).await?;
+			}
+			None =>
+			{
+				debug!("Ignoring RulesetUnknown from unlobbied client");
+			}
+		},
 		Message::Start => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -1710,9 +1872,70 @@ async fn handle_message(
 			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
+		Message::HostSync { metadata } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = lobby::Update::FromHost(game::FromHost::Sync {
+					client_id: client.id,
+					metadata,
+				});
+				lobby.send(update).await?
+			}
+			None =>
+			{
+				debug!("Ignoring HostSync from unlobbied client");
+			}
+		},
+		Message::HostRejoinChanges {
+			changes,
+			username,
+			player,
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = lobby::Update::FromHost(game::FromHost::Rejoin {
+					client_id: client.id,
+					changes,
+					rejoining_username: username,
+					rejoining_player: player,
+				});
+				lobby.send(update).await?
+			}
+			None =>
+			{
+				debug!("Ignoring client-hosted rejoin from unlobbied client");
+			}
+		},
+		Message::Changes {
+			changes,
+			forwarding: Some(ForwardingMetadata::ClientHosted { player }),
+		} => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update = lobby::Update::FromHost(game::FromHost::Changes {
+					client_id: client.id,
+					changes,
+					vision: player,
+				});
+				lobby.send(update).await?
+			}
+			None =>
+			{
+				debug!("Ignoring client-hosted Changes from unlobbied client");
+			}
+		},
+		Message::Changes { .. } =>
+		{
+			warn!("Invalid message from client: {:?}", message);
+			return Err(Error::Invalid);
+		}
 		Message::Orders {
 			orders,
-			connected_bot: Some(ConnectedBotMetadata { lobby_id, slot }),
+			forwarding:
+				Some(ForwardingMetadata::ConnectedBot { lobby_id, slot }),
 		} if client.is_bot() =>
 		{
 			if let Some(lobby) = client.bot_lobbies.get_mut(&lobby_id)
@@ -1731,7 +1954,7 @@ async fn handle_message(
 		}
 		Message::Orders {
 			orders,
-			connected_bot: _,
+			forwarding: None,
 		} => match client.lobby
 		{
 			Some(ref mut lobby) =>
@@ -1747,6 +1970,11 @@ async fn handle_message(
 				debug!("Ignoring Orders from unlobbied client");
 			}
 		},
+		Message::Orders { .. } =>
+		{
+			warn!("Invalid message from client: {:?}", message);
+			return Err(Error::Invalid);
+		}
 		Message::Sync {
 			time_remaining_in_seconds: None,
 		} => match client.lobby
@@ -1768,6 +1996,22 @@ async fn handle_message(
 			warn!("Invalid message from client: {:?}", message);
 			return Err(Error::Invalid);
 		}
+		Message::Briefing { briefing } => match client.lobby
+		{
+			Some(ref mut lobby) =>
+			{
+				let update =
+					lobby::Update::FromHost(game::FromHost::Briefing {
+						client_id: client.id,
+						briefing,
+					});
+				lobby.send(update).await?
+			}
+			None =>
+			{
+				debug!("Ignoring Briefing from unlobbied client");
+			}
+		},
 		Message::Chat { .. } if client.username.is_empty() =>
 		{
 			info!("Ignoring Chat from client without username: {:?}", message);
@@ -1842,20 +2086,15 @@ async fn handle_message(
 		| Message::DisbandLobby { .. }
 		| Message::ListLobby { .. }
 		| Message::ListChallenge { .. }
-		| Message::ListMap { .. }
-		| Message::PickChallenge { .. }
 		| Message::AssignColor { .. }
-		| Message::RulesetData { .. }
-		| Message::RulesetUnknown { .. }
 		| Message::Secrets { .. }
 		| Message::Skins { .. }
 		| Message::InGame { .. }
 		| Message::Game { .. }
 		| Message::Tutorial { .. }
 		| Message::Challenge { .. }
-		| Message::Briefing { .. }
 		| Message::ReplayWithAnimations { .. }
-		| Message::Changes { .. }
+		| Message::HostRejoinRequest { .. }
 		| Message::RatingAndStars { .. }
 		| Message::UpdatedRating { .. }
 		| Message::RecentStars { .. }
@@ -1940,22 +2179,4 @@ fn joining_server(
 		}
 		Err(error) => Err(error.into()),
 	}
-}
-
-async fn handle_ruleset_request(
-	client: &mut Client,
-	ruleset_name: String,
-) -> Result<(), Error>
-{
-	if !ruleset::exists(&ruleset_name)
-	{
-		let message = Message::RulesetUnknown { ruleset_name };
-		client.sendbuffer.send(message).await?;
-		return Ok(());
-	}
-
-	let data = ruleset::load_data(&ruleset_name).await?;
-	let message = Message::RulesetData { ruleset_name, data };
-	client.sendbuffer.send(message).await?;
-	Ok(())
 }

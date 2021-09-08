@@ -69,7 +69,7 @@ pub struct Server
 	slack_setup: slack_api::Setup,
 	discord_setup: discord_api::Setup,
 	rating_database: rating::Database,
-	current_challenge: challenge::Challenge,
+	challenge_pool: Vec<challenge::Challenge>,
 	ip_address: String,
 }
 
@@ -99,7 +99,7 @@ pub fn setup_server(
 		slack_setup: slack_api::setup(settings)?,
 		discord_setup: discord_api::setup(settings)?,
 		rating_database: rating::initialize(settings)?,
-		current_challenge: challenge::load_current()?,
+		challenge_pool: challenge::load_pool()?,
 		ip_address,
 	};
 	Ok(server)
@@ -116,7 +116,7 @@ pub async fn run_server(server: Server)
 		slack_setup,
 		discord_setup,
 		rating_database,
-		current_challenge,
+		challenge_pool,
 		ip_address,
 	} = server;
 
@@ -136,8 +136,7 @@ pub async fn run_server(server: Server)
 		wait_for_close(general_canary_out, client_canary_out, state_in);
 
 	let (general_in, general_out) = mpsc::channel::<chat::Update>(10000);
-	let chat_task =
-		chat::run(general_out, general_canary_in, current_challenge);
+	let chat_task = chat::run(general_out, general_canary_in, &challenge_pool);
 
 	let logrotate_task =
 		logrotate::run(log_setup, state_out.clone(), slack_in.clone());

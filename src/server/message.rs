@@ -118,6 +118,11 @@ pub enum Message
 
 		metadata: LobbyMetadata,
 	},
+	ClaimHost
+	{
+		#[serde(default, skip_serializing_if = "is_zero", rename = "sender")]
+		username: Option<String>,
+	},
 	ClaimRole
 	{
 		#[serde(rename = "sender")]
@@ -199,7 +204,7 @@ pub enum Message
 		ai_name: String,
 
 		#[serde(default, skip_serializing_if = "Option::is_none")]
-		metadata: Option<BotAuthorsMetadata>,
+		metadata: Option<ListAiMetadata>,
 	},
 	ListMap
 	{
@@ -281,7 +286,7 @@ pub enum Message
 
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		#[serde(rename = "metadata")]
-		connected_bot: Option<ConnectedBotMetadata>,
+		forwarding: Option<ForwardingMetadata>,
 	},
 	Tutorial
 	{
@@ -314,6 +319,27 @@ pub enum Message
 		#[serde(default, skip_serializing_if = "is_zero", rename = "content")]
 		username: Option<String>,
 	},
+	HostSync
+	{
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		metadata: Option<HostSyncMetadata>,
+	},
+	HostRejoinRequest
+	{
+		player: PlayerColor,
+
+		#[serde(rename = "content")]
+		username: String,
+	},
+	HostRejoinChanges
+	{
+		player: PlayerColor,
+
+		#[serde(rename = "content")]
+		username: String,
+
+		changes: Vec<Change>,
+	},
 	#[serde(rename = "change")]
 	Changes
 	{
@@ -321,7 +347,7 @@ pub enum Message
 
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		#[serde(rename = "metadata")]
-		connected_bot: Option<ConnectedBotMetadata>,
+		forwarding: Option<ForwardingMetadata>,
 	},
 	#[serde(rename = "order_new")]
 	Orders
@@ -330,7 +356,7 @@ pub enum Message
 
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		#[serde(rename = "metadata")]
-		connected_bot: Option<ConnectedBotMetadata>,
+		forwarding: Option<ForwardingMetadata>,
 	},
 	Sync
 	{
@@ -357,6 +383,9 @@ pub enum Message
 	},
 	RecentStars
 	{
+		#[serde(rename = "content")]
+		challenge_key: String,
+
 		#[serde(default, skip_serializing_if = "is_zero", rename = "time")]
 		stars: i32,
 	},
@@ -504,17 +533,43 @@ pub struct BotAuthorsMetadata
 	pub authors: String,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Debug)]
-pub struct ConnectedBotMetadata
+#[derive(PartialEq, Eq, Clone, Copy, Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum ForwardingMetadata
 {
-	pub lobby_id: Keycode,
-	pub slot: Botslot,
+	ConnectedBot
+	{
+		lobby_id: Keycode, slot: Botslot
+	},
+	ClientHosted
+	{
+		player: PlayerColor
+	},
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum ListAiMetadata
+{
+	FromHost
+	{
+		self_hosted: bool,
+	},
+	Authors(BotAuthorsMetadata),
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
-pub struct ListRulesetMetadata
+#[serde(untagged)]
+pub enum ListRulesetMetadata
 {
-	pub lobby_id: Keycode,
+	FromHost
+	{
+		self_hosted: bool
+	},
+	Forwarding
+	{
+		lobby_id: Keycode
+	},
 }
 
 #[derive(
@@ -551,4 +606,16 @@ pub enum OnOrOff
 {
 	Off = 0,
 	On = 1,
+}
+
+#[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
+pub struct HostSyncMetadata
+{
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub defeated_players: Vec<PlayerColor>,
+
+	pub game_over: bool,
+
+	#[serde(default, skip_serializing_if = "is_zero")]
+	pub stars: i32,
 }

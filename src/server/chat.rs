@@ -22,7 +22,6 @@
  */
 
 use crate::common::keycode::*;
-use crate::logic::ai;
 use crate::logic::challenge;
 use crate::server::client;
 use crate::server::lobby;
@@ -48,7 +47,8 @@ pub enum Update
 		client_id: Keycode,
 		username: String,
 		unlocks: EnumSet<Unlock>,
-		rating_data: watch::Receiver<rating::Data>,
+		rating_data: rating::Data,
+		rating_and_stars: watch::Receiver<rating::RatingAndStars>,
 		handle: client::Handle,
 	},
 	RatingAndStars
@@ -120,7 +120,7 @@ pub enum Update
 pub async fn run(
 	mut updates: mpsc::Receiver<Update>,
 	canary: mpsc::Sender<()>,
-	current_challenge: challenge::Challenge,
+	challenge_pool: &[challenge::Challenge],
 )
 {
 	let mut clients: Vec<Client> = Vec::new();
@@ -136,7 +136,7 @@ pub async fn run(
 			&mut ghostbusters,
 			&mut lobbies,
 			&mut bots,
-			&current_challenge,
+			challenge_pool,
 		);
 
 		let removed = clients
@@ -155,7 +155,7 @@ fn handle_update(
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
 	lobbies: &mut Vec<Lobby>,
 	listed_bots: &mut Vec<lobby::ConnectedAi>,
-	current_challenge: &challenge::Challenge,
+	challenge_pool: &[challenge::Challenge],
 )
 {
 	match update
@@ -165,18 +165,20 @@ fn handle_update(
 			username,
 			unlocks,
 			rating_data,
+			rating_and_stars,
 			handle,
 		} => handle_join(
 			client_id,
 			username,
 			unlocks,
 			rating_data,
+			rating_and_stars,
 			handle,
 			clients,
 			ghostbusters,
 			lobbies,
 			listed_bots,
-			current_challenge,
+			challenge_pool,
 		),
 		Update::RatingAndStars { client_id } =>
 		{
@@ -283,7 +285,7 @@ struct Client
 	username: String,
 	join_metadata: JoinMetadataOrTagMetadata,
 	handle: client::Handle,
-	rating_data: watch::Receiver<rating::Data>,
+	rating_and_stars: watch::Receiver<rating::RatingAndStars>,
 	availability_status: AvailabilityStatus,
 	hidden: bool,
 }
@@ -354,13 +356,14 @@ fn handle_join(
 	id: Keycode,
 	username: String,
 	unlocks: EnumSet<Unlock>,
-	rating_data: watch::Receiver<rating::Data>,
+	rating_data: rating::Data,
+	rating_and_stars: watch::Receiver<rating::RatingAndStars>,
 	handle: client::Handle,
 	clients: &mut Vec<Client>,
 	ghostbusters: &mut HashMap<Keycode, Ghostbuster>,
 	lobbies: &Vec<Lobby>,
 	listed_bots: &mut Vec<lobby::ConnectedAi>,
-	current_challenge: &challenge::Challenge,
+	challenge_pool: &[challenge::Challenge],
 )
 {
 	// Prevent a user being online with multiple connections simultaneously.
@@ -403,7 +406,7 @@ fn handle_join(
 		username,
 		join_metadata,
 		handle,
-		rating_data,
+		rating_and_stars,
 		availability_status: AvailabilityStatus::Available,
 		hidden,
 	};
@@ -434,14 +437,12 @@ fn handle_join(
 		clients,
 		lobbies,
 		listed_bots,
-		current_challenge,
+		challenge_pool,
 	);
 
 	// Tell everyone the rating and stars of the newcomer.
-	// Let the newcomer know how many stars they have for the current challenge.
 	if !newcomer.hidden
 	{
-		let rating_data: rating::Data = *newcomer.rating_data.borrow();
 		let message = Message::RatingAndStars {
 			username: newcomer.username.clone(),
 			rating: rating_data.rating,
@@ -452,9 +453,14 @@ fn handle_join(
 			other.handle.send(message.clone());
 		}
 		newcomer.handle.send(message);
+	}
 
+	// Let the newcomer know how many stars they have for the current challenge.
+	for (challenge_key, stars) in rating_data.stars_per_challenge
+	{
 		let message = Message::RecentStars {
-			stars: rating_data.recent_stars,
+			challenge_key,
+			stars,
 		};
 		newcomer.handle.send(message);
 	}
@@ -502,29 +508,10 @@ fn do_init(
 	handle: &mut client::Handle,
 	clients: &Vec<Client>,
 	lobbies: &Vec<Lobby>,
-	listed_bots: &mut Vec<lobby::ConnectedAi>,
-	current_challenge: &challenge::Challenge,
+	_listed_bots: &mut Vec<lobby::ConnectedAi>,
+	challenge_pool: &[challenge::Challenge],
 )
 {
-	// This is a stupid hack that is necessary because clients <1.0.8
-	// do not handle LIST_AI messages sent after the lobby is created.
-	for name in ai::load_pool()
-	{
-		handle.send(Message::ListAi {
-			ai_name: name.clone(),
-			metadata: None,
-		});
-	}
-	for ai in listed_bots
-	{
-		handle.send(Message::ListAi {
-			ai_name: ai.ai_name.clone(),
-			metadata: Some(BotAuthorsMetadata {
-				authors: ai.authors.clone(),
-			}),
-		});
-	}
-
 	// Let the client know which lobbies there are.
 	for lobby in lobbies.iter()
 	{
@@ -548,7 +535,8 @@ fn do_init(
 				metadata: client.join_metadata.clone(),
 			});
 
-			let rating_data: rating::Data = *client.rating_data.borrow();
+			let rating_data: rating::RatingAndStars =
+				*client.rating_and_stars.borrow();
 			let message = Message::RatingAndStars {
 				username: client.username.clone(),
 				rating: rating_data.rating,
@@ -590,10 +578,13 @@ fn do_init(
 	}
 
 	// Let the client know what the current challenge is called.
-	handle.send(Message::ListChallenge {
-		key: current_challenge.key.clone(),
-		metadata: current_challenge.metadata.clone(),
-	});
+	for challenge in challenge_pool
+	{
+		handle.send(Message::ListChallenge {
+			key: challenge.key.clone(),
+			metadata: challenge.metadata.clone(),
+		});
+	}
 
 	// Let the client know we are done initializing.
 	handle.send(Message::Init)
@@ -610,7 +601,7 @@ fn handle_rating_and_stars(client_id: Keycode, clients: &mut Vec<Client>)
 			return;
 		}
 	};
-	let rating_data: rating::Data = *client.rating_data.borrow();
+	let rating_data: rating::RatingAndStars = *client.rating_and_stars.borrow();
 	let message = Message::RatingAndStars {
 		username: client.username.clone(),
 		rating: rating_data.rating,
@@ -649,7 +640,7 @@ fn handle_removed(
 			username,
 			join_metadata: _,
 			mut handle,
-			rating_data: _,
+			rating_and_stars: _,
 			availability_status: _,
 			hidden,
 		} = removed_client;
